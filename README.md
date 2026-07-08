@@ -1,135 +1,309 @@
-# رحلتي — Phases 1-5 (complete)
+🇸🇦 النسخة العربية
 
-Fully local PWA. No server, no accounts, no sync. Data lives in IndexedDB
-on whichever device it's opened on.
+رحلتي هو تطبيق شخصي يركز على الخصوصية، صُمم لمساعدتكِ على متابعة العادات، والعبادة، والصحة، والمزاج، والمهام اليومية في مكان واحد.
 
-## Deploy (any one of these, all free)
-1. **Netlify**: drag the whole `rahlati` folder onto app.netlify.com/drop
-2. **Vercel**: `vercel` CLI in this folder, or drag-drop via the dashboard
-3. **GitHub Pages**: push this folder to a repo, enable Pages on it
+يعمل التطبيق بالكامل على جهازكِ، بدون حسابات، وبدون خادم، وبدون مزامنة. جميع البيانات تُحفظ محليًا باستخدام IndexedDB، ويستمر التطبيق بالعمل دون اتصال بعد أول فتح.
 
-Must be served over HTTPS (or localhost) — service worker and install-to-
-home-screen won't work over a plain `file://` open.
+🌐 تجربة التطبيق
 
-## Test locally before deploying
-```
-python3 -m http.server 8000
-```
-then open `http://localhost:8000` on the same computer.
+يمكنكِ فتح التطبيق مباشرة عبر الرابط:
 
-## What's in Phase 1
-- Local DB (Dexie/IndexedDB), fully offline after first load
-- Calendar (month view + tap-a-day detail sheet)
-- Habits: ❤️ done / 💔 missed / ↩️ undo, with streaks
-- Fixed daily tasks (recurring checklist + reminder time)
-- Custom to-dos (one-off, optional due date)
-- Profile + rotating welcome message + optional PIN lock
-- Backup/restore to a single .zip (Settings page)
+https://0playmaker.github.io/Rihlati
 
-## What's in Phase 2 (Worship)
-- Fard (5 daily prayers): same ❤️/💔/↩️ + streak as Habits, reused via
-  `js/ui-shared.js` — one component, two features
-- 🌸 pause button: stop the fard streak during her period, resume after
-  without losing it (`streakPauses`, `streakType: 'fard'`)
-- Sunnah rawatib + adhkar-after-prayer (simple per-prayer checkboxes)
-- Morning/evening adhkar
-- Custom adhkar: name once, tap +1 or type an exact count per day
-- Worship overview ring on the Worship page + a live stat on Home's
-  quick-action card
+📱 تثبيت التطبيق على الهاتف
 
-## What's in Phase 3 (Mood + Period)
-- One `moodLogs` table — 5 preset emojis + a custom one, optional note.
-  Reused by Period now; Body+Mood (Phase 5) reuses the same table and
-  widget rather than getting its own
-- Mood History: filter by emoji, tap a day to reopen Day Detail — reuses
-  the existing sheet instead of building a second detail view
-- Period tracker: episodes (start/end), median-based prediction (not
-  mean — resists one outlier cycle skewing the estimate), a range-shaded
-  calendar, editable history list
-- Starting/ending a period auto-triggers Worship's fard pause (both call
-  the same idempotent `startFardPause`/`endFardPause` the manual 🌸
-  button uses) — no need to tell the app the same thing twice
-- Calendar dots on Home now come from a registry every phase feeds
-  (`registerActivityProvider`) instead of a hardcoded table list —
-  Worship's data was missing from the dots entirely before this fix
+لأفضل تجربة، يمكنكِ تثبيت رحلتي على الشاشة الرئيسية ليعمل كتطبيق مستقل.
 
-## What's in Phase 4 (Food)
-- Photo is optional per meal (camera can fail, or she's out and doesn't
-  want to stop and shoot it) — not forced just because it was listed first
-- 5 meal types she specified: فطور، غداء، سناك، عشاء، تحلية صحية
-- Photos compressed to 1200px/JPEG80 before storage (profile picture
-  stays smaller — 256px — since it's only ever a small avatar)
-- Daily calorie total is derived from that day's entries, never stored
-  as its own field
-- Backup: photos can't go in JSON, so each is written as its own file
-  in the zip (`photos/food-{id}.jpg`) and the JSON just records which
-  food entries have one — same zip, no second export mechanism
+على Android
 
-## What's in Phase 5 (Body + Goals)
-- Weight log + a hand-rolled SVG line chart (no charting library —
-  consistent with the ring/calendar, and one less dependency)
-- BMI shown as a factual reference range with its limits stated, not a
-  target — her own optional target weight is a separate number she sets
-- Body measurements: flexible, she names her own (same "define once, log
-  values over time" shape as custom adhkar)
-- Goals: current/target/unit stored, progress always derived — never a
-  stored percentage. Goals without a clean number just get a checkbox
-- Mood widget is the exact same component from Phase 3, not rebuilt
+افتحي الرابط من متصفح مثل Chrome أو Edge.
 
-## Also added this round
-- **Water**: lives inside `food.js` (intake tracking, not its own
-  top-level feature) — tap +0.25L or set an exact amount, adjustable
-  daily target
-- **Habits split into good/bad**: a "bad" habit (one she's quitting)
-  flips what ❤️/💔 mean — ❤️ = abstained, 💔 = slipped — using the same
-  `threeStateRowHtml` component with just different button labels.
-  Existing habits with no `type` field default to 'good'
-- **Yearly Overview**: a third registry (`registerYearlyStatsProvider`),
-  same pattern as day providers and activity dots — every feature
-  contributes its own card. Reachable from a button at the bottom of Home
+اضغطي على قائمة المتصفح.
 
-## Bug fixes + additions after first real-world use
-Three real bugs, found from actual usage, not just review:
-- `waterLogs` was used throughout the app but never declared in the
-  schema — an undeclared Dexie table throws on access, which broke the
-  Food page, Yearly Overview, AND Home's calendar all at once (each hit
-  it inside an unguarded `Promise.all`). Fixed, and all three registries
-  (day/activity/yearly providers) now use `Promise.allSettled` so one
-  broken provider can never take down an unrelated page again.
-- Setup wizard step 2's buttons passed `step3` directly to
-  `addEventListener`, so the click event itself became step3's
-  `mismatchError` argument — truthy, so it always rendered, showing
-  literal "[object PointerEvent]" text on the PIN screen every time.
-  Fixed by wrapping in arrow functions.
-- Age/sex/height moved to Settings (was inline on the Weight page).
-- Small secondary buttons (edit height, save target) and the back arrow
-  unified to one lighter `.link-btn`/`.icon-btn` style instead of mixed
-  heavier button chrome.
-- Sunnah, adhkar-after-prayer, daily adhkar, and custom adhkar all show
-  streak/succeeded/failed now, not just fard. Fard, Habits (good/bad),
-  and custom adhkar show it per-item; sunnah/adhkar-after/daily-adhkar
-  show it as one aggregate line per section (too cramped per-chip).
-- Goals: added a percentage-slider type alongside numeric and checkbox.
-  Home's Goals card now shows a done/in-progress/not-started breakdown,
-  not just a count.
-- Bottom nav bar: 7 shortcuts, toggleable and choosable from Settings.
+اختاري إضافة إلى الشاشة الرئيسية أو Install App إذا ظهرت.
 
-## File map
-- `index.html` — shell, loads every script in dependency order
-- `js/db.js` — schema + date helpers (read this first)
-- `js/streaks.js` — the one streak engine, reused by every phase
-- `js/calendar.js` — the day-provider registry every future phase plugs into
-- `js/habits.js`, `js/tasks.js` — feature modules
-- `js/profile.js` — setup wizard, PIN, settings page
-- `js/backup.js` — export/import
-- `js/app.js` — boots everything, renders Home
-- `sw.js` — offline cache (bump `CACHE_NAME` if you add/rename files later)
+أكّدي التثبيت.
 
-## Adding new features from here
-All 5 planned phases are in. For anything new: new tables go in a new
-`db.version(6).stores({...})` block in `db.js` — never edit an existing
-version block once real data exists. New Day Detail sections: a
-`xDayProvider(dateStr)` returning `{title, node}` or `null`, registered
-with `registerDayProvider`. New calendar dots: `registerActivityProvider`.
-New yearly cards: `registerYearlyStatsProvider`. Nothing else needs to
-change.
+على iPhone و iPad
+
+افتحي الرابط باستخدام Safari.
+
+اضغطي زر المشاركة.
+
+اختاري إضافة إلى الشاشة الرئيسية.
+
+اضغطي إضافة.
+
+بعد التثبيت، يمكنكِ استخدام التطبيق بشكل مريح مثل أي تطبيق عادي، كما يعمل دون إنترنت بعد أول تشغيل.
+
+ملاحظة: بياناتكِ تبقى على جهازكِ فقط، لذلك لن تنتقل تلقائيًا إلى جهاز آخر. لاستخدام نفس البيانات على جهاز جديد أو للاحتفاظ بنسخة احتياطية، استخدمي ميزة النسخ الاحتياطي والاستعادة.
+
+✨ المميزات
+
+📱 تطبيق ويب تقدمي قابل للتثبيت
+
+🌐 يعمل دون اتصال بالإنترنت
+
+🔒 لا يحتاج إلى حساب أو تسجيل دخول
+
+💾 حفظ محلي كامل على جهازكِ
+
+📦 نسخ احتياطي واستعادة من ملف ZIP واحد
+
+📅 تقويم موحد للمتابعة اليومية
+
+🌙 مصمم ليتناسب مع نمط الحياة الإسلامي
+
+🏠 الصفحة الرئيسية
+
+رسالة ترحيب مخصصة
+
+بطاقات مختصرة لأهم الإحصائيات
+
+تقويم مع مؤشرات للأنشطة اليومية
+
+نظرة سريعة على التقدم
+
+شريط تنقل قابل للتخصيص
+
+📅 التقويم
+
+عرض شهري واضح
+
+تفاصيل لكل يوم
+
+مؤشرات لجميع الأنشطة
+
+جمع كل بيانات اليوم في مكان واحد
+
+❤️ العادات
+
+تابعي العادات التي تريدين الالتزام بها أو تركها.
+
+العادات الإيجابية
+
+❤️ تم الإنجاز
+
+💔 لم يتم
+
+↩️ تراجع
+
+متابعة تلقائية للاستمرارية
+
+العادات السلبية
+
+❤️ تم تجنبها
+
+💔 حدثت
+
+↩️ تراجع
+
+نفس النظام مع معنى معكوس
+
+✅ المهام
+
+المهام اليومية
+
+قائمة متكررة
+
+وقت تذكير
+
+متابعة الإنجاز
+
+المهام المخصصة
+
+مهام لمرة واحدة
+
+تاريخ استحقاق اختياري
+
+🕌 العبادة
+
+قسم مخصص لمتابعة العبادات اليومية.
+
+الصلوات المفروضة
+
+الصلوات الخمس
+
+❤️ صليتِ
+
+💔 فاتت
+
+↩️ تراجع
+
+متابعة سلسلة الانتظام
+
+إيقاف السلسلة أثناء الدورة
+
+يمكن إيقاف سلسلة الصلوات مؤقتًا أثناء فترة الحيض ثم استكمالها لاحقًا دون خسارة التقدم.
+
+السنن الرواتب
+
+متابعة السنن اليومية بطريقة بسيطة وواضحة.
+
+أذكار ما بعد الصلاة
+
+تسجيل الأذكار بعد كل صلاة.
+
+أذكار الصباح والمساء
+
+متابعة يومية مع احتساب الاستمرارية.
+
+الأذكار المخصصة
+
+إنشاء ذكر خاص بكِ مرة واحدة
+
+إضافة سريع
+
+إدخال عدد دقيق
+
+متابعة الاستمرارية
+
+😊 المزاج
+
+تسجيل الحالة المزاجية اليومية
+
+خمس حالات جاهزة
+
+حالة مخصصة
+
+ملاحظات اختيارية
+
+سجل للمزاج
+
+تصفية حسب الحالة
+
+🌸 متابعة الدورة الشهرية
+
+تسجيل بداية ونهاية الدورة
+
+عرض السجل
+
+توقع المواعيد القادمة
+
+عرضها داخل التقويم
+
+ربط تلقائي مع قسم العبادة
+
+🍽️ التغذية
+
+سجلي وجباتكِ اليومية بسهولة.
+
+يشمل:
+
+فطور
+
+غداء
+
+سناك
+
+عشاء
+
+تحلية صحية
+
+كما يدعم:
+
+إضافة صورة اختيارية
+
+حساب مجموع السعرات اليومية
+
+متابعة شرب الماء
+
+💧 الماء
+
+إضافة سريعة بـ 0.25 لتر
+
+إدخال كمية مخصصة
+
+هدف يومي قابل للتعديل
+
+⚖️ الجسم
+
+الوزن
+
+سجل للوزن
+
+رسم بياني بسيط للتقدم
+
+عرض مؤشر كتلة الجسم BMI
+
+القياسات
+
+أنشئي أي قياسات تريدينها ثم سجليها مع الوقت، مثل:
+
+الخصر
+
+الصدر
+
+الذراع
+
+الورك
+
+أو أي قياس آخر
+
+🎯 الأهداف
+
+يدعم عدة أنواع من الأهداف:
+
+أهداف رقمية
+
+أهداف بالنسبة المئوية
+
+أهداف تعتمد على الإنجاز
+
+ويتم احتساب التقدم تلقائيًا.
+
+👤 الملف الشخصي
+
+معلوماتكِ الشخصية
+
+رسائل ترحيب متغيرة
+
+قفل اختياري برمز PIN
+
+صفحة إعدادات
+
+💾 النسخ الاحتياطي
+
+يمكنكِ حفظ جميع بياناتكِ داخل ملف ZIP واحد ثم استعادتها لاحقًا، بما في ذلك:
+
+العادات
+
+المهام
+
+العبادات
+
+المزاج
+
+الدورة الشهرية
+
+التغذية
+
+الصور
+
+الوزن
+
+القياسات
+
+الأهداف
+
+الإعدادات
+
+🔒 الخصوصية
+
+تم تصميم رحلتي مع التركيز على الخصوصية منذ البداية.
+
+لا توجد حسابات
+
+لا توجد إعلانات
+
+لا يوجد تتبع
+
+لا يتم إرسال البيانات إلى أي خادم
+
+كل شيء يبقى على جهازكِ فقط
+
+❤️ الفكرة
+
+رحلتي يجمع بين العبادة، والصحة، والعادات، والمهام، والرفاهية اليومية في تطبيق واحد بسيط وهادئ، ليساعدكِ على الاستمرار بخطوات صغيرة وثابتة مع الحفاظ على خصوصيتكِ الكاملة.
+
+
