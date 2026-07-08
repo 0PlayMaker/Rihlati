@@ -123,7 +123,8 @@ const BOTTOM_BAR_ITEMS = [
   { key: 'worship', label: 'العبادة', icon: '🕌', path: '/worship' },
   { key: 'habits', label: 'العادات', icon: '🌱', path: '/habits' },
   { key: 'period', label: 'الدورة', icon: '🌙', path: '/period' },
-  { key: 'goals', label: 'الأهداف', icon: '🎯', path: '/goals' }
+  { key: 'goals', label: 'الأهداف', icon: '🎯', path: '/goals' },
+  { key: 'diary', label: 'يومياتي', icon: '📔', path: '/diary' }
 ];
 
 // ---------- Phase 5 (Body + Goals) — new tables only ----------
@@ -143,6 +144,13 @@ db.version(5).stores({
   // access, which broke three unrelated-looking things at once because
   // each one hit it inside an unguarded Promise.all().
   waterLogs: '++id, &date'
+});
+
+// ---------- Phase 6 (Diary) — new tables only ----------
+db.version(6).stores({
+  diaryEntries: '++id, &date',
+  // Strict 1:1 with diaryEntries, same pattern as foodPhotos.
+  diaryPhotos: 'entryId'
 });
 
 // ---------- date helpers (used everywhere) ----------

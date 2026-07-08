@@ -22,6 +22,9 @@ async function createHabit(name, emoji, type) {
     archived: false, order: all.length, createdAt: Date.now()
   });
 }
+async function updateHabit(id, { name, emoji, type }) {
+  await db.habits.update(id, { name, emoji: emoji || '🌟', type: type === 'bad' ? 'bad' : 'good' });
+}
 
 async function getActiveHabits() {
   const all = await db.habits.toArray();
@@ -59,6 +62,21 @@ async function getHabitStats(habitId) {
   return computeStreakStats(doneDates, missedDates, []); // Habits don't use pauses
 }
 
+// Best current streak within one type — used for Home's "top streaks"
+// summary. Returns null if there are no habits of that type, or if
+// none currently has a streak going.
+async function getTopHabitStreak(type) {
+  const habits = await getActiveHabitsByType(type);
+  let best = null;
+  for (const h of habits) {
+    const stats = await getHabitStats(h.id);
+    if (stats.streak > 0 && (!best || stats.streak > best.streak)) {
+      best = { name: h.name, emoji: h.emoji, streak: stats.streak };
+    }
+  }
+  return best;
+}
+
 async function getHabitsRingData() {
   // Combined across both types on purpose — the Home ring is a single
   // "how am I doing today" signal; the full Habits page is where the
@@ -78,12 +96,17 @@ async function getHabitsRingData() {
 
 function habitRowHtml(habit, dateStr, status, { editable, showStreak, stats }) {
   const isBad = getHabitType(habit) === 'bad';
+  const extra = showStreak ? `
+    <div class="row-actions">
+      <button class="icon-btn" data-habit-action="edit">✏️</button>
+      <button class="icon-btn icon-btn-danger" data-habit-action="delete">🗑️</button>
+    </div>` : '';
   return threeStateRowHtml({
     rowId: String(habit.id),
     colorClass: `habit-color-${habit.color}`,
     icon: habit.emoji,
     name: habit.name,
-    status, editable, showStreak, stats,
+    status, editable, showStreak, stats, extra,
     doneLabel: isBad ? 'امتنعت' : 'تم',
     missedLabel: isBad ? 'زلة' : 'لم يتم'
   });
@@ -103,13 +126,32 @@ async function renderHabitRowsInto(container, habits, dateStr, { editable, showS
     return habitRowHtml(h, dateStr, status, { editable, showStreak, stats });
   }));
   container.innerHTML = rows.join('');
+
+  async function refresh() {
+    await renderHabitRowsInto(container, habits, dateStr, { editable, showStreak, onChange, emptyText });
+    if (onChange) onChange();
+  }
+
   wireThreeStateRows(container, async (rowId, action) => {
     const habitId = Number(rowId);
     if (action === 'done') await setHabitStatus(habitId, dateStr, 'done');
     else if (action === 'missed') await setHabitStatus(habitId, dateStr, 'missed');
     else if (action === 'undo') await clearHabitStatus(habitId, dateStr);
-    await renderHabitRowsInto(container, habits, dateStr, { editable, showStreak, onChange, emptyText });
-    if (onChange) onChange();
+    await refresh();
+  });
+
+  container.querySelectorAll('[data-habit-action="edit"]').forEach(btn => {
+    const habitId = Number(btn.closest('.tsr-row').dataset.rowId);
+    btn.addEventListener('click', () => openHabitModal({ existingId: habitId, onSaved: refresh }));
+  });
+  container.querySelectorAll('[data-habit-action="delete"]').forEach(btn => {
+    const habitId = Number(btn.closest('.tsr-row').dataset.rowId);
+    btn.addEventListener('click', async () => {
+      const habit = habits.find(h => h.id === habitId);
+      if (!confirm(`حذف "${habit.name}"؟ سجل السجلات السابقة يبقى محفوظاً.`)) return;
+      await archiveHabit(habitId);
+      await refresh();
+    });
   });
 }
 
@@ -125,13 +167,14 @@ async function renderHabitList(container, dateStr, { editable, showStreak, limit
   await renderHabitRowsInto(container, shown, dateStr, { editable, showStreak, onChange });
 }
 
-function openAddHabitModal(onAdded) {
+function openHabitModal({ existingId, onSaved } = {}) {
+  let existing = null;
   let selectedType = 'good';
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
-      <h2 class="modal-title">عادة جديدة</h2>
+      <h2 class="modal-title" id="habit-modal-title">عادة جديدة</h2>
       <label class="field-label">نوع العادة</label>
       <div class="habit-type-chips" id="habit-type-chips">
         <button class="chip active" data-type="good">🌱 أبنيها</button>
@@ -142,11 +185,23 @@ function openAddHabitModal(onAdded) {
       <label class="field-label">إيموجي (اختياري)</label>
       <input class="text-input emoji-input" id="new-habit-emoji" placeholder="🌟" maxlength="2">
       <div class="modal-actions">
+        ${existingId ? `<button class="btn btn-danger btn-sm" id="habit-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="new-habit-cancel">إلغاء</button>
-        <button class="btn btn-primary" id="new-habit-save">إضافة</button>
+        <button class="btn btn-primary" id="new-habit-save">${existingId ? 'حفظ' : 'إضافة'}</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
+
+  async function applyExisting() {
+    if (!existingId) return;
+    existing = (await db.habits.toArray()).find(h => h.id === existingId);
+    if (!existing) return;
+    selectedType = getHabitType(existing);
+    document.getElementById('habit-modal-title').textContent = 'تعديل العادة';
+    document.getElementById('new-habit-name').value = existing.name;
+    document.getElementById('new-habit-emoji').value = existing.emoji;
+    overlay.querySelectorAll('#habit-type-chips .chip').forEach(c => c.classList.toggle('active', c.dataset.type === selectedType));
+  }
 
   overlay.querySelectorAll('#habit-type-chips .chip').forEach(chip => {
     chip.addEventListener('click', () => {
@@ -156,14 +211,24 @@ function openAddHabitModal(onAdded) {
   });
 
   document.getElementById('new-habit-cancel').addEventListener('click', () => overlay.remove());
+  const deleteBtn = document.getElementById('habit-delete-btn');
+  if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+    if (!confirm('حذف هذه العادة؟ سجل السجلات السابقة يبقى محفوظاً.')) return;
+    await archiveHabit(existingId);
+    overlay.remove();
+    if (onSaved) onSaved();
+  });
   document.getElementById('new-habit-save').addEventListener('click', async () => {
     const name = document.getElementById('new-habit-name').value.trim();
     if (!name) return;
     const emoji = document.getElementById('new-habit-emoji').value.trim();
-    await createHabit(name, emoji, selectedType);
+    if (existingId) await updateHabit(existingId, { name, emoji, type: selectedType });
+    else await createHabit(name, emoji, selectedType);
     overlay.remove();
-    if (onAdded) onAdded();
+    if (onSaved) onSaved();
   });
+
+  applyExisting();
 }
 
 // ---------- full Habits page ----------
@@ -202,7 +267,7 @@ async function renderHabitsPage(params, view) {
   await refreshBoth();
 
   document.getElementById('add-habit-btn').addEventListener('click', () => {
-    openAddHabitModal(refreshBoth);
+    openHabitModal({ onSaved: refreshBoth });
   });
 }
 

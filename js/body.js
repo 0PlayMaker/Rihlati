@@ -32,19 +32,28 @@ async function getWeightStats() {
   return { latest, deltaKg };
 }
 
+// Short form for Home's small pill.
 function weightGlanceText(stats) {
-  if (!stats.latest) return 'سجلي وزنك الأول';
+  if (!stats.latest) return 'سجلي أول وزن';
   if (stats.deltaKg == null) return `${stats.latest.value} كغ`;
-  const arrow = stats.deltaKg > 0 ? '▲' : stats.deltaKg < 0 ? '▼' : '';
+  const sign = stats.deltaKg > 0 ? '+' : ''; // negative numbers already carry their own '-'
+  return `${stats.latest.value}كغ · ${sign}${stats.deltaKg.toFixed(1)}`;
+}
+// Long form for the Weight page's own status card.
+function weightStatusText(stats) {
+  if (!stats.latest) return 'سجلي وزنك الأول لتبدأ المتابعة';
+  if (stats.deltaKg == null) return `وزنك الحالي: ${stats.latest.value} كغ`;
   const sign = stats.deltaKg > 0 ? '+' : '';
-  return `${stats.latest.value} كغ · ${arrow}${sign}${stats.deltaKg.toFixed(1)}/30ي`;
+  return `وزنك الحالي: ${stats.latest.value} كغ · ${sign}${stats.deltaKg.toFixed(1)}كغ خلال آخر ٣٠ يوم`;
 }
 
 // ---------- hand-rolled SVG line chart ----------
 // Kept LTR internally even inside the RTL page — flipping a numeric
 // time-axis to match reading direction is a common source of "wait, is
 // this going backwards?" confusion, and chart axes read more like
-// universal numeric notation than body text.
+// universal numeric notation than body text. Each point gets an
+// invisible larger tap target (r=10) around the visible dot (r=3.5),
+// since a bare 3.5px target is too small to reliably tap on a phone.
 
 function renderWeightChart(points, targetWeight) {
   if (points.length === 0) return '<p class="empty-state-sub">سجلي وزنك لرؤية الرسم البياني</p>';
@@ -61,7 +70,10 @@ function renderWeightChart(points, targetWeight) {
   const coords = points.map((p, i) => [padding + i * xStep, scaleY(p.value)]);
 
   const pathD = coords.map(([x, y], i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
-  const dots = coords.map(([x, y]) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="var(--pink-deep)"/>`).join('');
+  const dots = coords.map(([x, y], i) => `
+    <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="10" fill="transparent" class="chart-point-hit" data-date="${points[i].date}" data-value="${points[i].value}"/>
+    <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="var(--pink-deep)" style="pointer-events:none"/>
+  `).join('');
   const targetLine = targetWeight != null
     ? `<line x1="${padding}" y1="${scaleY(targetWeight).toFixed(1)}" x2="${width - padding}" y2="${scaleY(targetWeight).toFixed(1)}" stroke="var(--blue-deep)" stroke-width="1.5" stroke-dasharray="4 4"/>`
     : '';
@@ -252,7 +264,16 @@ async function renderBodyPage(params, view) {
     <div class="card" id="weight-glance-card"></div>
     <div class="card">
       <h2 class="card-title">الرسم البياني</h2>
+      <div class="chart-range-chips" id="chart-range-chips">
+        <button class="chip" data-range="30">شهر</button>
+        <button class="chip" data-range="60">شهرين</button>
+        <button class="chip" data-range="90">٣ أشهر</button>
+        <button class="chip" data-range="150">٥ أشهر</button>
+        <button class="chip" data-range="365">سنة</button>
+        <button class="chip active" data-range="all">الكل</button>
+      </div>
       <div class="weight-chart-wrap" id="weight-chart"></div>
+      <p class="chart-point-info" id="chart-point-info"></p>
       <label class="field-label">الوزن المستهدف (اختياري)</label>
       <input class="text-input" type="number" step="0.1" id="target-weight-input">
       <button class="link-btn" id="save-target-btn">حفظ الهدف</button>
@@ -274,18 +295,39 @@ async function renderBodyPage(params, view) {
   `;
   document.getElementById('body-back').addEventListener('click', () => history.back());
 
+  let selectedRange = 'all';
+
   async function refreshWeight() {
     const stats = await getWeightStats();
     document.getElementById('weight-glance-card').innerHTML = `
       <p class="ring-label">وزنك</p>
-      <p class="period-status-text">${weightGlanceText(stats)}</p>
+      <p class="period-status-text">${weightStatusText(stats)}</p>
     `;
     const settings = await db.settings.get(1);
-    const points = await getAllWeightLogs();
+    const allPoints = await getAllWeightLogs();
+    const points = selectedRange === 'all'
+      ? allPoints
+      : allPoints.filter(p => p.date >= addDays(todayStr(), -Number(selectedRange)));
     document.getElementById('weight-chart').innerHTML = renderWeightChart(points, settings?.targetWeightKg ?? null);
+    document.getElementById('chart-point-info').textContent = points.length ? 'اضغطي على أي نقطة لرؤية تاريخها ووزنها' : '';
     document.getElementById('target-weight-input').value = settings?.targetWeightKg ?? '';
     await renderBmiCard(document.getElementById('bmi-card'));
+
+    document.querySelectorAll('.chart-point-hit').forEach(circle => {
+      circle.addEventListener('click', () => {
+        document.getElementById('chart-point-info').textContent =
+          `${formatDateArabic(circle.dataset.date, { weekday: false })} · ${circle.dataset.value} كغ`;
+      });
+    });
   }
+
+  document.getElementById('chart-range-chips').querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      selectedRange = chip.dataset.range;
+      document.querySelectorAll('#chart-range-chips .chip').forEach(c => c.classList.toggle('active', c === chip));
+      refreshWeight();
+    });
+  });
 
   document.getElementById('weight-add-btn').addEventListener('click', () => openWeightModal(refreshWeight));
   document.getElementById('save-target-btn').addEventListener('click', async () => {
@@ -307,7 +349,7 @@ async function renderBodyPage(params, view) {
   await renderMoodWidget(document.getElementById('body-mood-widget'), todayStr());
 }
 
-// ---------- Day Detail provider (weight only — see note in yearly provider) ----------
+// ---------- Day Detail provider (weight only) ----------
 
 async function weightDayProvider(dateStr) {
   const log = await db.weightLogs.where('date').equals(dateStr).first();
@@ -333,10 +375,6 @@ async function weightDayProvider(dateStr) {
 }
 
 // ---------- Yearly stats provider ----------
-// Measurements and Goals are intentionally not here: measurements aren't
-// a daily/yearly-volume thing the way weight is, and Goals get their own
-// provider in goals.js since they're a current-status snapshot, not a
-// count of things that happened in a given year.
 
 async function bodyYearlyProvider(year) {
   const all = await getAllWeightLogs();

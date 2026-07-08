@@ -285,10 +285,11 @@ a { color: var(--pink-deep); text-decoration: none; }
    Tasks & Todos
    ============================================================ */
 
-.task-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--track); cursor: pointer; }
-.task-row:last-child { border-bottom: none; }
+.task-row-wrap { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) 0; border-bottom: 1px solid var(--track); gap: var(--space-2); }
+.task-row-wrap:last-child { border-bottom: none; }
+.task-row { display: flex; align-items: center; gap: var(--space-3); cursor: pointer; flex: 1; min-width: 0; }
 .task-row input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--pink-deep); flex-shrink: 0; }
-.task-title { flex: 1; font-size: 15px; }
+.task-title { flex: 1; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-row.done .task-title { text-decoration: line-through; color: var(--ink-faint); }
 .task-reminder { font-size: 12px; color: var(--ink-soft); flex-shrink: 0; }
 
@@ -566,6 +567,50 @@ a { color: var(--pink-deep); text-decoration: none; }
 .bottom-bar-item.active { color: var(--pink-deep); }
 .bottom-bar-icon { font-size: 18px; }
 .bottom-bar-label { font-size: 10px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+
+/* ============================================================
+   Shared row action buttons (edit/delete), used by habits, tasks,
+   custom adhkar, goals
+   ============================================================ */
+
+.row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.row-actions .icon-btn { width: 32px; height: 32px; font-size: 14px; }
+.icon-btn-danger { background: var(--rose); }
+
+/* ============================================================
+   Home: mood strip + streaks strip (in the rings card)
+   ============================================================ */
+
+.mood-strip-row { display: flex; justify-content: space-between; margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--track); }
+.mood-strip-emoji { font-size: 18px; opacity: 0.9; }
+.streaks-strip-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: var(--space-2); }
+.streak-chip { font-size: 11px; font-weight: 700; color: var(--pink-deep); background: var(--pink); border-radius: var(--radius-round); padding: 3px 10px; }
+.home-goals-summary { margin-bottom: var(--space-2); color: var(--ink-soft); font-size: 13px; }
+.quick-actions-row-3 { grid-template-columns: repeat(3, 1fr); }
+.quick-actions-row-3 .quick-action-icon { font-size: 22px; }
+.quick-actions-row-3 .quick-action-label { font-size: 12px; }
+
+/* ============================================================
+   Weight chart controls
+   ============================================================ */
+
+.chart-range-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: var(--space-2); }
+.chart-point-info { font-size: 12px; color: var(--ink-soft); text-align: center; min-height: 16px; margin: var(--space-2) 0; }
+
+/* ============================================================
+   Diary
+   ============================================================ */
+
+.diary-textarea { min-height: 100px; }
+.diary-month { margin-bottom: var(--space-3); }
+.diary-month summary { font-weight: 700; font-size: 14px; color: var(--ink-soft); padding: var(--space-2) 0; cursor: pointer; }
+.diary-month-body { margin-top: var(--space-2); }
+.diary-entry { padding: var(--space-3) 0; border-bottom: 1px solid var(--track); }
+.diary-entry:last-child { border-bottom: none; }
+.diary-entry-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-2); }
+.diary-entry-date { font-size: 13px; font-weight: 700; color: var(--ink-soft); }
+.diary-entry-photo { width: 100%; max-height: 220px; object-fit: cover; border-radius: var(--radius-md); margin-bottom: var(--space-2); }
+.diary-entry-text { font-size: 14px; white-space: pre-wrap; }
 
 /* ============================================================
    Toast

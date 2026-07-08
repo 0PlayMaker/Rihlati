@@ -21,8 +21,11 @@ async function renderHome(params, view) {
   const worshipStats = await getWorshipTodayStats();
   const periodStatus = await getPeriodStatus();
   const foodStats = await getFoodTodayStats();
+  const diaryStreak = await getDiaryStreak();
   const weightStats = await getWeightStats();
   const activeGoals = await getActiveGoals();
+  const last7DaysMood = await getLast7DaysMood();
+  const [goodStreak, badStreak] = await Promise.all([getTopHabitStreak('good'), getTopHabitStreak('bad')]);
 
   const habitDoneFrac = ringData.total ? ringData.done / ringData.total : 0;
   const habitMissedFrac = ringData.total ? ringData.missed / ringData.total : 0;
@@ -58,9 +61,18 @@ async function renderHome(params, view) {
             </div>` : `<span class="mini-progress-text">أضيفي مهمة ثابتة من قسم المهام 👇</span>`}
         </div>
       </div>
+      <div class="mood-strip-row">
+        ${last7DaysMood.map(d => `<span class="mood-strip-emoji" title="${formatDateArabic(d.date, { weekday: false })}">${d.emoji || '·'}</span>`).join('')}
+      </div>
+      ${(goodStreak || badStreak || worshipStats.streak > 0) ? `
+        <div class="streaks-strip-row">
+          ${goodStreak ? `<span class="streak-chip">${goodStreak.emoji} ${escapeHtml(goodStreak.name)} 🔥${goodStreak.streak}</span>` : ''}
+          ${badStreak ? `<span class="streak-chip">🚫 ${escapeHtml(badStreak.name)} 🔥${badStreak.streak}</span>` : ''}
+          ${worshipStats.streak > 0 ? `<span class="streak-chip">🕌 صلوات 🔥${worshipStats.streak}</span>` : ''}
+        </div>` : ''}
     </section>
 
-    <section class="quick-actions-row">
+    <section class="quick-actions-row quick-actions-row-3">
       <button class="quick-action-card" id="food-action">
         <span class="quick-action-icon">🍽️</span>
         <span class="quick-action-label">الطعام</span>
@@ -70,6 +82,11 @@ async function renderHome(params, view) {
         <span class="quick-action-icon">🕌</span>
         <span class="quick-action-label">العبادة</span>
         <span class="quick-action-stat">${worshipStats.done}/${worshipStats.total}${worshipStats.streak > 0 ? ` · 🔥${worshipStats.streak}` : ''}</span>
+      </button>
+      <button class="quick-action-card" id="diary-action">
+        <span class="quick-action-icon">📔</span>
+        <span class="quick-action-label">يومياتي</span>
+        <span class="quick-action-stat">${diaryStreak > 0 ? `🔥${diaryStreak}` : 'اكتبي'}</span>
       </button>
     </section>
 
@@ -95,7 +112,10 @@ async function renderHome(params, view) {
         <h2 class="card-title">العادات</h2>
         <a class="see-all-link" href="#/habits">عرض الكل ←</a>
       </div>
-      <div id="home-habits-preview"></div>
+      <h4 class="day-detail-subsection-title">🌱 عادات جيدة</h4>
+      <div id="home-good-habits"></div>
+      <h4 class="day-detail-subsection-title">🚫 عادات أقلع عنها</h4>
+      <div id="home-bad-habits"></div>
     </section>
 
     <section class="card">
@@ -103,14 +123,20 @@ async function renderHome(params, view) {
         <h2 class="card-title">المهام</h2>
         <a class="see-all-link" href="#/tasks">عرض الكل ←</a>
       </div>
-      <div id="home-tasks-preview"></div>
+      <h4 class="day-detail-subsection-title">📋 مهامك اليومية</h4>
+      <div id="home-fixed-tasks"></div>
+      <h4 class="day-detail-subsection-title">✅ قائمة المهام</h4>
+      <div id="home-custom-todos"></div>
     </section>
 
-    <button class="card goals-card-btn" id="goals-card">
-      <span class="quick-action-icon">🎯</span>
-      <p class="card-title">الأهداف</p>
-      <span class="quick-action-stat">${goalsGlanceText(activeGoals)}</span>
-    </button>
+    <section class="card">
+      <div class="section-header">
+        <h2 class="card-title">🎯 الأهداف</h2>
+        <a class="see-all-link" href="#/goals">عرض الكل ←</a>
+      </div>
+      <p class="mini-progress-text home-goals-summary">${goalsGlanceText(activeGoals)}</p>
+      <div id="home-goals-preview"></div>
+    </section>
 
     <button class="btn btn-secondary btn-block yearly-overview-btn" id="yearly-overview-btn">📊 نظرة على عامك</button>
 
@@ -121,17 +147,25 @@ async function renderHome(params, view) {
   document.getElementById('header-pfp').addEventListener('click', () => goTo('/settings'));
   document.getElementById('food-action').addEventListener('click', () => goTo('/food'));
   document.getElementById('worship-action').addEventListener('click', () => goTo('/worship'));
+  document.getElementById('diary-action').addEventListener('click', () => goTo('/diary'));
   document.getElementById('period-action').addEventListener('click', () => goTo('/period'));
   document.getElementById('body-action').addEventListener('click', () => goTo('/body'));
-  document.getElementById('goals-card').addEventListener('click', () => goTo('/goals'));
   document.getElementById('yearly-overview-btn').addEventListener('click', () => goTo('/yearly'));
   view.querySelectorAll('[data-soon]').forEach(el => {
     el.addEventListener('click', () => toast('قيد التطوير - قريباً! 🌸'));
   });
 
   initHomeCalendar(document.getElementById('home-calendar'));
-  await renderHabitList(document.getElementById('home-habits-preview'), today, { editable: true, showStreak: true, limit: 3 });
-  await renderFixedTaskList(document.getElementById('home-tasks-preview'), today, { editable: true, limit: 4, onChange: rescheduleHomeReminders });
+
+  const goodHabits = (await getActiveHabitsByType('good')).slice(0, 3);
+  const badHabits = (await getActiveHabitsByType('bad')).slice(0, 3);
+  await renderHabitRowsInto(document.getElementById('home-good-habits'), goodHabits, today, { editable: true, showStreak: true, onChange: () => renderRoute(), emptyText: 'ما في عادات جيدة بعد.' });
+  await renderHabitRowsInto(document.getElementById('home-bad-habits'), badHabits, today, { editable: true, showStreak: true, onChange: () => renderRoute(), emptyText: 'ما في عادات للإقلاع عنها بعد.' });
+
+  await renderFixedTaskList(document.getElementById('home-fixed-tasks'), today, { editable: true, limit: 3, showManage: true, onChange: rescheduleHomeReminders });
+  await renderTodoList(document.getElementById('home-custom-todos'), { limit: 3, onlyOpen: true, showManage: true });
+
+  await renderGoalsList(document.getElementById('home-goals-preview'), { limit: 2 });
 
   const isDoneToday = await rescheduleHomeReminders();
   checkMissedReminders(fixedTasks, isDoneToday);
@@ -151,6 +185,7 @@ function registerAllDayProviders() {
   registerDayProvider(foodDayProvider);
   registerDayProvider(waterDayProvider);
   registerDayProvider(weightDayProvider);
+  registerDayProvider(diaryDayProvider);
 }
 
 function registerAllActivityProviders() {
@@ -167,6 +202,7 @@ function registerAllActivityProviders() {
   registerActivityProvider(async () => (await db.waterLogs.toArray()).filter(w => w.liters > 0).map(w => w.date));
   registerActivityProvider(async () => (await db.weightLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.bodyMeasurementLogs.toArray()).map(l => l.date));
+  registerActivityProvider(async () => (await db.diaryEntries.toArray()).map(e => e.date));
   registerActivityProvider(async () => {
     const periods = await db.periodLogs.toArray();
     const today = todayStr();
@@ -190,6 +226,7 @@ function registerAllYearlyStatsProviders() {
   registerYearlyStatsProvider(foodYearlyProvider);
   registerYearlyStatsProvider(bodyYearlyProvider);
   registerYearlyStatsProvider(goalsYearlyProvider);
+  registerYearlyStatsProvider(diaryYearlyProvider);
 }
 
 async function renderBottomBar() {
@@ -234,6 +271,7 @@ function startApp(profile, settings) {
   route('/food', renderFoodPage);
   route('/body', renderBodyPage);
   route('/goals', renderGoalsPage);
+  route('/diary', renderDiaryPage);
   route('/yearly', renderYearlyOverviewPage);
   route('/settings', renderSettingsPage);
 

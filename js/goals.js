@@ -1,16 +1,27 @@
 // goals.js — Phase 5, second half.
 // Three progress types: checkbox (done/not), numeric (current/target/
 // unit, progress derived — never a stored percentage), and percentage
-// (a plain 0-100 slider when there's no clean unit to attach a number
-// to, just a felt sense of "how far along"). Old goals created before
-// percentage existed have no progressType field — effectiveProgressType
-// derives it from what they already have, so nothing breaks.
+// (a plain 0-100 slider). Numeric goals store an explicit `direction`
+// ('up' or 'down') plus a `startValue`, computed once at creation and
+// never silently recomputed — "lose weight to 50 from 67" needs
+// current <= target to count as done, and progress needs to be
+// measured against where she started, not current/target directly
+// (67/50 is meaningless as a fraction). Old goals with no direction
+// field default to 'up', matching how they already behaved.
 
-async function createGoal({ title, progressType, targetValue, unit, notes }) {
+function computeGoalDirection(startValue, targetValue) {
+  return startValue > targetValue ? 'down' : 'up';
+}
+
+async function createGoal({ title, progressType, targetValue, unit, notes, currentValue }) {
+  const cv = currentValue ?? 0;
+  const isNumeric = progressType === 'numeric' && targetValue != null;
   return db.goals.add({
     title,
     progressType: progressType || 'checkbox',
-    currentValue: 0,
+    currentValue: cv,
+    startValue: isNumeric ? cv : null,
+    direction: isNumeric ? computeGoalDirection(cv, targetValue) : 'up',
     targetValue: progressType === 'percentage' ? 100 : (targetValue ?? null),
     unit: progressType === 'percentage' ? '%' : (unit || ''),
     notes: notes || '',
@@ -37,15 +48,25 @@ function effectiveProgressType(goal) {
 function goalProgressFraction(goal) {
   const type = effectiveProgressType(goal);
   if (type === 'checkbox') return null;
-  const target = type === 'percentage' ? 100 : goal.targetValue;
-  if (!target || target <= 0) return null;
+  if (type === 'percentage') return Math.min(1, Math.max(0, goal.currentValue / 100));
+  const target = goal.targetValue;
+  if (target == null) return null;
+  const direction = goal.direction || 'up';
+  if (direction === 'down') {
+    const start = goal.startValue ?? goal.currentValue;
+    if (start <= target) return goal.currentValue <= target ? 1 : 0; // malformed data guard
+    return Math.min(1, Math.max(0, (start - goal.currentValue) / (start - target)));
+  }
+  if (target <= 0) return null;
   return Math.min(1, Math.max(0, goal.currentValue / target));
 }
 function isGoalDone(goal) {
   const type = effectiveProgressType(goal);
   if (type === 'checkbox') return !!goal.done;
   const target = type === 'percentage' ? 100 : goal.targetValue;
-  return target ? goal.currentValue >= target : false;
+  if (target == null) return false;
+  const direction = type === 'percentage' ? 'up' : (goal.direction || 'up');
+  return direction === 'down' ? goal.currentValue <= target : goal.currentValue >= target;
 }
 
 function goalRowHtml(goal) {
@@ -56,27 +77,32 @@ function goalRowHtml(goal) {
     progressHtml = `
       <input type="range" class="goal-slider" min="0" max="100" value="${goal.currentValue}" data-action="slide">
       <span class="mini-progress-text goal-slider-label">${goal.currentValue}%</span>`;
-  } else if (type === 'numeric') {
+  } else if (type === 'numeric' && goal.targetValue != null) {
     const frac = goalProgressFraction(goal) || 0;
     progressHtml = `
       <div class="mini-progress-track" data-action="tap-progress"><div class="mini-progress-fill" style="width:${frac * 100}%"></div></div>
       <span class="mini-progress-text">${goal.currentValue}/${goal.targetValue} ${escapeHtml(goal.unit || '')}</span>`;
   } else {
+    // checkbox, or a numeric goal somehow missing its target — never show raw "null" text
     progressHtml = `<label class="checkbox-row"><input type="checkbox" data-action="toggle-done" ${goal.done ? 'checked' : ''}><span>تم تحقيق الهدف</span></label>`;
   }
   return `
     <div class="goal-row" data-goal-id="${goal.id}">
       <div class="goal-row-top">
         <span class="goal-title ${done ? 'done' : ''}">${done ? '✅ ' : ''}${escapeHtml(goal.title)}</span>
-        <button class="icon-btn goal-edit-btn" data-action="edit">✏️</button>
+        <div class="row-actions">
+          <button class="icon-btn goal-edit-btn" data-action="edit">✏️</button>
+          <button class="icon-btn icon-btn-danger goal-delete-btn" data-action="delete">🗑️</button>
+        </div>
       </div>
       ${progressHtml}
       ${goal.notes ? `<p class="goal-notes">${escapeHtml(goal.notes)}</p>` : ''}
     </div>`;
 }
 
-async function renderGoalsList(container) {
-  const goals = await getActiveGoals();
+async function renderGoalsList(container, { limit } = {}) {
+  let goals = await getActiveGoals();
+  if (limit) goals = goals.slice(0, limit);
   if (goals.length === 0) {
     container.innerHTML = `<div class="empty-state"><p>ما في أهداف مضافة بعد.</p></div>`;
     return;
@@ -86,7 +112,14 @@ async function renderGoalsList(container) {
   container.querySelectorAll('.goal-row').forEach(row => {
     const id = Number(row.dataset.goalId);
     const editBtn = row.querySelector('[data-action="edit"]');
-    if (editBtn) editBtn.addEventListener('click', () => openGoalModal({ existingId: id, onSaved: () => renderGoalsList(container) }));
+    if (editBtn) editBtn.addEventListener('click', () => openGoalModal({ existingId: id, onSaved: () => renderGoalsList(container, { limit }) }));
+
+    const deleteBtn = row.querySelector('[data-action="delete"]');
+    if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+      if (!confirm('حذف هذا الهدف؟')) return;
+      await archiveGoal(id);
+      await renderGoalsList(container, { limit });
+    });
 
     const progressBar = row.querySelector('[data-action="tap-progress"]');
     if (progressBar) progressBar.addEventListener('click', async () => {
@@ -94,7 +127,7 @@ async function renderGoalsList(container) {
       const input = prompt(`القيمة الحالية (${goal.unit || ''}):`, String(goal.currentValue));
       if (input === null) return;
       const n = parseFloat(input);
-      if (!Number.isNaN(n) && n >= 0) { await updateGoal(id, { currentValue: n }); await renderGoalsList(container); }
+      if (!Number.isNaN(n) && n >= 0) { await updateGoal(id, { currentValue: n }); await renderGoalsList(container, { limit }); }
     });
 
     const slider = row.querySelector('[data-action="slide"]');
@@ -103,14 +136,14 @@ async function renderGoalsList(container) {
       slider.addEventListener('input', () => { label.textContent = `${slider.value}%`; });
       slider.addEventListener('change', async () => {
         await updateGoal(id, { currentValue: Number(slider.value) });
-        await renderGoalsList(container); // refresh so ✅/done styling updates if it just hit 100
+        await renderGoalsList(container, { limit });
       });
     }
 
     const checkbox = row.querySelector('[data-action="toggle-done"]');
     if (checkbox) checkbox.addEventListener('change', async () => {
       await updateGoal(id, { done: checkbox.checked });
-      await renderGoalsList(container);
+      await renderGoalsList(container, { limit });
     });
   });
 }
@@ -140,6 +173,7 @@ async function openGoalModal({ existingId, onSaved }) {
         <input class="text-input" type="number" id="goal-current-input" value="${existing?.currentValue ?? 0}">
         <label class="field-label">الهدف</label>
         <input class="text-input" type="number" id="goal-target-input" value="${existing?.targetValue ?? ''}">
+        <p class="settings-note">إذا كان هدفك إنقاص رقم (مثل الوزن)، اكتبي رقماً أقل من الحالي — بيفهم تلقائياً إنك تنقصين.</p>
         <label class="field-label">الوحدة (اختياري)</label>
         <input class="text-input" id="goal-unit-input" value="${escapeHtml(existing?.unit || '')}" placeholder="مثلاً: كتاب، صفحة، كغ">
       </div>
@@ -181,7 +215,8 @@ async function openGoalModal({ existingId, onSaved }) {
     if (selectedType === 'numeric') {
       const t = parseFloat(document.getElementById('goal-target-input').value);
       const c = parseFloat(document.getElementById('goal-current-input').value);
-      targetValue = Number.isNaN(t) ? null : t;
+      if (Number.isNaN(t)) { alert('أدخلي هدفاً رقمياً صحيحاً'); return; }
+      targetValue = t;
       currentValue = Number.isNaN(c) ? 0 : c;
       unit = document.getElementById('goal-unit-input').value.trim();
     } else if (selectedType === 'percentage') {
@@ -191,10 +226,15 @@ async function openGoalModal({ existingId, onSaved }) {
     }
 
     if (existing) {
-      await updateGoal(existing.id, { title, notes, progressType: selectedType, targetValue, currentValue, unit });
+      const fields = { title, notes, progressType: selectedType, targetValue, currentValue, unit };
+      if (selectedType === 'numeric') {
+        const startValue = existing.startValue ?? existing.currentValue ?? currentValue;
+        fields.startValue = startValue;
+        fields.direction = computeGoalDirection(startValue, targetValue);
+      }
+      await updateGoal(existing.id, fields);
     } else {
-      const newId = await createGoal({ title, progressType: selectedType, targetValue, unit, notes });
-      if (currentValue) await updateGoal(newId, { currentValue });
+      await createGoal({ title, progressType: selectedType, targetValue, unit, notes, currentValue });
     }
     overlay.remove();
     if (onSaved) onSaved();
@@ -222,11 +262,6 @@ async function renderGoalsPage(params, view) {
   });
 }
 
-// Status breakdown by type (numeric/percentage: done at 100%, in
-// progress if >0, not started at 0; checkbox: done or in-progress —
-// same categorization goalsYearlyProvider already uses) — shown as a
-// compact breakdown rather than a bare count, since a flat "3 goals"
-// doesn't say anything about how they're actually going.
 function goalsGlanceText(goals) {
   if (goals.length === 0) return 'أضيفي هدفك الأول';
   let done = 0, inProgress = 0, notStarted = 0;
@@ -242,13 +277,6 @@ function goalsGlanceText(goals) {
   if (notStarted > 0) parts.push(`⏳${notStarted}`);
   return `${goals.length} ${goals.length === 1 ? 'هدف' : 'أهداف'} · ${parts.join(' ')}`;
 }
-
-// ---------- Yearly stats provider ----------
-// A current-status snapshot, not a per-year event count (a goal from
-// last year that's still in progress is still worth seeing) — so this
-// ignores the `year` argument on purpose and contributes no count to
-// the yearly grand total, which represents things that happened in
-// that specific year.
 
 async function goalsYearlyProvider(year) {
   const active = await getActiveGoals();

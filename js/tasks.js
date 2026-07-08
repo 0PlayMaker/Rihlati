@@ -4,6 +4,9 @@
 //                (done / not done) — there's no "relapse" button here,
 //                so unlike Habits this stays boolean-shaped on purpose.
 //   Custom Todos: a plain one-off to-do list with an optional due date.
+// Edit/delete only show when showManage is true (main pages, not Day
+// Detail) — editing a task's title isn't a per-date action, same
+// reasoning as habits.js.
 
 // ===================== Fixed Tasks =====================
 
@@ -13,6 +16,9 @@ async function createFixedTask(title, reminderTime) {
     title, reminderTime: reminderTime || null,
     archived: false, order: all.length, createdAt: Date.now()
   });
+}
+async function updateFixedTask(id, { title, reminderTime }) {
+  await db.fixedTasks.update(id, { title, reminderTime: reminderTime || null });
 }
 
 async function getActiveFixedTasks() {
@@ -35,13 +41,20 @@ async function toggleFixedTask(taskId, date) {
   else await upsertLog(db.fixedTaskLogs, 'taskId', taskId, date, {});
 }
 
-function fixedTaskRowHtml(task, done, editable) {
+function fixedTaskRowHtml(task, done, editable, showManage) {
   return `
-    <label class="task-row ${done ? 'done' : ''}">
-      <input type="checkbox" data-task-id="${task.id}" ${done ? 'checked' : ''} ${editable ? '' : 'disabled'}>
-      <span class="task-title">${escapeHtml(task.title)}</span>
-      ${task.reminderTime ? `<span class="task-reminder">🔔 ${task.reminderTime}</span>` : ''}
-    </label>`;
+    <div class="task-row-wrap">
+      <label class="task-row ${done ? 'done' : ''}">
+        <input type="checkbox" data-task-id="${task.id}" ${done ? 'checked' : ''} ${editable ? '' : 'disabled'}>
+        <span class="task-title">${escapeHtml(task.title)}</span>
+        ${task.reminderTime ? `<span class="task-reminder">🔔 ${task.reminderTime}</span>` : ''}
+      </label>
+      ${showManage ? `
+        <div class="row-actions">
+          <button class="icon-btn" data-task-action="edit" data-task-id="${task.id}">✏️</button>
+          <button class="icon-btn icon-btn-danger" data-task-action="delete" data-task-id="${task.id}">🗑️</button>
+        </div>` : ''}
+    </div>`;
 }
 
 async function getFixedTasksDoneSet(tasks, dateStr) {
@@ -52,56 +65,100 @@ async function getFixedTasksDoneSet(tasks, dateStr) {
   return set;
 }
 
-async function renderFixedTaskList(container, dateStr, { editable, limit, onChange } = {}) {
+async function renderFixedTaskList(container, dateStr, { editable, limit, onChange, showManage } = {}) {
   const tasks = await getActiveFixedTasks();
   const shown = limit ? tasks.slice(0, limit) : tasks;
   if (shown.length === 0) {
     container.innerHTML = `<div class="empty-state"><p>ما في مهام ثابتة بعد.</p><p class="empty-state-sub">مثلاً: الفيتامينات، أو ترتيب السرير.</p></div>`;
     return;
   }
-  const rows = await Promise.all(shown.map(async t => fixedTaskRowHtml(t, await isFixedTaskDone(t.id, dateStr), editable)));
+  const rows = await Promise.all(shown.map(async t => fixedTaskRowHtml(t, await isFixedTaskDone(t.id, dateStr), editable, showManage)));
   container.innerHTML = rows.join('');
+
+  async function refresh() {
+    await renderFixedTaskList(container, dateStr, { editable, limit, onChange, showManage });
+    if (onChange) onChange();
+  }
+
   container.querySelectorAll('input[type=checkbox]').forEach(cb => {
     cb.addEventListener('change', async () => {
       if (cb.disabled) return;
       await toggleFixedTask(Number(cb.dataset.taskId), dateStr);
-      await renderFixedTaskList(container, dateStr, { editable, limit, onChange });
-      if (onChange) onChange();
+      await refresh();
+    });
+  });
+  container.querySelectorAll('[data-task-action="edit"]').forEach(btn => {
+    btn.addEventListener('click', () => openFixedTaskModal({ existingId: Number(btn.dataset.taskId), onSaved: refresh }));
+  });
+  container.querySelectorAll('[data-task-action="delete"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const task = shown.find(t => t.id === Number(btn.dataset.taskId));
+      if (!confirm(`حذف "${task.title}"؟`)) return;
+      await archiveFixedTask(task.id);
+      await refresh();
     });
   });
 }
 
-function openAddFixedTaskModal(onAdded) {
+function openFixedTaskModal({ existingId, onSaved } = {}) {
+  let existing = null;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
-      <h2 class="modal-title">مهمة ثابتة جديدة</h2>
+      <h2 class="modal-title" id="task-modal-title">مهمة ثابتة جديدة</h2>
       <label class="field-label">اسم المهمة</label>
       <input class="text-input" id="new-task-title" placeholder="مثلاً: الفيتامينات" autofocus>
       <label class="field-label">تذكير (اختياري)</label>
       <input class="text-input" type="time" id="new-task-time">
       <div class="modal-actions">
+        ${existingId ? `<button class="btn btn-danger btn-sm" id="task-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="new-task-cancel">إلغاء</button>
-        <button class="btn btn-primary" id="new-task-save">إضافة</button>
+        <button class="btn btn-primary" id="new-task-save">${existingId ? 'حفظ' : 'إضافة'}</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
+
+  async function applyExisting() {
+    if (!existingId) return;
+    existing = (await db.fixedTasks.toArray()).find(t => t.id === existingId);
+    if (!existing) return;
+    document.getElementById('task-modal-title').textContent = 'تعديل المهمة';
+    document.getElementById('new-task-title').value = existing.title;
+    document.getElementById('new-task-time').value = existing.reminderTime || '';
+  }
+
   document.getElementById('new-task-cancel').addEventListener('click', () => overlay.remove());
+  const deleteBtn = document.getElementById('task-delete-btn');
+  if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+    if (!confirm('حذف هذه المهمة؟')) return;
+    await archiveFixedTask(existingId);
+    overlay.remove();
+    if (onSaved) onSaved();
+  });
   document.getElementById('new-task-save').addEventListener('click', async () => {
     const title = document.getElementById('new-task-title').value.trim();
     if (!title) return;
     const time = document.getElementById('new-task-time').value || null;
-    await createFixedTask(title, time);
+    if (existingId) await updateFixedTask(existingId, { title, reminderTime: time });
+    else await createFixedTask(title, time);
     overlay.remove();
-    if (onAdded) onAdded();
+    if (onSaved) onSaved();
   });
+
+  applyExisting();
 }
 
 // ===================== Custom Todos =====================
 
 async function addTodo(title, dueDate) {
   await db.customTodos.add({ title, dueDate: dueDate || null, done: false, doneAt: null, createdAt: Date.now() });
+}
+async function updateTodo(id, { title, dueDate }) {
+  await db.customTodos.update(id, { title, dueDate: dueDate || null });
+}
+async function deleteTodo(id) {
+  await db.customTodos.delete(id);
 }
 
 async function toggleTodo(id) {
@@ -114,16 +171,23 @@ async function getTodosForDate(dateStr) {
   return all.filter(t => t.dueDate === dateStr);
 }
 
-function todoRowHtml(todo) {
+function todoRowHtml(todo, showManage) {
   return `
-    <label class="task-row ${todo.done ? 'done' : ''}">
-      <input type="checkbox" data-todo-id="${todo.id}" ${todo.done ? 'checked' : ''}>
-      <span class="task-title">${escapeHtml(todo.title)}</span>
-      ${todo.dueDate ? `<span class="task-reminder">📅 ${formatDateArabic(todo.dueDate, { weekday: false })}</span>` : ''}
-    </label>`;
+    <div class="task-row-wrap">
+      <label class="task-row ${todo.done ? 'done' : ''}">
+        <input type="checkbox" data-todo-id="${todo.id}" ${todo.done ? 'checked' : ''}>
+        <span class="task-title">${escapeHtml(todo.title)}</span>
+        ${todo.dueDate ? `<span class="task-reminder">📅 ${formatDateArabic(todo.dueDate, { weekday: false })}</span>` : ''}
+      </label>
+      ${showManage ? `
+        <div class="row-actions">
+          <button class="icon-btn" data-todo-action="edit" data-todo-id="${todo.id}">✏️</button>
+          <button class="icon-btn icon-btn-danger" data-todo-action="delete" data-todo-id="${todo.id}">🗑️</button>
+        </div>` : ''}
+    </div>`;
 }
 
-async function renderTodoList(container, { limit, onlyOpen } = {}) {
+async function renderTodoList(container, { limit, onlyOpen, showManage } = {}) {
   let all = await db.customTodos.toArray();
   all.sort((a, b) => (a.done - b.done) || (b.createdAt - a.createdAt));
   if (onlyOpen) all = all.filter(t => !t.done);
@@ -132,40 +196,77 @@ async function renderTodoList(container, { limit, onlyOpen } = {}) {
     container.innerHTML = `<div class="empty-state"><p>ما في مهام حالياً. قائمتك فاضية! ✨</p></div>`;
     return;
   }
-  container.innerHTML = shown.map(todoRowHtml).join('');
+  container.innerHTML = shown.map(t => todoRowHtml(t, showManage)).join('');
+
+  async function refresh() {
+    await renderTodoList(container, { limit, onlyOpen, showManage });
+  }
+
   container.querySelectorAll('input[type=checkbox]').forEach(cb => {
     cb.addEventListener('change', async () => {
       await toggleTodo(Number(cb.dataset.todoId));
-      await renderTodoList(container, { limit, onlyOpen });
+      await refresh();
+    });
+  });
+  container.querySelectorAll('[data-todo-action="edit"]').forEach(btn => {
+    btn.addEventListener('click', () => openTodoModal({ existingId: Number(btn.dataset.todoId), onSaved: refresh }));
+  });
+  container.querySelectorAll('[data-todo-action="delete"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('حذف هذه المهمة؟')) return;
+      await deleteTodo(Number(btn.dataset.todoId));
+      await refresh();
     });
   });
 }
 
-function openAddTodoModal(onAdded) {
+function openTodoModal({ existingId, onSaved } = {}) {
+  let existing = null;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
-      <h2 class="modal-title">مهمة جديدة</h2>
+      <h2 class="modal-title" id="todo-modal-title">مهمة جديدة</h2>
       <label class="field-label">العنوان</label>
       <input class="text-input" id="new-todo-title" placeholder="اكتبي المهمة هنا" autofocus>
       <label class="field-label">تاريخ الاستحقاق (اختياري)</label>
       <input class="text-input" type="date" id="new-todo-date">
       <div class="modal-actions">
+        ${existingId ? `<button class="btn btn-danger btn-sm" id="todo-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="new-todo-cancel">إلغاء</button>
-        <button class="btn btn-primary" id="new-todo-save">إضافة</button>
+        <button class="btn btn-primary" id="new-todo-save">${existingId ? 'حفظ' : 'إضافة'}</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
+
+  async function applyExisting() {
+    if (!existingId) return;
+    existing = (await db.customTodos.toArray()).find(t => t.id === existingId);
+    if (!existing) return;
+    document.getElementById('todo-modal-title').textContent = 'تعديل المهمة';
+    document.getElementById('new-todo-title').value = existing.title;
+    document.getElementById('new-todo-date').value = existing.dueDate || '';
+  }
+
   document.getElementById('new-todo-cancel').addEventListener('click', () => overlay.remove());
+  const deleteBtn = document.getElementById('todo-delete-btn');
+  if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+    if (!confirm('حذف هذه المهمة؟')) return;
+    await deleteTodo(existingId);
+    overlay.remove();
+    if (onSaved) onSaved();
+  });
   document.getElementById('new-todo-save').addEventListener('click', async () => {
     const title = document.getElementById('new-todo-title').value.trim();
     if (!title) return;
     const date = document.getElementById('new-todo-date').value || null;
-    await addTodo(title, date);
+    if (existingId) await updateTodo(existingId, { title, dueDate: date });
+    else await addTodo(title, date);
     overlay.remove();
-    if (onAdded) onAdded();
+    if (onSaved) onSaved();
   });
+
+  applyExisting();
 }
 
 // ===================== full Tasks page =====================
@@ -196,29 +297,32 @@ async function renderTasksPage(params, view) {
   }
 
   const fixedListEl = document.getElementById('fixed-tasks-list');
-  await renderFixedTaskList(fixedListEl, todayStr(), { editable: true, onChange: rescheduleReminders });
+  await renderFixedTaskList(fixedListEl, todayStr(), { editable: true, showManage: true, onChange: rescheduleReminders });
   document.getElementById('add-fixed-task-btn').addEventListener('click', () => {
-    openAddFixedTaskModal(async () => {
-      await renderFixedTaskList(fixedListEl, todayStr(), { editable: true, onChange: rescheduleReminders });
-      rescheduleReminders();
+    openFixedTaskModal({
+      onSaved: async () => {
+        await renderFixedTaskList(fixedListEl, todayStr(), { editable: true, showManage: true, onChange: rescheduleReminders });
+        rescheduleReminders();
+      }
     });
   });
 
   const todoListEl = document.getElementById('custom-todos-list');
-  await renderTodoList(todoListEl, {});
+  await renderTodoList(todoListEl, { showManage: true });
   document.getElementById('add-todo-btn').addEventListener('click', () => {
-    openAddTodoModal(() => renderTodoList(todoListEl, {}));
+    openTodoModal({ onSaved: () => renderTodoList(todoListEl, { showManage: true }) });
   });
 }
 
 // ===================== Day Detail providers =====================
+// No edit/delete here on purpose — same reasoning as habits.js.
 
 async function fixedTasksDayProvider(dateStr) {
   const tasks = await getActiveFixedTasks();
   if (tasks.length === 0) return null;
   const editable = !isFutureDate(dateStr);
   const node = document.createElement('div');
-  const rows = await Promise.all(tasks.map(async t => fixedTaskRowHtml(t, await isFixedTaskDone(t.id, dateStr), editable)));
+  const rows = await Promise.all(tasks.map(async t => fixedTaskRowHtml(t, await isFixedTaskDone(t.id, dateStr), editable, false)));
   node.innerHTML = rows.join('');
   node.querySelectorAll('input[type=checkbox]').forEach(cb => {
     cb.addEventListener('change', async () => {
@@ -235,7 +339,7 @@ async function todosDayProvider(dateStr) {
   const todos = await getTodosForDate(dateStr);
   if (todos.length === 0) return null;
   const node = document.createElement('div');
-  node.innerHTML = todos.map(todoRowHtml).join('');
+  node.innerHTML = todos.map(t => todoRowHtml(t, false)).join('');
   node.querySelectorAll('input[type=checkbox]').forEach(cb => {
     cb.addEventListener('change', async () => {
       await toggleTodo(Number(cb.dataset.todoId));

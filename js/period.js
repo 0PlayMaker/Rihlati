@@ -338,13 +338,14 @@ async function periodYearlyProvider(year) {
   const prefix = String(year);
   const yearPeriods = all.filter(p => p.startDate.startsWith(prefix));
   if (yearPeriods.length === 0) return null;
-  const stats = await getPeriodStats(); // overall median, not year-scoped — useful context regardless of year viewed
+  const stats = await getPeriodStats(); // overall, not year-scoped — useful context regardless of year viewed
   const today = todayStr();
   const totalDays = yearPeriods.reduce((s, p) => s + (daysBetween(p.startDate, p.endDate || today) + 1), 0);
   const html = `
     <div class="yearly-row"><span>عدد الدورات</span><span>${yearPeriods.length}</span></div>
     <div class="yearly-row"><span>إجمالي أيام الدورة</span><span>${totalDays} يوم</span></div>
-    <div class="yearly-row"><span>متوسط طول الدورة (كل الفترة)</span><span>${Math.round(stats.avgCycleLength)} يوم</span></div>
+    <div class="yearly-row"><span>متوسط طول الدورة نفسها</span><span>${stats.periodSamples > 0 ? Math.round(stats.avgPeriodLength) + ' يوم' : 'غير كافٍ بعد'}</span></div>
+    <div class="yearly-row"><span>متوسط الفترة بين الدورات</span><span>${stats.cycleSamples > 0 ? Math.round(stats.avgCycleLength) + ' يوم' : 'غير كافٍ بعد (تحتاج دورتين على الأقل)'}</span></div>
   `;
   return { title: 'الدورة الشهرية', html, count: yearPeriods.length };
 }

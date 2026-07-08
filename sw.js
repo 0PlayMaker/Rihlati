@@ -1,7 +1,7 @@
 // sw.js — cache-first app shell. First load needs network; every load
 // after that works fully offline, including on a fresh phone reboot.
 
-const CACHE_NAME = 'rahlati-v6';
+const CACHE_NAME = 'rahlati-v7';
 
 const ASSETS = [
   './',
@@ -32,6 +32,7 @@ const ASSETS = [
   './js/food.js',
   './js/body.js',
   './js/goals.js',
+  './js/diary.js',
   './js/calendar.js',
   './js/backup.js',
   './js/app.js'

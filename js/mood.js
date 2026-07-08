@@ -13,6 +13,18 @@ const MOOD_PRESETS = [
 async function getMoodLog(date) {
   return db.moodLogs.where('date').equals(date).first();
 }
+
+// Last 7 days of mood, oldest first — for Home's ring card. Days with
+// no entry show as a faint placeholder dot rather than being skipped,
+// so the strip always reads as "the last 7 days," not "the last 7 days
+// she happened to log."
+async function getLast7DaysMood() {
+  const today = todayStr();
+  const dates = [];
+  for (let i = 6; i >= 0; i--) dates.push(addDays(today, -i));
+  const logs = await Promise.all(dates.map(d => getMoodLog(d)));
+  return dates.map((date, i) => ({ date, emoji: logs[i]?.emoji || null }));
+}
 async function setMood(date, emoji, note) {
   const existing = await getMoodLog(date);
   if (existing) await db.moodLogs.update(existing.id, { emoji, note: note || '' });

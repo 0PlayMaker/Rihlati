@@ -201,6 +201,9 @@ async function createCustomAdhkar(name) {
   const all = await db.customAdhkar.toArray();
   await db.customAdhkar.add({ name, archived: false, order: all.length, createdAt: Date.now() });
 }
+async function updateCustomAdhkarName(id, name) {
+  await db.customAdhkar.update(id, { name });
+}
 async function getActiveCustomAdhkar() {
   const all = await db.customAdhkar.toArray();
   return all.filter(a => !a.archived).sort((a, b) => a.order - b.order);
@@ -243,6 +246,11 @@ async function renderCustomAdhkarList(container, dateStr, { editable = true, sho
         <div class="adhkar-counter-controls">
           <button class="adhkar-count-btn" data-action="edit" ${editable ? '' : 'disabled'}>${count}</button>
           ${editable ? `<button class="adhkar-plus" data-action="inc">+</button>` : ''}
+          ${showStreak ? `
+            <div class="row-actions">
+              <button class="icon-btn" data-action="rename">✏️</button>
+              <button class="icon-btn icon-btn-danger" data-action="remove">🗑️</button>
+            </div>` : ''}
         </div>
       </div>`;
   }));
@@ -264,6 +272,21 @@ async function renderCustomAdhkarList(container, dateStr, { editable = true, sho
         await setCustomAdhkarCount(id, dateStr, n);
         await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
       }
+    });
+    const renameBtn = row.querySelector('[data-action="rename"]');
+    if (renameBtn) renameBtn.addEventListener('click', async () => {
+      const item = items.find(a => a.id === id);
+      const input = prompt('اسم الذكر:', item.name);
+      if (input === null || !input.trim()) return;
+      await updateCustomAdhkarName(id, input.trim());
+      await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
+    });
+    const removeBtn = row.querySelector('[data-action="remove"]');
+    if (removeBtn) removeBtn.addEventListener('click', async () => {
+      const item = items.find(a => a.id === id);
+      if (!confirm(`حذف "${item.name}"؟`)) return;
+      await archiveCustomAdhkar(id);
+      await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
     });
   });
 }
