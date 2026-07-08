@@ -3,7 +3,9 @@
 // (that reuse is the payoff of normalizing prayerLogs instead of using
 // 5 boolean columns). Sunnah / adhkar-after / daily adhkar stay 2-state
 // checkboxes, same reasoning as Fixed Tasks: no "missed" button exists
-// for them, so there's no real 3rd state to model.
+// for them — but they still get streak/succeeded/failed stats, using
+// computeImplicitStats since "failed" there just means "a day since you
+// started that you didn't mark," not an explicit relapse tap.
 
 // ===================== Fard (5 daily prayers) =====================
 
@@ -59,26 +61,41 @@ async function getFardTodayCount() {
   return done;
 }
 
-function fardRowHtml(prayerName, status, { editable, showStreak, streak }) {
+// Per-prayer stats (e.g. "how many days in a row have I prayed Fajr
+// specifically") — a different, also-useful number from the aggregate
+// fard streak shown near the ring (which is "all 5 done that day").
+async function getFardPrayerStats(prayerName) {
+  const logs = await db.prayerLogs.where('prayerName').equals(prayerName).toArray();
+  const done = logs.filter(l => l.status === 'done').map(l => l.date);
+  const missed = logs.filter(l => l.status === 'missed').map(l => l.date);
+  return computeStreakStats(done, missed, []);
+}
+
+function fardRowHtml(prayerName, status, { editable, showStreak, stats }) {
   return threeStateRowHtml({
     rowId: prayerName,
     icon: '🕌',
     name: PRAYER_LABELS[prayerName],
-    status, editable, showStreak, streak
+    status, editable, showStreak, stats
   });
 }
 
-async function renderFardList(container, dateStr, { editable, onChange } = {}) {
+// showStreak defaults to false (undefined) on purpose — Day Detail
+// calls this for arbitrary past dates, and a streak number next to a
+// random past day reads as "streak as of that day," which is misleading.
+// Only the live Worship page (today) passes showStreak: true.
+async function renderFardList(container, dateStr, { editable, showStreak, onChange } = {}) {
   const rows = await Promise.all(PRAYER_NAMES.map(async p => {
     const status = await getFardStatus(p, dateStr);
-    return fardRowHtml(p, status, { editable, showStreak: false, streak: 0 });
+    const stats = showStreak ? await getFardPrayerStats(p) : null;
+    return fardRowHtml(p, status, { editable, showStreak, stats });
   }));
   container.innerHTML = rows.join('');
   wireThreeStateRows(container, async (prayerName, action) => {
     if (action === 'done') await setFardStatus(prayerName, dateStr, 'done');
     else if (action === 'missed') await setFardStatus(prayerName, dateStr, 'missed');
     else if (action === 'undo') await clearFardStatus(prayerName, dateStr);
-    await renderFardList(container, dateStr, { editable, onChange });
+    await renderFardList(container, dateStr, { editable, showStreak, onChange });
     if (onChange) onChange();
   });
 }
@@ -96,6 +113,25 @@ async function toggleAdhkarAfter(prayerName, date) {
   const existing = await getLog(db.adhkarAfterLogs, 'prayerName', prayerName, date);
   if (existing) await deleteLog(db.adhkarAfterLogs, 'prayerName', prayerName, date);
   else await upsertLog(db.adhkarAfterLogs, 'prayerName', prayerName, date, {});
+}
+
+// Aggregate stats — "day counts" only if ALL 5 prayers had this marked,
+// same all-or-nothing logic as the fard aggregate streak. Shown once
+// near each section's header on the Worship page, not per-chip (5
+// prayers × 2 tiny chips has no room for 3 numbers each).
+async function getSunnahStats() {
+  const logs = await db.sunnahLogs.toArray();
+  const countByDate = {};
+  logs.forEach(l => { countByDate[l.date] = (countByDate[l.date] || 0) + 1; });
+  const dates = Object.keys(countByDate).filter(d => countByDate[d] >= PRAYER_NAMES.length);
+  return computeImplicitStats(dates, []);
+}
+async function getAdhkarAfterStats() {
+  const logs = await db.adhkarAfterLogs.toArray();
+  const countByDate = {};
+  logs.forEach(l => { countByDate[l.date] = (countByDate[l.date] || 0) + 1; });
+  const dates = Object.keys(countByDate).filter(d => countByDate[d] >= PRAYER_NAMES.length);
+  return computeImplicitStats(dates, []);
 }
 
 async function renderExtrasList(container, dateStr) {
@@ -131,6 +167,15 @@ async function toggleDailyAdhkar(kind, date) {
   const existing = await getLog(db.dailyAdhkarLogs, 'kind', kind, date);
   if (existing) await deleteLog(db.dailyAdhkarLogs, 'kind', kind, date);
   else await upsertLog(db.dailyAdhkarLogs, 'kind', kind, date, {});
+}
+
+// "Day counts" if both morning AND evening were marked.
+async function getDailyAdhkarStats() {
+  const logs = await db.dailyAdhkarLogs.toArray();
+  const countByDate = {};
+  logs.forEach(l => { countByDate[l.date] = (countByDate[l.date] || 0) + 1; });
+  const dates = Object.keys(countByDate).filter(d => countByDate[d] >= 2);
+  return computeImplicitStats(dates, []);
 }
 
 async function renderDailyAdhkar(container, dateStr) {
@@ -174,8 +219,13 @@ async function incrementCustomAdhkarCount(adhkarId, date) {
   const current = await getCustomAdhkarCount(adhkarId, date);
   await setCustomAdhkarCount(adhkarId, date, current + 1);
 }
+async function getCustomAdhkarStats(adhkarId) {
+  const logs = await db.customAdhkarLogs.where('adhkarId').equals(adhkarId).toArray();
+  const dates = logs.filter(l => l.count > 0).map(l => l.date);
+  return computeImplicitStats(dates, []);
+}
 
-async function renderCustomAdhkarList(container, dateStr, { editable = true } = {}) {
+async function renderCustomAdhkarList(container, dateStr, { editable = true, showStreak = false } = {}) {
   const items = await getActiveCustomAdhkar();
   if (items.length === 0) {
     container.innerHTML = `<div class="empty-state"><p>ما في أذكار مخصصة بعد.</p></div>`;
@@ -183,9 +233,13 @@ async function renderCustomAdhkarList(container, dateStr, { editable = true } = 
   }
   const rows = await Promise.all(items.map(async a => {
     const count = await getCustomAdhkarCount(a.id, dateStr);
+    const statsText = showStreak ? statsLine(await getCustomAdhkarStats(a.id)) : '';
     return `
       <div class="adhkar-counter-row" data-adhkar-id="${a.id}">
-        <span class="adhkar-name">${escapeHtml(a.name)}</span>
+        <div class="adhkar-name-block">
+          <span class="adhkar-name">${escapeHtml(a.name)}</span>
+          ${statsText ? `<span class="tsr-streak">${statsText}</span>` : ''}
+        </div>
         <div class="adhkar-counter-controls">
           <button class="adhkar-count-btn" data-action="edit" ${editable ? '' : 'disabled'}>${count}</button>
           ${editable ? `<button class="adhkar-plus" data-action="inc">+</button>` : ''}
@@ -198,7 +252,7 @@ async function renderCustomAdhkarList(container, dateStr, { editable = true } = 
     const incBtn = row.querySelector('[data-action="inc"]');
     if (incBtn) incBtn.addEventListener('click', async () => {
       await incrementCustomAdhkarCount(id, dateStr);
-      await renderCustomAdhkarList(container, dateStr, { editable });
+      await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
     });
     row.querySelector('[data-action="edit"]').addEventListener('click', async () => {
       if (!editable) return;
@@ -208,7 +262,7 @@ async function renderCustomAdhkarList(container, dateStr, { editable = true } = 
       const n = parseInt(input, 10);
       if (!Number.isNaN(n) && n >= 0) {
         await setCustomAdhkarCount(id, dateStr, n);
-        await renderCustomAdhkarList(container, dateStr, { editable });
+        await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
       }
     });
   });
@@ -268,11 +322,13 @@ async function renderWorshipPage(params, view) {
 
     <div class="card">
       <h2 class="card-title">السنن والأذكار بعد الصلاة</h2>
+      <div class="worship-section-stats" id="extras-stats"></div>
       <div id="extras-list"></div>
     </div>
 
     <div class="card">
       <h2 class="card-title">أذكار الصباح والمساء</h2>
+      <div class="worship-section-stats" id="daily-adhkar-stats"></div>
       <div id="daily-adhkar"></div>
     </div>
 
@@ -304,7 +360,7 @@ async function renderWorshipPage(params, view) {
   }
 
   await refreshRingAndPause();
-  await renderFardList(document.getElementById('fard-list'), today, { editable: true, onChange: refreshRingAndPause });
+  await renderFardList(document.getElementById('fard-list'), today, { editable: true, showStreak: true, onChange: refreshRingAndPause });
 
   document.getElementById('fard-pause-btn').addEventListener('click', async () => {
     const activePause = await getActiveFardPause();
@@ -313,13 +369,20 @@ async function renderWorshipPage(params, view) {
     await refreshRingAndPause();
   });
 
+  const [sunnahStats, adhkarAfterStats, dailyStats] = await Promise.all([getSunnahStats(), getAdhkarAfterStats(), getDailyAdhkarStats()]);
+  document.getElementById('extras-stats').innerHTML = `
+    <p class="worship-stat-line">سنن: ${statsLine(sunnahStats) || '—'}</p>
+    <p class="worship-stat-line">أذكار بعد الصلاة: ${statsLine(adhkarAfterStats) || '—'}</p>
+  `;
+  document.getElementById('daily-adhkar-stats').innerHTML = `<p class="worship-stat-line">${statsLine(dailyStats) || '—'}</p>`;
+
   await renderExtrasList(document.getElementById('extras-list'), today);
   await renderDailyAdhkar(document.getElementById('daily-adhkar'), today);
 
   const adhkarListEl = document.getElementById('custom-adhkar-list');
-  await renderCustomAdhkarList(adhkarListEl, today, { editable: true });
+  await renderCustomAdhkarList(adhkarListEl, today, { editable: true, showStreak: true });
   document.getElementById('add-adhkar-btn').addEventListener('click', () => {
-    openAddCustomAdhkarModal(() => renderCustomAdhkarList(adhkarListEl, today, { editable: true }));
+    openAddCustomAdhkarModal(() => renderCustomAdhkarList(adhkarListEl, today, { editable: true, showStreak: true }));
   });
 }
 

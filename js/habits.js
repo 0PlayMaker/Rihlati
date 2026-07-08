@@ -50,9 +50,13 @@ async function getHabitDoneDates(habitId) {
   const logs = await db.habitLogs.where('habitId').equals(habitId).toArray();
   return logs.filter(l => l.status === 'done').map(l => l.date);
 }
-async function getHabitStreak(habitId) {
-  const doneDates = await getHabitDoneDates(habitId);
-  return computeCurrentStreak(doneDates, []); // Habits don't use pauses
+async function getHabitMissedDates(habitId) {
+  const logs = await db.habitLogs.where('habitId').equals(habitId).toArray();
+  return logs.filter(l => l.status === 'missed').map(l => l.date);
+}
+async function getHabitStats(habitId) {
+  const [doneDates, missedDates] = await Promise.all([getHabitDoneDates(habitId), getHabitMissedDates(habitId)]);
+  return computeStreakStats(doneDates, missedDates, []); // Habits don't use pauses
 }
 
 async function getHabitsRingData() {
@@ -72,14 +76,14 @@ async function getHabitsRingData() {
 
 // ---------- rendering ----------
 
-function habitRowHtml(habit, dateStr, status, { editable, showStreak, streak }) {
+function habitRowHtml(habit, dateStr, status, { editable, showStreak, stats }) {
   const isBad = getHabitType(habit) === 'bad';
   return threeStateRowHtml({
     rowId: String(habit.id),
     colorClass: `habit-color-${habit.color}`,
     icon: habit.emoji,
     name: habit.name,
-    status, editable, showStreak, streak,
+    status, editable, showStreak, stats,
     doneLabel: isBad ? 'امتنعت' : 'تم',
     missedLabel: isBad ? 'زلة' : 'لم يتم'
   });
@@ -95,8 +99,8 @@ async function renderHabitRowsInto(container, habits, dateStr, { editable, showS
   }
   const rows = await Promise.all(habits.map(async h => {
     const status = await getHabitStatus(h.id, dateStr);
-    const streak = showStreak ? await getHabitStreak(h.id) : 0;
-    return habitRowHtml(h, dateStr, status, { editable, showStreak, streak });
+    const stats = showStreak ? await getHabitStats(h.id) : null;
+    return habitRowHtml(h, dateStr, status, { editable, showStreak, stats });
   }));
   container.innerHTML = rows.join('');
   wireThreeStateRows(container, async (rowId, action) => {

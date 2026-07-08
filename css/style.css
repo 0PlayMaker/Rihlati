@@ -130,16 +130,24 @@ a { color: var(--pink-deep); text-decoration: none; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .icon-btn {
-  background: var(--surface);
+  background: var(--track);
   border: none;
   border-radius: var(--radius-round);
   width: 40px; height: 40px;
   font-size: 18px;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: var(--shadow-tap);
   cursor: pointer;
 }
 .icon-btn:active { transform: scale(0.94); }
+
+.link-btn {
+  background: none; border: none; padding: 6px 2px;
+  font-family: var(--font); font-size: 13px; font-weight: 700;
+  color: var(--pink-deep); cursor: pointer;
+}
+.link-btn:active { opacity: 0.6; }
+
+.sex-chips { display: flex; gap: 6px; margin-bottom: var(--space-2); }
 
 /* ============================================================
    Cards & sections
@@ -245,10 +253,11 @@ a { color: var(--pink-deep); text-decoration: none; }
 
 .tsr-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-2); border-bottom: 1px solid var(--track); gap: var(--space-2); border-inline-start: 4px solid transparent; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .tsr-row:last-child { border-bottom: none; }
-.tsr-info { display: flex; align-items: center; gap: var(--space-2); min-width: 0; flex: 1; }
+.tsr-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.tsr-info-top { display: flex; align-items: center; gap: var(--space-2); }
 .tsr-icon { font-size: 20px; flex-shrink: 0; }
 .tsr-name { font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tsr-streak { font-size: 12px; color: var(--pink-deep); font-weight: 700; flex-shrink: 0; }
+.tsr-streak { font-size: 11px; color: var(--pink-deep); font-weight: 700; }
 .tsr-extra { display: flex; gap: 6px; flex-shrink: 0; }
 
 .habit-color-pink { border-inline-start-color: var(--pink); }
@@ -402,7 +411,10 @@ a { color: var(--pink-deep); text-decoration: none; }
 
 .adhkar-counter-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) 0; border-bottom: 1px solid var(--track); gap: var(--space-2); }
 .adhkar-counter-row:last-child { border-bottom: none; }
+.adhkar-name-block { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .adhkar-name { font-size: 15px; font-weight: 500; }
+.worship-section-stats { margin-bottom: var(--space-2); }
+.worship-stat-line { font-size: 12px; color: var(--ink-soft); margin: 2px 0; }
 .adhkar-counter-controls { display: flex; align-items: center; gap: var(--space-2); }
 .adhkar-count-btn {
   min-width: 44px; height: 36px; border-radius: var(--radius-md); border: 1.5px solid var(--track);
@@ -531,6 +543,29 @@ a { color: var(--pink-deep); text-decoration: none; }
 .goal-title.done { color: var(--ink-soft); }
 .goal-edit-btn { width: 32px; height: 32px; font-size: 14px; box-shadow: none; background: var(--track); flex-shrink: 0; }
 .goal-notes { font-size: 13px; color: var(--ink-faint); margin-top: var(--space-2); }
+.goal-slider { width: 100%; accent-color: var(--pink-deep); margin: var(--space-2) 0 4px; }
+
+/* ============================================================
+   Bottom nav bar
+   ============================================================ */
+
+#bottom-bar {
+  position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+  width: 100%; max-width: 480px;
+  display: flex; justify-content: space-around;
+  background: var(--surface); box-shadow: 0 -2px 16px rgba(232,143,174,0.14);
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+  z-index: 50;
+}
+#bottom-bar.hidden { display: none; }
+#view.has-bottom-bar { padding-bottom: 76px; }
+.bottom-bar-item {
+  background: none; border: none; display: flex; flex-direction: column; align-items: center;
+  gap: 2px; padding: 6px 4px; color: var(--ink-faint); cursor: pointer; flex: 1; min-width: 0;
+}
+.bottom-bar-item.active { color: var(--pink-deep); }
+.bottom-bar-icon { font-size: 18px; }
+.bottom-bar-label { font-size: 10px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 
 /* ============================================================
    Toast

@@ -192,6 +192,35 @@ function registerAllYearlyStatsProviders() {
   registerYearlyStatsProvider(goalsYearlyProvider);
 }
 
+async function renderBottomBar() {
+  const container = document.getElementById('bottom-bar');
+  if (!container) return;
+  const settings = await db.settings.get(1);
+  const view = document.getElementById('view');
+
+  if (settings?.bottomBarEnabled === false) {
+    container.innerHTML = '';
+    container.classList.add('hidden');
+    if (view) view.classList.remove('has-bottom-bar');
+    return;
+  }
+  container.classList.remove('hidden');
+  if (view) view.classList.add('has-bottom-bar');
+
+  const enabledKeys = settings?.bottomBarItems || BOTTOM_BAR_ITEMS.map(i => i.key);
+  const items = BOTTOM_BAR_ITEMS.filter(i => enabledKeys.includes(i.key));
+  const currentBase = '/' + (currentPath().split('/').filter(Boolean)[0] || 'home');
+
+  container.innerHTML = items.map(i => `
+    <button class="bottom-bar-item ${currentBase === i.path ? 'active' : ''}" data-path="${i.path}">
+      <span class="bottom-bar-icon">${i.icon}</span>
+      <span class="bottom-bar-label">${i.label}</span>
+    </button>`).join('');
+  container.querySelectorAll('.bottom-bar-item').forEach(btn => {
+    btn.addEventListener('click', () => goTo(btn.dataset.path));
+  });
+}
+
 function startApp(profile, settings) {
   registerAllDayProviders();
   registerAllActivityProviders();
@@ -208,8 +237,10 @@ function startApp(profile, settings) {
   route('/yearly', renderYearlyOverviewPage);
   route('/settings', renderSettingsPage);
 
-  document.getElementById('app-root').innerHTML = '<div id="view"></div>';
+  document.getElementById('app-root').innerHTML = '<div id="view"></div><nav id="bottom-bar"></nav>';
   renderRoute();
+  renderBottomBar();
+  window.addEventListener('hashchange', renderBottomBar);
 
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible') {

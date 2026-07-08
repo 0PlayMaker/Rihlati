@@ -22,11 +22,27 @@ function registerActivityProvider(fn) { activityProviders.push(fn); }
 const yearlyStatsProviders = [];
 function registerYearlyStatsProvider(fn) { yearlyStatsProviders.push(fn); }
 
+// Runs every provider and returns only the ones that succeeded, logging
+// (not throwing) on any that fail. One broken provider — a bad table
+// reference, bad data — used to be able to take down Home's calendar,
+// Day Detail, AND the Yearly Overview at once via a single rejected
+// Promise.all(). Never again: a failure here just means that one
+// section quietly contributes nothing, instead of blanking the page.
+async function settleProviders(providers, ...args) {
+  const results = await Promise.allSettled(providers.map(fn => fn(...args)));
+  const values = [];
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') values.push(r.value);
+    else console.error(`Provider #${i} failed:`, r.reason);
+  });
+  return values;
+}
+
 async function getMonthActivityDates(year, month) {
   const prefix = `${year}-${String(month + 1).padStart(2, '0')}`;
-  const results = await Promise.all(activityProviders.map(fn => fn()));
+  const results = await settleProviders(activityProviders);
   const dates = new Set();
-  results.forEach(arr => arr.forEach(d => { if (d && d.startsWith(prefix)) dates.add(d); }));
+  results.forEach(arr => (arr || []).forEach(d => { if (d && d.startsWith(prefix)) dates.add(d); }));
   return dates;
 }
 
@@ -96,7 +112,7 @@ async function openDayDetail(dateStr) {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
   const body = document.getElementById('day-detail-body');
-  const results = await Promise.all(dayProviders.map(fn => fn(dateStr)));
+  const results = await settleProviders(dayProviders, dateStr);
   const sections = results.filter(Boolean);
 
   if (sections.length === 0) {
@@ -133,7 +149,7 @@ async function renderYearlyOverviewPage(params, view) {
   document.getElementById('year-prev').addEventListener('click', () => goTo(`/yearly/${year - 1}`));
   document.getElementById('year-next').addEventListener('click', () => goTo(`/yearly/${year + 1}`));
 
-  const results = await Promise.all(yearlyStatsProviders.map(fn => fn(year)));
+  const results = await settleProviders(yearlyStatsProviders, year);
   const sections = results.filter(Boolean);
 
   let grandTotal = 0;

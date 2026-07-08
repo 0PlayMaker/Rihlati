@@ -65,21 +65,58 @@ function monthGridDates(year, month) {
   return cells;
 }
 
-// A row with an icon, a name, an optional streak badge, and the shared
-// ❤️ done / 💔 missed / ↩️ undo control. `rowId` is any string unique
-// within the list (e.g. `habit-3` or `prayer-fajr`) — callers read it
-// back off `data-row-id` to know which item was tapped.
+// ---------- streak stats (streak / total succeeded / total failed) ----------
+// Two flavors, since not everything has an explicit "missed" marking:
+//  - Habits and Fard log an explicit status ('done' or 'missed'), so
+//    "failed" is just a count of the explicit misses.
+//  - Sunnah, adhkar-after, daily adhkar, and custom adhkar are presence-
+//    only (no relapse button) — "failed" there is implicit: every day
+//    since the first-ever log where it wasn't marked counts as a miss,
+//    same logic the streak engine already uses to break a streak on an
+//    unmarked past day, just accumulated into a total instead of reset.
+
+function computeStreakStats(doneDates, missedDates, pauses = []) {
+  return {
+    streak: computeCurrentStreak(doneDates, pauses),
+    succeeded: doneDates.length,
+    failed: missedDates.length
+  };
+}
+
+function computeImplicitStats(loggedDates, pauses = []) {
+  const streak = computeCurrentStreak(loggedDates, pauses);
+  const succeeded = loggedDates.length;
+  let failed = 0;
+  if (succeeded > 0) {
+    const first = [...loggedDates].sort()[0];
+    const totalDays = daysBetween(first, todayStr()) + 1;
+    failed = Math.max(0, totalDays - succeeded);
+  }
+  return { streak, succeeded, failed };
+}
+
+function statsLine(stats) {
+  if (!stats || (stats.streak === 0 && stats.succeeded === 0 && stats.failed === 0)) return '';
+  return `🔥${stats.streak} · ✅${stats.succeeded} · 💔${stats.failed}`;
+}
+
+// A row with an icon, a name, an optional streak+stats badge, and the
+// shared ❤️ done / 💔 missed / ↩️ undo control. `rowId` is any string
+// unique within the list (e.g. `habit-3` or `prayer-fajr`) — callers
+// read it back off `data-row-id` to know which item was tapped.
 // doneLabel/missedLabel default to "تم"/"لم يتم" — a "bad" habit (one
 // she's quitting) passes "امتنعت"/"زلة" instead, since ❤️ means
 // "abstained" rather than "did the thing" there. The emoji stay the
 // same either way; only the meaning behind them flips.
-function threeStateRowHtml({ rowId, colorClass, icon, name, status, editable, showStreak, streak, extra, doneLabel, missedLabel }) {
+function threeStateRowHtml({ rowId, colorClass, icon, name, status, editable, showStreak, stats, extra, doneLabel, missedLabel }) {
   return `
     <div class="tsr-row ${colorClass || ''}" data-row-id="${rowId}">
       <div class="tsr-info">
-        <span class="tsr-icon">${icon}</span>
-        <span class="tsr-name">${escapeHtml(name)}</span>
-        ${showStreak ? `<span class="tsr-streak">${streak > 0 ? `🔥${streak}` : ''}</span>` : ''}
+        <div class="tsr-info-top">
+          <span class="tsr-icon">${icon}</span>
+          <span class="tsr-name">${escapeHtml(name)}</span>
+        </div>
+        ${showStreak ? `<span class="tsr-streak">${statsLine(stats)}</span>` : ''}
       </div>
       ${extra ? `<div class="tsr-extra">${extra}</div>` : ''}
       <div class="tsr-actions ${editable ? '' : 'disabled'}">

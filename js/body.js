@@ -145,17 +145,10 @@ async function renderBmiCard(container) {
   if (!settings?.heightCm) {
     container.innerHTML = `
       <p class="ring-label">مؤشر كتلة الجسم</p>
-      <p class="empty-state-sub">أدخلي طولك لعرض المدى المرجعي للوزن</p>
-      <label class="field-label">الطول (سم)</label>
-      <input class="text-input" type="number" id="height-input" placeholder="مثلاً: 165">
-      <button class="btn btn-secondary btn-sm" id="save-height-btn">حفظ</button>
+      <p class="empty-state-sub">أضيفي طولك من الإعدادات لعرض المدى المرجعي للوزن</p>
+      <button class="link-btn" id="go-to-health-settings">فتح الإعدادات ←</button>
     `;
-    document.getElementById('save-height-btn').addEventListener('click', async () => {
-      const h = parseInt(document.getElementById('height-input').value, 10);
-      if (!h || h < 100 || h > 220) { alert('أدخلي طولاً صحيحاً بالسنتيمتر'); return; }
-      await db.settings.update(1, { heightCm: h });
-      renderBmiCard(container);
-    });
+    document.getElementById('go-to-health-settings').addEventListener('click', () => goTo('/settings'));
     return;
   }
 
@@ -168,16 +161,9 @@ async function renderBmiCard(container) {
     ${bmiLine}
     <p class="period-status-sub">المدى المرجعي لطولك: ${range.min.toFixed(0)}–${range.max.toFixed(0)} كغ</p>
     <p class="settings-note">هذا مقياس عام وله حدوده (لا يأخذ الكتلة العضلية بالحسبان مثلاً)، وليس تشخيصاً طبياً.</p>
-    <button class="btn btn-text btn-sm" id="edit-height-btn">تعديل الطول</button>
+    <button class="link-btn" id="go-to-health-settings">تعديل من الإعدادات ←</button>
   `;
-  document.getElementById('edit-height-btn').addEventListener('click', async () => {
-    const h = prompt('الطول بالسنتيمتر:', String(settings.heightCm));
-    if (h === null) return;
-    const n = parseInt(h, 10);
-    if (!n || n < 100 || n > 220) { alert('أدخلي طولاً صحيحاً'); return; }
-    await db.settings.update(1, { heightCm: n });
-    renderBmiCard(container);
-  });
+  document.getElementById('go-to-health-settings').addEventListener('click', () => goTo('/settings'));
 }
 
 // ---------- body measurements (optional, flexible — she names her own) ----------
@@ -269,7 +255,7 @@ async function renderBodyPage(params, view) {
       <div class="weight-chart-wrap" id="weight-chart"></div>
       <label class="field-label">الوزن المستهدف (اختياري)</label>
       <input class="text-input" type="number" step="0.1" id="target-weight-input">
-      <button class="btn btn-secondary btn-sm" id="save-target-btn">حفظ الهدف</button>
+      <button class="link-btn" id="save-target-btn">حفظ الهدف</button>
     </div>
     <div class="card">
       <button class="btn btn-primary btn-block" id="weight-add-btn">+ تسجيل وزن اليوم</button>

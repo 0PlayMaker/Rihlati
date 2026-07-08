@@ -114,6 +114,18 @@ const MEAL_TYPES = [
 function mealTypeLabel(key) { return MEAL_TYPES.find(m => m.key === key)?.label || key; }
 function mealTypeIcon(key) { return MEAL_TYPES.find(m => m.key === key)?.icon || '🍽️'; }
 
+// Bottom nav — shared between app.js (renders it) and profile.js
+// (renders the Settings checklist that controls which items show).
+const BOTTOM_BAR_ITEMS = [
+  { key: 'home', label: 'الرئيسية', icon: '🏠', path: '/home' },
+  { key: 'food', label: 'الطعام', icon: '🍽️', path: '/food' },
+  { key: 'body', label: 'الوزن', icon: '⚖️', path: '/body' },
+  { key: 'worship', label: 'العبادة', icon: '🕌', path: '/worship' },
+  { key: 'habits', label: 'العادات', icon: '🌱', path: '/habits' },
+  { key: 'period', label: 'الدورة', icon: '🌙', path: '/period' },
+  { key: 'goals', label: 'الأهداف', icon: '🎯', path: '/goals' }
+];
+
 // ---------- Phase 5 (Body + Goals) — new tables only ----------
 // heightCm / targetWeightKg live as plain fields on the existing
 // `settings` row — Dexie only needs a version bump for new tables or
@@ -125,7 +137,12 @@ db.version(5).stores({
   bodyMeasurementLogs: '++id, &[measurementId+date], measurementId',
   // current/target/unit, never a stored percentage — same rule as
   // everywhere else that shows progress.
-  goals: '++id'
+  goals: '++id',
+  // Was referenced throughout food.js/app.js/backup.js but never
+  // actually declared here — an undeclared Dexie table throws on
+  // access, which broke three unrelated-looking things at once because
+  // each one hit it inside an unguarded Promise.all().
+  waterLogs: '++id, &date'
 });
 
 // ---------- date helpers (used everywhere) ----------

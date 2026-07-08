@@ -112,8 +112,8 @@ function renderSetupWizard() {
         preview.innerHTML = `<img src="${pictureUrl(state.pictureBlob)}" alt="">`;
       } catch { /* silently keep previous state if the image failed to load */ }
     });
-    document.getElementById('wz-skip2').addEventListener('click', step3);
-    document.getElementById('wz-next2').addEventListener('click', step3);
+    document.getElementById('wz-skip2').addEventListener('click', () => step3());
+    document.getElementById('wz-next2').addEventListener('click', () => step3());
   }
 
   function step3(mismatchError) {
@@ -274,12 +274,27 @@ async function renderSettingsPage(params, view) {
     </div>
 
     <div class="card settings-card">
+      <h2 class="card-title">المعلومات الصحية</h2>
+      <label class="field-label">العمر</label>
+      <input class="text-input" type="number" id="settings-age" value="${settings.age ?? ''}" placeholder="مثلاً: 28">
+      <label class="field-label">الجنس</label>
+      <div class="sex-chips" id="settings-sex-chips">
+        <button class="chip ${(settings.sex ?? 'female') === 'female' ? 'active' : ''}" data-sex="female">أنثى</button>
+        <button class="chip ${settings.sex === 'male' ? 'active' : ''}" data-sex="male">ذكر</button>
+      </div>
+      <label class="field-label">الطول (سم)</label>
+      <input class="text-input" type="number" id="settings-height" value="${settings.heightCm ?? ''}" placeholder="مثلاً: 165">
+      <button class="link-btn" id="settings-save-health">حفظ المعلومات الصحية</button>
+      <p class="settings-note">تُستخدم لحساب مؤشر كتلة الجسم في صفحة الوزن.</p>
+    </div>
+
+    <div class="card settings-card">
       <div class="settings-row">
         <span>رمز الحماية (PIN)</span>
         <label class="switch"><input type="checkbox" id="settings-pin-toggle" ${settings.pinEnabled ? 'checked' : ''}><span class="switch-track"></span></label>
       </div>
       <div id="settings-pin-change-wrap" class="${settings.pinEnabled ? '' : 'hidden'}">
-        <button class="btn btn-secondary btn-sm" id="settings-change-pin">تغيير الرمز</button>
+        <button class="link-btn" id="settings-change-pin">تغيير الرمز</button>
       </div>
     </div>
 
@@ -298,6 +313,20 @@ async function renderSettingsPage(params, view) {
       <button class="btn btn-primary btn-sm" id="settings-export">تنزيل نسخة احتياطية</button>
       <input type="file" accept=".zip" id="settings-import-input" class="hidden-file-input">
       <button class="btn btn-secondary btn-sm" id="settings-import">استعادة من نسخة احتياطية</button>
+    </div>
+
+    <div class="card settings-card">
+      <div class="settings-row">
+        <span>الشريط السفلي</span>
+        <label class="switch"><input type="checkbox" id="settings-bottombar-toggle" ${settings.bottomBarEnabled === false ? '' : 'checked'}><span class="switch-track"></span></label>
+      </div>
+      <div id="bottombar-items-wrap" class="${settings.bottomBarEnabled === false ? 'hidden' : ''}">
+        ${BOTTOM_BAR_ITEMS.map(i => `
+          <label class="checkbox-row">
+            <input type="checkbox" data-bbkey="${i.key}" ${(settings.bottomBarItems || BOTTOM_BAR_ITEMS.map(x => x.key)).includes(i.key) ? 'checked' : ''}>
+            <span>${i.icon} ${i.label}</span>
+          </label>`).join('')}
+      </div>
     </div>
 
     <p class="app-footer">🌸 رحلتي — نسخة محلية بالكامل، بياناتك لا تغادر هذا الجهاز أبدًا</p>
@@ -319,6 +348,24 @@ async function renderSettingsPage(params, view) {
     if (!val) return;
     await db.profile.update(1, { name: val });
     toast('تم حفظ الاسم');
+  });
+
+  let selectedSex = settings.sex ?? 'female';
+  document.getElementById('settings-sex-chips').querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      selectedSex = chip.dataset.sex;
+      document.getElementById('settings-sex-chips').querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.sex === selectedSex));
+    });
+  });
+  document.getElementById('settings-save-health').addEventListener('click', async () => {
+    const ageRaw = document.getElementById('settings-age').value;
+    const heightRaw = document.getElementById('settings-height').value;
+    const age = ageRaw === '' ? null : parseInt(ageRaw, 10);
+    const heightCm = heightRaw === '' ? null : parseInt(heightRaw, 10);
+    if (heightCm != null && (heightCm < 100 || heightCm > 220)) { alert('أدخلي طولاً صحيحاً بالسنتيمتر'); return; }
+    if (age != null && (age < 1 || age > 120)) { alert('أدخلي عمراً صحيحاً'); return; }
+    await db.settings.update(1, { age, sex: selectedSex, heightCm });
+    toast('تم حفظ المعلومات الصحية');
   });
 
   document.getElementById('settings-pin-toggle').addEventListener('change', async (e) => {
@@ -366,6 +413,19 @@ async function renderSettingsPage(params, view) {
       console.error(err);
       alert('تعذّرت قراءة ملف النسخة الاحتياطية. تأكدي أنه الملف الصحيح.');
     }
+  });
+
+  document.getElementById('settings-bottombar-toggle').addEventListener('change', async (e) => {
+    await db.settings.update(1, { bottomBarEnabled: e.target.checked });
+    document.getElementById('bottombar-items-wrap').classList.toggle('hidden', !e.target.checked);
+    renderBottomBar();
+  });
+  document.querySelectorAll('#bottombar-items-wrap input[data-bbkey]').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const checked = Array.from(document.querySelectorAll('#bottombar-items-wrap input[data-bbkey]:checked')).map(el => el.dataset.bbkey);
+      await db.settings.update(1, { bottomBarItems: checked });
+      renderBottomBar();
+    });
   });
 }
 
