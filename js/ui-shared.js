@@ -65,6 +65,11 @@ function playBeep() {
     osc.stop(_sharedAudioCtx.currentTime + 0.4);
   } catch (e) { /* fail silently — vibration still fires separately */ }
 }
+// A single beep wasn't noticeable enough — a short burst is what
+// actually gets attention when a timer finishes.
+function playBeepSequence(count = 3, gapMs = 220) {
+  for (let i = 0; i < count; i++) setTimeout(() => playBeep(), i * gapMs);
+}
 
 // Resizes+compresses an image client-side before it ever touches
 // IndexedDB. Profile picture uses a small maxDim (it's only ever a

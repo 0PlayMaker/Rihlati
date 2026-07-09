@@ -104,7 +104,7 @@ function openTimerModal(exercise) {
       intervalId = null;
       toggleBtn.textContent = 'ابدأ';
       display.classList.add('timer-done');
-      playBeep();
+      playBeepSequence(3);
       if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
     }
   }

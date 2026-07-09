@@ -113,6 +113,7 @@ function applyTheme(mode, accentHex) {
   root.setProperty('--pink', light);
   root.setProperty('--pink-deep', deep);
   const { r, g, b } = hexToRgb(deep);
+  root.setProperty('--pink-deep-rgb', `${r}, ${g}, ${b}`);
   root.setProperty('--shadow-soft', `0 6px 20px rgba(${r}, ${g}, ${b}, 0.16)`);
   root.setProperty('--shadow-tap', `0 2px 8px rgba(${r}, ${g}, ${b}, 0.14)`);
 

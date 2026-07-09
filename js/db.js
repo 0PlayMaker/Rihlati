@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v24 · ٩ يوليو ٢٠٢٦';
+const APP_VERSION = 'v27 · ٩ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -232,6 +232,25 @@ db.version(12).stores({
   courseTodos: '++id, courseId',
   courseMaterials: '++id, courseId',
   courseMaterialPhotos: 'materialId'
+});
+
+// ---------- Phase 13 — morning/evening adhkar as a real reading list ----------
+// dailyAdhkarLogs (done/not per kind+date) already existed and stays
+// exactly as-is — this just adds the actual TEXT entries she reads
+// through, so "mark as done" means something (she's tapping it after
+// actually reading her list, from a dedicated page, not blind).
+db.version(13).stores({
+  dailyAdhkarItems: '++id, kind'
+});
+
+// ---------- Phase 14 — النوم (sleep tracking) ----------
+// 'date' is the night the session STARTED on — "how did I sleep last
+// night" naturally means the night that began yesterday evening, which
+// is how every mainstream sleep tracker attributes a session, so Day
+// Detail/Yearly Overview line up with how she'd actually think about it.
+db.version(14).stores({
+  sleepLogs: '++id, date',
+  sleepDreamPhotos: 'sleepLogId'
 });
 
 // ---------- date helpers (used everywhere) ----------

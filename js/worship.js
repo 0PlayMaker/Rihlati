@@ -169,13 +169,34 @@ async function toggleDailyAdhkar(kind, date) {
   else await upsertLog(db.dailyAdhkarLogs, 'kind', kind, date, {});
 }
 
-// "Day counts" if both morning AND evening were marked.
+// \"Day counts\" if both morning AND evening were marked.
 async function getDailyAdhkarStats() {
   const logs = await db.dailyAdhkarLogs.toArray();
   const countByDate = {};
   logs.forEach(l => { countByDate[l.date] = (countByDate[l.date] || 0) + 1; });
   const dates = Object.keys(countByDate).filter(d => countByDate[d] >= 2);
   return computeImplicitStats(dates, []);
+}
+
+// ---------- her own list of adhkar texts to read through, per kind ----------
+
+async function addDailyAdhkarItem(kind, text) {
+  const all = await getDailyAdhkarItems(kind);
+  await db.dailyAdhkarItems.add({ kind, text, order: all.length, createdAt: Date.now() });
+}
+async function updateDailyAdhkarItemText(id, text) {
+  await db.dailyAdhkarItems.update(id, { text });
+}
+async function deleteDailyAdhkarItem(id) {
+  await db.dailyAdhkarItems.delete(id);
+}
+async function getDailyAdhkarItems(kind) {
+  const all = await db.dailyAdhkarItems.where('kind').equals(kind).toArray();
+  return all.sort((a, b) => a.order - b.order);
+}
+
+function dailyAdhkarKindLabel(kind) {
+  return kind === 'evening' ? 'أذكار المساء' : 'أذكار الصباح';
 }
 
 async function renderDailyAdhkar(container, dateStr) {
@@ -188,11 +209,83 @@ async function renderDailyAdhkar(container, dateStr) {
       <button class="chip-lg ${evening ? 'active' : ''}" data-kind="evening">🌙 أذكار المساء</button>
     </div>`;
   container.querySelectorAll('.chip-lg').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      await toggleDailyAdhkar(btn.dataset.kind, dateStr);
-      await renderDailyAdhkar(container, dateStr);
-    });
+    // Opens her actual reading list instead of blindly toggling — she
+    // marks done from inside that page, after reading through it.
+    btn.addEventListener('click', () => goTo(`/adhkar-detail/${btn.dataset.kind}/${dateStr}`));
   });
+}
+
+async function renderAdhkarDetailPage(params, view) {
+  const kind = params[0] === 'evening' ? 'evening' : 'morning';
+  const dateStr = params[1] || todayStr();
+  const label = dailyAdhkarKindLabel(kind);
+
+  view.innerHTML = `
+    <div class="page-header">
+      <button class="icon-btn" id="adhkar-detail-back">→</button>
+      <h1>${label}</h1>
+    </div>
+    ${dateStr !== todayStr() ? `<p class="settings-note">${formatDateArabic(dateStr, { weekday: true })}</p>` : ''}
+    <div class="card">
+      <div class="section-header">
+        <h2 class="card-title">القائمة</h2>
+        <button class="link-btn" id="add-adhkar-item-btn">+ إضافة</button>
+      </div>
+      <div id="adhkar-items-list"></div>
+    </div>
+    <div class="card" id="adhkar-done-card"></div>
+  `;
+  document.getElementById('adhkar-detail-back').addEventListener('click', () => history.back());
+
+  async function refreshItems() {
+    const items = await getDailyAdhkarItems(kind);
+    const el = document.getElementById('adhkar-items-list');
+    if (items.length === 0) {
+      el.innerHTML = `<div class="empty-state"><p>أضيفي أذكارك هنا لتقرئيها كل يوم.</p></div>`;
+      return;
+    }
+    el.innerHTML = items.map(i => `
+      <div class="task-row-wrap">
+        <p class="diary-entry-text adhkar-item-text">${escapeHtml(i.text)}</p>
+        ${kebabMenuHtml(String(i.id), [
+          { key: 'edit', label: 'تعديل' },
+          { key: 'delete', label: 'حذف', danger: true }
+        ])}
+      </div>`).join('');
+    wireKebabMenus(el, async (rowId, action) => {
+      const id = Number(rowId);
+      if (action === 'edit') {
+        const item = items.find(i => i.id === id);
+        const text = prompt('نص الذكر:', item.text);
+        if (!text || !text.trim()) return;
+        await updateDailyAdhkarItemText(id, text.trim());
+        await refreshItems();
+      } else if (action === 'delete') {
+        if (!confirm('حذف هذا الذكر من القائمة؟')) return;
+        await deleteDailyAdhkarItem(id);
+        await refreshItems();
+      }
+    });
+  }
+  await refreshItems();
+  document.getElementById('add-adhkar-item-btn').addEventListener('click', async () => {
+    const text = prompt('نص الذكر:');
+    if (!text || !text.trim()) return;
+    await addDailyAdhkarItem(kind, text.trim());
+    await refreshItems();
+  });
+
+  async function refreshDoneCard() {
+    const done = await isDailyAdhkarDone(kind, dateStr);
+    document.getElementById('adhkar-done-card').innerHTML = done
+      ? `<button class="btn btn-text btn-block" id="adhkar-toggle-done">↩️ تراجع عن "${label}" ${dateStr === todayStr() ? 'اليوم' : ''}</button>`
+      : `<button class="btn btn-primary btn-block" id="adhkar-toggle-done">✅ تم قراءة ${label}</button>`;
+    document.getElementById('adhkar-toggle-done').addEventListener('click', async () => {
+      await toggleDailyAdhkar(kind, dateStr);
+      await refreshDoneCard();
+    });
+  }
+  await refreshDoneCard();
 }
 
 // ===================== Standalone sunnah prayers (not tied to a fard) =====================

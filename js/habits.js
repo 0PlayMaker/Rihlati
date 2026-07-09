@@ -45,6 +45,13 @@ async function getHabitStatus(habitId, date) {
 }
 async function setHabitStatus(habitId, date, status) {
   await upsertLog(db.habitLogs, 'habitId', habitId, date, { status });
+  if (status === 'missed' && date === todayStr()) {
+    // A precise "right now" timestamp for the clock to use instead of
+    // approximating from the date alone — without this, tapping the
+    // mishap button at, say, 3pm would show the clock jump to "3 hours"
+    // immediately (measuring from midnight) instead of reading ~0.
+    await db.habits.update(habitId, { lastMishapAt: Date.now() });
+  }
 }
 async function clearHabitStatus(habitId, date) {
   await deleteLog(db.habitLogs, 'habitId', habitId, date);
@@ -96,8 +103,14 @@ async function getHabitClockReferenceMs(habit) {
   let ref = habit.createdAt;
   if (missedDates.length > 0) {
     const mostRecent = [...missedDates].sort().reverse()[0];
-    const missedDayStart = new Date(mostRecent + 'T00:00:00').getTime();
-    ref = mostRecent < todayStr() ? missedDayStart + 24 * 60 * 60 * 1000 : missedDayStart;
+    if (mostRecent === todayStr() && habit.lastMishapAt) {
+      // Today's mishap has a precise moment recorded — use it directly
+      // instead of the day-boundary approximation.
+      ref = habit.lastMishapAt;
+    } else {
+      const missedDayStart = new Date(mostRecent + 'T00:00:00').getTime();
+      ref = mostRecent < todayStr() ? missedDayStart + 24 * 60 * 60 * 1000 : missedDayStart;
+    }
   }
   if (habit.manualResetAt && habit.manualResetAt > ref) ref = habit.manualResetAt;
   return ref;

@@ -6,12 +6,12 @@
 
 // ===================== Courses =====================
 
-async function createCourse(title, description) {
+async function createCourse(title, description, endDate) {
   const all = await db.courses.toArray();
-  return db.courses.add({ title, description: description || '', archived: false, order: all.length, createdAt: Date.now() });
+  return db.courses.add({ title, description: description || '', endDate: endDate || null, archived: false, order: all.length, createdAt: Date.now() });
 }
-async function updateCourse(id, { title, description }) {
-  await db.courses.update(id, { title, description: description || '' });
+async function updateCourse(id, { title, description, endDate }) {
+  await db.courses.update(id, { title, description: description || '', endDate: endDate || null });
 }
 async function archiveCourse(id) {
   await db.courses.update(id, { archived: true });
@@ -36,6 +36,8 @@ function openCourseModal({ existingId, onSaved } = {}) {
       <input class="text-input" id="course-title-input" placeholder="مثلاً: تعلم React" autofocus>
       <label class="field-label">وصف (اختياري)</label>
       <textarea class="mood-note-input" id="course-desc-input"></textarea>
+      <label class="field-label">تاريخ الانتهاء المتوقع (اختياري)</label>
+      <input class="text-input" type="date" id="course-enddate-input">
       <div class="modal-actions">
         ${existingId ? `<button class="btn btn-danger btn-sm" id="course-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="course-cancel-btn">إلغاء</button>
@@ -51,6 +53,7 @@ function openCourseModal({ existingId, onSaved } = {}) {
     document.getElementById('course-modal-title').textContent = 'تعديل الدورة';
     document.getElementById('course-title-input').value = existing.title;
     document.getElementById('course-desc-input').value = existing.description || '';
+    document.getElementById('course-enddate-input').value = existing.endDate || '';
   })();
 
   document.getElementById('course-cancel-btn').addEventListener('click', () => overlay.remove());
@@ -65,8 +68,9 @@ function openCourseModal({ existingId, onSaved } = {}) {
     const title = document.getElementById('course-title-input').value.trim();
     if (!title) return;
     const description = document.getElementById('course-desc-input').value.trim();
-    if (existingId) await updateCourse(existingId, { title, description });
-    else await createCourse(title, description);
+    const endDate = document.getElementById('course-enddate-input').value || null;
+    if (existingId) await updateCourse(existingId, { title, description, endDate });
+    else await createCourse(title, description, endDate);
     overlay.remove();
     if (onSaved) onSaved();
   });
@@ -117,12 +121,19 @@ function courseTodoRowHtml(todo, showCourse) {
 }
 
 async function renderCourseTodoList(container, courseId) {
-  const todos = (await db.courseTodos.where('courseId').equals(courseId).toArray()).sort((a, b) => (a.done - b.done) || (b.createdAt - a.createdAt));
-  if (todos.length === 0) {
+  const all = (await db.courseTodos.where('courseId').equals(courseId).toArray()).sort((a, b) => b.createdAt - a.createdAt);
+  if (all.length === 0) {
     container.innerHTML = `<div class="empty-state"><p>ما في مهام لهذه الدورة بعد.</p></div>`;
     return;
   }
-  container.innerHTML = todos.map(t => courseTodoRowHtml(t, false)).join('');
+  const open = all.filter(t => !t.done);
+  const done = all.filter(t => t.done);
+  container.innerHTML = `
+    ${open.length ? open.map(t => courseTodoRowHtml(t, false)).join('') : '<p class="empty-state-sub">لا مهام مفتوحة. أحسنتِ! ✨</p>'}
+    ${done.length ? `
+      <h4 class="day-detail-subsection-title course-todos-done-title">منجزة (${done.length})</h4>
+      ${done.map(t => courseTodoRowHtml(t, false)).join('')}` : ''}
+  `;
   container.querySelectorAll('[data-course-todo-id]').forEach(cb => {
     cb.addEventListener('change', async () => {
       await toggleCourseTodo(Number(cb.dataset.courseTodoId));
@@ -388,6 +399,7 @@ function renderPomodoroCard(container) {
     let isBreak = false;
     let remaining = workMinutes * 60;
     let intervalId = null;
+    let paused = false; // distinguishes "resuming a pause" from "starting fresh"
 
     container.innerHTML = `
       <h2 class="card-title">🍅 مؤقّت بومودورو</h2>
@@ -415,8 +427,8 @@ function renderPomodoroCard(container) {
       remaining -= 1;
       display.textContent = formatTimer(Math.max(0, remaining));
       if (remaining <= 0) {
-        playBeep();
-        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+        playBeepSequence(3);
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
         isBreak = !isBreak;
         remaining = (isBreak ? Number(breakInput.value) : Number(workInput.value)) * 60;
         phaseLabel.textContent = isBreak ? 'وقت الراحة' : 'وقت التركيز';
@@ -424,14 +436,35 @@ function renderPomodoroCard(container) {
       }
     }
 
+    // Live preview while stopped/fresh — typing "1" should show 01:00
+    // immediately, not silently wait until start is pressed.
+    function livePreviewIfIdle() {
+      if (!intervalId && !paused) {
+        remaining = (Number(workInput.value) || 0) * 60;
+        display.textContent = formatTimer(remaining);
+      }
+    }
+    workInput.addEventListener('input', livePreviewIfIdle);
+
     toggleBtn.addEventListener('click', async () => {
       if (intervalId) {
         clearInterval(intervalId);
         intervalId = null;
+        paused = true;
         toggleBtn.textContent = 'استئناف';
       } else {
         unlockAudioContext();
         await savePomodoroSettings(Number(workInput.value) || 25, Number(breakInput.value) || 5);
+        if (!paused) {
+          // Fresh start (never started, or just finished a phase) — use
+          // whatever is currently typed, not the value saved when this
+          // card was first rendered.
+          remaining = Number(workInput.value) * 60 || 25 * 60;
+          isBreak = false;
+          phaseLabel.textContent = 'وقت التركيز';
+        }
+        paused = false;
+        display.textContent = formatTimer(remaining);
         intervalId = setInterval(tick, 1000);
         toggleBtn.textContent = 'إيقاف';
       }
@@ -439,6 +472,7 @@ function renderPomodoroCard(container) {
     document.getElementById('pomo-reset').addEventListener('click', () => {
       clearInterval(intervalId);
       intervalId = null;
+      paused = false;
       isBreak = false;
       remaining = Number(workInput.value) * 60 || workMinutes * 60;
       phaseLabel.textContent = 'وقت التركيز';
@@ -541,6 +575,7 @@ async function renderCoursePage(params, view) {
       ${kebabMenuHtml('course-' + courseId, [{ key: 'edit', label: 'تعديل الدورة' }, { key: 'delete', label: 'حذف الدورة', danger: true }])}
     </div>
     ${course.description ? `<p class="settings-note">${escapeHtml(course.description)}</p>` : ''}
+    ${course.endDate ? `<p class="settings-note">🎯 تاريخ الانتهاء المتوقع: ${formatDateArabic(course.endDate, { weekday: false })}${daysBetween(todayStr(), course.endDate) >= 0 ? ` (بعد ${daysBetween(todayStr(), course.endDate)} يوم)` : ' (تجاوزتِ الموعد)'}</p>` : ''}
     <div class="card">
       <div class="section-header">
         <h2 class="card-title">المهام</h2>

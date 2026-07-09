@@ -317,6 +317,7 @@ async function renderBodyPage(params, view) {
       </div>
       <p class="settings-note">تمارينك اليومية، بعداد مجموعات، تكرار، ومؤقّت.</p>
     </div>
+    <div class="card" id="body-sleep-summary"></div>
   `;
   document.getElementById('body-back').addEventListener('click', () => history.back());
 
@@ -382,6 +383,7 @@ async function renderBodyPage(params, view) {
   });
 
   document.getElementById('weight-add-btn').addEventListener('click', () => openWeightModal(refreshWeight));
+  await renderSleepSummaryCard(document.getElementById('body-sleep-summary'));
   document.getElementById('save-target-btn').addEventListener('click', async () => {
     const raw = document.getElementById('target-weight-input').value;
     const v = raw === '' ? null : parseFloat(raw);

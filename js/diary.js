@@ -165,8 +165,9 @@ async function renderDiaryPage(params, view) {
       const entryRows = await Promise.all(monthEntries.map(async e => {
         const photoRow = await getDiaryPhoto(e.id);
         const photoUrl = photoRow ? trackDiaryPhotoUrl(photoRow.photoBlob) : null;
+        const isLong = e.text.length > 140;
         return `
-          <div class="diary-entry" data-date="${e.date}">
+          <div class="card diary-entry-card" data-date="${e.date}">
             <div class="diary-entry-top">
               <span class="diary-entry-date">${formatDateArabic(e.date, { weekday: true })}</span>
               ${kebabMenuHtml(e.date, [
@@ -175,17 +176,27 @@ async function renderDiaryPage(params, view) {
               ])}
             </div>
             ${photoUrl ? `<img class="diary-entry-photo" src="${photoUrl}" alt="">` : ''}
-            <p class="diary-entry-text">${escapeHtml(e.text)}</p>
+            <p class="diary-entry-text ${isLong ? 'diary-entry-text-clamped' : ''}">${escapeHtml(e.text)}</p>
+            ${isLong ? `<button class="link-btn diary-expand-btn" data-expand="${e.date}">عرض المزيد ↓</button>` : ''}
           </div>`;
       }));
       return `
         <details class="diary-month" ${idx === 0 ? 'open' : ''}>
           <summary>${ARABIC_MONTHS[m - 1]} ${y} (${monthEntries.length})</summary>
-          <div class="card diary-month-body">${entryRows.join('')}</div>
+          <div class="diary-month-body">${entryRows.join('')}</div>
         </details>`;
     }));
 
     monthsEl.innerHTML = rowsHtml.join('');
+    monthsEl.querySelectorAll('.diary-expand-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const card = btn.closest('.diary-entry-card');
+        const textEl = card.querySelector('.diary-entry-text');
+        const expanding = textEl.classList.contains('diary-entry-text-clamped');
+        textEl.classList.toggle('diary-entry-text-clamped', !expanding);
+        btn.textContent = expanding ? 'عرض أقل ↑' : 'عرض المزيد ↓';
+      });
+    });
     wireKebabMenus(monthsEl, async (rowId, action) => {
       if (action === 'edit') {
         openDiaryModal({ date: rowId, onSaved: refresh });

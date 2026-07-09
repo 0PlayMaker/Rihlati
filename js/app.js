@@ -216,6 +216,7 @@ function registerAllDayProviders() {
   registerDayProvider(transactionsDayProvider);
   registerDayProvider(wirdDayProvider);
   registerDayProvider(courseTodosDayProvider);
+  registerDayProvider(sleepDayProvider);
 }
 
 function registerAllActivityProviders() {
@@ -230,6 +231,7 @@ function registerAllActivityProviders() {
   registerActivityProvider(async () => (await db.standaloneSunnahLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.wirdLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.courseTodos.toArray()).filter(t => t.dueDate).map(t => t.dueDate));
+  registerActivityProvider(async () => (await db.sleepLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.moodLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.foodLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.waterLogs.toArray()).filter(w => w.liters > 0).map(w => w.date));
@@ -268,6 +270,7 @@ function registerAllYearlyStatsProviders() {
   registerYearlyStatsProvider(trainingYearlyProvider);
   registerYearlyStatsProvider(wirdYearlyProvider);
   registerYearlyStatsProvider(studyYearlyProvider);
+  registerYearlyStatsProvider(sleepYearlyProvider);
 }
 
 async function renderBottomBar() {
@@ -324,6 +327,8 @@ function startApp(profile, settings) {
   route('/training', renderTrainingPage);
   route('/study', renderStudyPage);
   route('/course', renderCoursePage);
+  route('/adhkar-detail', renderAdhkarDetailPage);
+  route('/sleep', renderSleepPage);
   route('/yearly', renderYearlyOverviewPage);
   route('/settings', renderSettingsPage);
 

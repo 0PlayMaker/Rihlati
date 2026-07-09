@@ -202,7 +202,18 @@ async function toggleShoppingListItem(id) {
 }
 async function getShoppingListItems(listId) {
   const all = await db.shoppingListItems.where('listId').equals(listId).toArray();
-  return all.sort((a, b) => a.createdAt - b.createdAt);
+  // Auto-sort: unchecked first, checked ones sink to the bottom —
+  // within each group, oldest first so newly-added items don't jump around.
+  return all.sort((a, b) => (a.done - b.done) || (a.createdAt - b.createdAt));
+}
+async function updateShoppingListName(listId, name) {
+  await db.shoppingLists.update(listId, { name });
+}
+async function updateShoppingListItemText(id, text) {
+  await db.shoppingListItems.update(id, { text });
+}
+async function deleteShoppingListItem(id) {
+  await db.shoppingListItems.delete(id);
 }
 
 async function renderShoppingListsPage(params, view) {
@@ -231,14 +242,23 @@ async function renderShoppingListsPage(params, view) {
         <div class="card shopping-list-card" data-list-id="${list.id}">
           <div class="section-header">
             <h2 class="card-title">${escapeHtml(list.name)}</h2>
-            ${kebabMenuHtml('list-' + list.id, [{ key: 'delete-list', label: 'حذف القائمة', danger: true }])}
+            ${kebabMenuHtml('list-' + list.id, [
+              { key: 'rename-list', label: 'تعديل اسم القائمة' },
+              { key: 'delete-list', label: 'حذف القائمة', danger: true }
+            ])}
           </div>
           <div class="shopping-items" data-items-for="${list.id}">
             ${items.map(i => `
-              <label class="task-row ${i.done ? 'done' : ''}">
-                <input type="checkbox" data-item-id="${i.id}" ${i.done ? 'checked' : ''}>
-                <span class="task-title">${escapeHtml(i.text)}</span>
-              </label>`).join('') || '<p class="empty-state-sub">القائمة فاضية.</p>'}
+              <div class="task-row-wrap">
+                <label class="task-row ${i.done ? 'done' : ''}">
+                  <input type="checkbox" data-item-id="${i.id}" ${i.done ? 'checked' : ''}>
+                  <span class="task-title">${escapeHtml(i.text)}</span>
+                </label>
+                ${kebabMenuHtml('item-' + i.id, [
+                  { key: 'edit-item', label: 'تعديل' },
+                  { key: 'delete-item', label: 'حذف', danger: true }
+                ])}
+              </div>`).join('') || '<p class="empty-state-sub">القائمة فاضية.</p>'}
           </div>
           <div class="shopping-add-row">
             <input class="text-input" type="text" placeholder="أضيفي عنصر واضغطي Enter" data-new-item-for="${list.id}">
@@ -252,6 +272,24 @@ async function renderShoppingListsPage(params, view) {
         const listId = Number(rowId.replace('list-', ''));
         if (!confirm('حذف هذه القائمة بكل عناصرها؟')) return;
         await deleteShoppingList(listId);
+        await refresh();
+      } else if (action === 'rename-list') {
+        const listId = Number(rowId.replace('list-', ''));
+        const list = lists.find(l => l.id === listId);
+        const name = prompt('اسم القائمة:', list.name);
+        if (!name || !name.trim()) return;
+        await updateShoppingListName(listId, name.trim());
+        await refresh();
+      } else if (action === 'edit-item') {
+        const itemId = Number(rowId.replace('item-', ''));
+        const item = await db.shoppingListItems.get(itemId);
+        const text = prompt('العنصر:', item.text);
+        if (!text || !text.trim()) return;
+        await updateShoppingListItemText(itemId, text.trim());
+        await refresh();
+      } else if (action === 'delete-item') {
+        const itemId = Number(rowId.replace('item-', ''));
+        await deleteShoppingListItem(itemId);
         await refresh();
       }
     });
@@ -290,7 +328,7 @@ const ECONOMY_KINDS = {
   edibles: {
     table: 'edibles', photoTable: 'ediblePhotos', photoKey: 'edibleId',
     wishTable: 'edibleWishlist', wishPhotoTable: 'edibleWishlistPhotos', wishPhotoKey: 'wishlistId',
-    label: 'المأكولات', singular: 'مأكول'
+    label: 'الطعام', singular: 'طعام'
   },
   things: {
     table: 'things', photoTable: 'thingPhotos', photoKey: 'thingId',
@@ -752,7 +790,7 @@ async function renderEconomyPage(params, view) {
 
     <div class="card">
       <div class="section-header">
-        <h2 class="card-title">🍎 المأكولات</h2>
+        <h2 class="card-title">🍎 الطعام</h2>
         <a class="see-all-link" href="#/edibles">عرض الكل ←</a>
       </div>
       <div id="economy-recent-edibles"></div>
@@ -760,7 +798,7 @@ async function renderEconomyPage(params, view) {
     </div>
     <div class="card">
       <div class="section-header">
-        <h2 class="card-title">⭐ قائمة أمنيات المأكولات</h2>
+        <h2 class="card-title">⭐ قائمة أمنيات الطعام</h2>
         <a class="see-all-link" href="#/edibles-wishlist">عرض الكل ←</a>
       </div>
       <div id="economy-edibles-wish-preview"></div>
@@ -844,8 +882,8 @@ async function economyYearlyProvider(year) {
   const html = `
     <div class="yearly-row"><span>💰 دخل</span><span>${moneyIn.toFixed(2)} ${currency}</span></div>
     <div class="yearly-row"><span>💸 تم صرف</span><span>${moneyOut.toFixed(2)} ${currency}</span></div>
-    <div class="yearly-row"><span>🍎 مأكولات (عدد)</span><span>${yearEdibles.length}</span></div>
-    <div class="yearly-row"><span>🍎 مأكولات (التكلفة)</span><span>${ediblesSum.toFixed(2)} ${currency}</span></div>
+    <div class="yearly-row"><span>🍎 طعام (عدد)</span><span>${yearEdibles.length}</span></div>
+    <div class="yearly-row"><span>🍎 طعام (التكلفة)</span><span>${ediblesSum.toFixed(2)} ${currency}</span></div>
     <div class="yearly-row"><span>🛍️ أغراض (عدد)</span><span>${yearThings.length}</span></div>
     <div class="yearly-row"><span>🛍️ أغراض (التكلفة)</span><span>${thingsSum.toFixed(2)} ${currency}</span></div>
   `;
@@ -882,5 +920,5 @@ async function purchaseDayProvider(kind, title, dateStr) {
   node.querySelectorAll('.kebab-menu').forEach(el => el.remove());
   return { title, node };
 }
-async function ediblesDayProvider(dateStr) { return purchaseDayProvider('edibles', 'مأكولات هذا اليوم', dateStr); }
+async function ediblesDayProvider(dateStr) { return purchaseDayProvider('edibles', 'طعام هذا اليوم', dateStr); }
 async function thingsDayProvider(dateStr) { return purchaseDayProvider('things', 'أغراض هذا اليوم', dateStr); }

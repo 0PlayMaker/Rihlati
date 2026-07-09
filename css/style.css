@@ -46,6 +46,7 @@
 
   --pink: #F6C9D9;
   --pink-deep: #E88FAE;
+  --pink-deep-rgb: 232, 143, 174;
   --yellow: #FCE9B0;
   --yellow-deep: #EFC53E;
   --blue: #C7E0F4;
@@ -107,7 +108,7 @@ body {
   color: var(--ink);
 }
 h1, h2, h3, p { margin: 0; }
-button, input { font-family: var(--font); }
+button, input, select, textarea { font-family: var(--font); color: inherit; }
 a { color: var(--pink-deep); text-decoration: none; }
 :focus-visible { outline: 2px solid var(--blue-deep); outline-offset: 2px; border-radius: var(--radius-sm); }
 
@@ -411,7 +412,7 @@ a { color: var(--pink-deep); text-decoration: none; }
   border: 1.5px solid var(--track); background: var(--surface); color: var(--ink-soft);
   border-radius: var(--radius-round); padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer;
 }
-.chip.active { background: var(--mint); border-color: var(--mint); color: var(--ink-on-pastel); }
+.chip.active { background: var(--pink-deep); border-color: var(--pink-deep); color: #fff; box-shadow: 0 0 10px rgba(var(--pink-deep-rgb), 0.5); }
 .chip:active { transform: scale(0.96); }
 
 .daily-adhkar-row { display: flex; gap: var(--space-3); }
@@ -419,7 +420,7 @@ a { color: var(--pink-deep); text-decoration: none; }
   flex: 1; border: 1.5px solid var(--track); background: var(--surface);
   border-radius: var(--radius-md); padding: var(--space-3); font-size: 14px; font-weight: 700; color: var(--ink-soft); cursor: pointer;
 }
-.chip-lg.active { background: var(--mint); border-color: var(--mint); color: var(--ink-on-pastel); }
+.chip-lg.active { background: var(--pink-deep); border-color: var(--pink-deep); color: #fff; box-shadow: 0 0 10px rgba(var(--pink-deep-rgb), 0.5); }
 .chip-lg:active { transform: scale(0.97); }
 
 .adhkar-counter-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) 0; border-bottom: 1px solid var(--track); gap: var(--space-2); }
@@ -604,6 +605,16 @@ a { color: var(--pink-deep); text-decoration: none; }
   display: flex; flex-direction: column; min-width: 120px; overflow: hidden;
 }
 .kebab-dropdown.hidden { display: none; }
+body.theme-dark-ish .kebab-dropdown,
+body.theme-glass .kebab-dropdown,
+body.theme-glass-dark .kebab-dropdown {
+  box-shadow: 0 0 18px rgba(255,255,255,0.10), var(--shadow-soft);
+}
+body.theme-dark-ish .kebab-item,
+body.theme-glass .kebab-item,
+body.theme-glass-dark .kebab-item {
+  text-shadow: 0 0 6px rgba(255,255,255,0.18);
+}
 .kebab-item {
   background: none; border: none; padding: 10px 14px; font-family: var(--font);
   font-size: 14px; color: var(--ink); text-align: right; cursor: pointer;
@@ -650,12 +661,15 @@ a { color: var(--pink-deep); text-decoration: none; }
 .weight-history-details summary { font-weight: 700; font-size: 14px; color: var(--ink-soft); padding: var(--space-2) 0; cursor: pointer; }
 .weight-history-details .txn-row { padding: var(--space-2) 0; }
 .diary-month-body { margin-top: var(--space-2); }
-.diary-entry { padding: var(--space-3) 0; border-bottom: 1px solid var(--track); }
-.diary-entry:last-child { border-bottom: none; }
+.diary-entry-card { margin-bottom: var(--space-3); }
+.diary-entry-card:last-child { margin-bottom: 0; }
 .diary-entry-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-2); }
 .diary-entry-date { font-size: 13px; font-weight: 700; color: var(--ink-soft); }
 .diary-entry-photo { width: 100%; max-height: 220px; object-fit: cover; border-radius: var(--radius-md); margin-bottom: var(--space-2); }
 .diary-entry-text { font-size: 14px; white-space: pre-wrap; }
+.diary-entry-text-clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.diary-expand-btn { margin-top: var(--space-2); }
+.adhkar-item-text { flex: 1; margin: 0; }
 
 /* ============================================================
    Credit / dedication screen (first launch only)
@@ -829,7 +843,6 @@ body.theme-dark-ish .food-photo-placeholder {
   background: var(--track);
 }
 
-.theme-mode-chip.active { background: var(--pink-deep); border-color: var(--pink-deep); color: #fff; }
 .theme-color-input {
   width: 56px; height: 56px; border: none; border-radius: var(--radius-md);
   padding: 0; cursor: pointer; background: none;
