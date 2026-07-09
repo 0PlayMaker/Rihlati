@@ -152,11 +152,7 @@ async function openFoodModal({ date, existingId, onSaved }) {
 
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="food-photo-preview"></div>
-      <input type="file" accept="image/*" id="food-photo-input" class="hidden-file-input">
-      <div class="food-photo-actions">
-        <button class="btn btn-secondary btn-sm" id="food-photo-choose">إضافة صورة</button>
-        <button class="btn btn-text btn-sm" id="food-photo-remove">إزالة الصورة</button>
-      </div>
+      ${photoPickerHtml('food-photo')}
 
       <label class="field-label">الوقت (اختياري)</label>
       <input class="text-input" type="time" id="food-time-input" value="${existing?.time || ''}">
@@ -190,15 +186,11 @@ async function openFoodModal({ date, existingId, onSaved }) {
     });
   });
 
-  document.getElementById('food-photo-choose').addEventListener('click', () => document.getElementById('food-photo-input').click());
-  document.getElementById('food-photo-input').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  wirePhotoPicker('food-photo', async (file) => {
     pendingPhotoBlob = await resizeImageToBlob(file, 1200, 0.8);
     removePhotoFlag = false;
     renderPhotoArea();
-  });
-  document.getElementById('food-photo-remove').addEventListener('click', () => {
+  }, () => {
     pendingPhotoBlob = null;
     removePhotoFlag = true;
     renderPhotoArea();

@@ -65,11 +65,7 @@ async function openRecipeModal({ existingId, onSaved } = {}) {
       <input class="text-input" type="url" id="recipe-youtube-input" placeholder="https://youtube.com/...">
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="recipe-photo-preview"></div>
-      <input type="file" accept="image/*" id="recipe-photo-input" class="hidden-file-input">
-      <div class="food-photo-actions">
-        <button class="btn btn-secondary btn-sm" id="recipe-photo-choose">إضافة صورة</button>
-        <button class="btn btn-text btn-sm" id="recipe-photo-remove">إزالة الصورة</button>
-      </div>
+      ${photoPickerHtml('recipe-photo')}
       <div class="habit-type-chips" id="recipe-photo-mode-chips">
         <button class="chip" data-mode="thumb_only">مصغرة فقط في القائمة</button>
         <button class="chip active" data-mode="thumb_and_detail">مصغرة + داخل الوصفة</button>
@@ -85,6 +81,12 @@ async function openRecipeModal({ existingId, onSaved } = {}) {
       </div>
     </div>`;
   document.body.appendChild(overlay);
+
+  overlay.querySelectorAll('#recipe-photo-mode-chips .chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      overlay.querySelectorAll('#recipe-photo-mode-chips .chip').forEach(c => c.classList.toggle('active', c === chip));
+    });
+  });
 
   function renderPhotoArea() {
     const el = document.getElementById('recipe-photo-preview');
@@ -102,17 +104,20 @@ async function openRecipeModal({ existingId, onSaved } = {}) {
     document.getElementById('recipe-youtube-input').value = existing.youtubeLink || '';
     document.getElementById('recipe-ingredients-input').value = existing.ingredientsText || '';
     document.getElementById('recipe-method-input').value = existing.methodText || '';
+    const mode = existing.photoDisplayMode || 'thumb_and_detail';
+    overlay.querySelectorAll('#recipe-photo-mode-chips .chip').forEach(c => c.classList.toggle('active', c.dataset.mode === mode));
     const photoRow = await getRecipePhoto(existingId);
     if (photoRow) existingPhotoUrl = trackRecipePhotoUrl(photoRow.photoBlob);
     renderPhotoArea();
   }
 
-  document.getElementById('recipe-photo-choose').addEventListener('click', () => document.getElementById('recipe-photo-input').click());
-  document.getElementById('recipe-photo-input').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  wirePhotoPicker('recipe-photo', async (file) => {
     pendingPhotoBlob = await resizeImageToBlob(file, 1200, 0.8);
     removePhotoFlag = false;
+    renderPhotoArea();
+  }, () => {
+    pendingPhotoBlob = null;
+    removePhotoFlag = true;
     renderPhotoArea();
   });
   document.getElementById('recipe-cancel-btn').addEventListener('click', () => overlay.remove());
@@ -129,8 +134,9 @@ async function openRecipeModal({ existingId, onSaved } = {}) {
     const youtubeLink = document.getElementById('recipe-youtube-input').value.trim();
     const ingredientsText = document.getElementById('recipe-ingredients-input').value.trim();
     const methodText = document.getElementById('recipe-method-input').value.trim();
-    if (existingId) await updateRecipe(existingId, { title, youtubeLink, ingredientsText, methodText, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
-    else await createRecipe({ title, youtubeLink, ingredientsText, methodText, photoBlob: pendingPhotoBlob });
+    const photoDisplayMode = overlay.querySelector('#recipe-photo-mode-chips .chip.active')?.dataset.mode || 'thumb_and_detail';
+    if (existingId) await updateRecipe(existingId, { title, youtubeLink, ingredientsText, methodText, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag, photoDisplayMode });
+    else await createRecipe({ title, youtubeLink, ingredientsText, methodText, photoBlob: pendingPhotoBlob, photoDisplayMode });
     overlay.remove();
     if (onSaved) onSaved();
   });

@@ -186,11 +186,7 @@ async function openExerciseModal({ existingId, onSaved } = {}) {
       </div>
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="exercise-photo-preview"></div>
-      <input type="file" accept="image/*" id="exercise-photo-input" class="hidden-file-input">
-      <div class="food-photo-actions">
-        <button class="btn btn-secondary btn-sm" id="exercise-photo-choose">إضافة صورة</button>
-        <button class="btn btn-text btn-sm" id="exercise-photo-remove">إزالة الصورة</button>
-      </div>
+      ${photoPickerHtml('exercise-photo')}
       <div class="habit-type-chips" id="exercise-photo-mode-chips">
         <button class="chip" data-mode="thumb_only">مصغرة فقط في القائمة</button>
         <button class="chip active" data-mode="thumb_and_detail">مصغرة + داخل التمرين</button>
@@ -234,15 +230,11 @@ async function openExerciseModal({ existingId, onSaved } = {}) {
     renderPhotoArea();
   }
 
-  document.getElementById('exercise-photo-choose').addEventListener('click', () => document.getElementById('exercise-photo-input').click());
-  document.getElementById('exercise-photo-input').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  wirePhotoPicker('exercise-photo', async (file) => {
     pendingPhotoBlob = await resizeImageToBlob(file, 1200, 0.8);
     removePhotoFlag = false;
     renderPhotoArea();
-  });
-  document.getElementById('exercise-photo-remove').addEventListener('click', () => {
+  }, () => {
     pendingPhotoBlob = null;
     removePhotoFlag = true;
     renderPhotoArea();

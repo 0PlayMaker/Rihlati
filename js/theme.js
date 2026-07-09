@@ -29,7 +29,11 @@ const THEME_MODES = {
   },
   glass: {
     label: '🔮 زجاجي',
-    vars: { '--bg': '#EDE3F5', '--surface': 'rgba(255,255,255,0.55)', '--ink': '#3A3145', '--ink-soft': '#756B85', '--ink-faint': '#A99FBB', '--track': 'rgba(255,255,255,0.4)' }
+    vars: { '--bg': '#EDE3F5', '--surface': 'rgba(255,255,255,0.5)', '--ink': '#3A3145', '--ink-soft': '#756B85', '--ink-faint': '#A99FBB', '--track': 'rgba(255,255,255,0.35)' }
+  },
+  glassDark: {
+    label: '🌌 زجاجي داكن',
+    vars: { '--bg': '#15121C', '--surface': 'rgba(255,255,255,0.08)', '--ink': '#F0EBF2', '--ink-soft': '#C4BBD0', '--ink-faint': '#8A8095', '--track': 'rgba(255,255,255,0.14)' }
   }
 };
 const DEFAULT_ACCENT = '#E88FAE'; // the original --pink-deep
@@ -112,8 +116,9 @@ function applyTheme(mode, accentHex) {
   root.setProperty('--shadow-soft', `0 6px 20px rgba(${r}, ${g}, ${b}, 0.16)`);
   root.setProperty('--shadow-tap', `0 2px 8px rgba(${r}, ${g}, ${b}, 0.14)`);
 
-  document.body.classList.toggle('theme-glass', mode === 'glass');
-  document.body.classList.toggle('theme-dark-ish', mode === 'dark' || mode === 'amoled');
+  document.body.classList.toggle('theme-glass', mode === 'glass' || mode === 'glassDark');
+  document.body.classList.toggle('theme-glass-dark', mode === 'glassDark');
+  document.body.classList.toggle('theme-dark-ish', mode === 'dark' || mode === 'amoled' || mode === 'glassDark');
 }
 
 async function applyStoredTheme() {
@@ -123,16 +128,21 @@ async function applyStoredTheme() {
 
 // ---------- Settings UI ----------
 
-function renderThemeSection(currentMode, currentAccent) {
+function renderThemeSection(currentMode, currentAccent, accentHistory) {
+  const history = (accentHistory || []).filter(c => c !== (currentAccent || DEFAULT_ACCENT));
   return `
     <div class="card settings-card">
       <h2 class="card-title">المظهر</h2>
       <label class="field-label">لون التمييز (اضغطي لتغييره)</label>
       <input type="color" id="theme-accent-input" value="${currentAccent || DEFAULT_ACCENT}" class="theme-color-input">
+      ${history.length ? `
+        <div class="theme-history-row" id="theme-history-row">
+          ${history.map(c => `<button class="theme-history-swatch" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join('')}
+        </div>` : ''}
       <label class="field-label">الوضع</label>
       <div class="habit-type-chips theme-mode-chips" id="theme-mode-chips">
         ${Object.entries(THEME_MODES).map(([key, m]) => `
-          <button class="chip ${key === (currentMode || 'light') ? 'active' : ''}" data-mode="${key}">${m.label}</button>
+          <button class="chip theme-mode-chip ${key === (currentMode || 'light') ? 'active' : ''}" data-mode="${key}">${m.label}</button>
         `).join('')}
       </div>
       <div class="theme-preview" id="theme-preview">
@@ -149,12 +159,25 @@ function wireThemeSection(view) {
   const modeChips = document.getElementById('theme-mode-chips');
   let selectedMode = modeChips.querySelector('.chip.active')?.dataset.mode || 'light';
 
-  async function saveAndApply() {
-    await db.settings.update(1, { themeMode: selectedMode, accentColor: accentInput.value });
-    applyTheme(selectedMode, accentInput.value);
+  async function saveAndApply(newAccent) {
+    const settings = await db.settings.get(1);
+    const prevAccent = settings?.accentColor || DEFAULT_ACCENT;
+    let history = settings?.accentColorHistory || [];
+    // Keep the color she's moving AWAY from, so switching never loses
+    // it — capped at 6 so the row doesn't grow forever.
+    if (newAccent && newAccent !== prevAccent && !history.includes(prevAccent)) {
+      history = [prevAccent, ...history].slice(0, 6);
+    }
+    await db.settings.update(1, { themeMode: selectedMode, accentColor: newAccent || prevAccent, accentColorHistory: history });
+    applyTheme(selectedMode, newAccent || prevAccent);
+    if (newAccent) renderSettingsPage([], view); // refresh so the history row reflects the new state
   }
 
-  accentInput.addEventListener('input', saveAndApply);
+  accentInput.addEventListener('change', () => saveAndApply(accentInput.value));
+  const historyRow = document.getElementById('theme-history-row');
+  if (historyRow) historyRow.querySelectorAll('.theme-history-swatch').forEach(sw => {
+    sw.addEventListener('click', () => saveAndApply(sw.dataset.color));
+  });
   modeChips.querySelectorAll('.chip').forEach(chip => {
     chip.addEventListener('click', () => {
       selectedMode = chip.dataset.mode;

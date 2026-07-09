@@ -66,6 +66,53 @@ async function renderTransactionsList(container, { limit } = {}) {
   });
 }
 
+// Banking-app style: grouped by month, each month showing its own
+// income/expense totals before the detailed list — for the full
+// transactions page specifically (the hub page's "recent" preview
+// stays a simple flat list, which is all it needs at 3 items).
+async function renderTransactionsGroupedByMonth(container) {
+  const currency = await getCurrencyLabel();
+  const all = await getAllTransactions(); // newest first already
+  if (all.length === 0) {
+    container.innerHTML = `<div class="empty-state"><p>ما في معاملات مسجلة بعد.</p></div>`;
+    return;
+  }
+  const months = {};
+  all.forEach(t => {
+    const key = t.date.slice(0, 7);
+    if (!months[key]) months[key] = [];
+    months[key].push(t);
+  });
+
+  const sections = await Promise.all(Object.entries(months).map(async ([monthKey, txns], idx) => {
+    const [y, m] = monthKey.split('-').map(Number);
+    const totalIn = txns.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
+    const totalOut = txns.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
+    const rows = (await Promise.all(txns.map(transactionRowHtml))).join('');
+    return `
+      <details class="diary-month txn-month" ${idx === 0 ? 'open' : ''}>
+        <summary>
+          <span class="txn-month-name">${ARABIC_MONTHS[m - 1]} ${y}</span>
+          <span class="txn-month-totals">
+            <span class="txn-positive">+${totalIn.toFixed(2)}</span>
+            <span class="txn-negative">-${totalOut.toFixed(2)}</span>
+            <span class="txn-month-currency">${currency}</span>
+          </span>
+        </summary>
+        <div class="card diary-month-body">${rows}</div>
+      </details>`;
+  }));
+
+  container.innerHTML = sections.join('');
+  wireKebabMenus(container, async (rowId, action) => {
+    if (action === 'delete') {
+      if (!confirm('حذف هذه المعاملة؟')) return;
+      await deleteTransaction(Number(rowId));
+      await renderTransactionsGroupedByMonth(container);
+    }
+  });
+}
+
 function openAddTransactionModal(onSaved) {
   let sign = 1;
   const overlay = document.createElement('div');
@@ -360,7 +407,7 @@ async function purchaseRowHtml(item, photoUrl) {
     </div>`;
 }
 
-async function renderPurchasesList(kind, container, { limit } = {}) {
+async function renderPurchasesList(kind, container, { limit, onBalanceChange } = {}) {
   revokeEconomyPhotoUrls();
   let items = await getPurchases(kind);
   if (limit) items = items.slice(0, limit);
@@ -376,11 +423,15 @@ async function renderPurchasesList(kind, container, { limit } = {}) {
   container.innerHTML = rows.join('');
   wireKebabMenus(container, async (rowId, action) => {
     if (action === 'edit') {
-      openAddPurchaseModal(kind, () => renderPurchasesList(kind, container, { limit }), Number(rowId));
+      openAddPurchaseModal(kind, async () => {
+        await renderPurchasesList(kind, container, { limit, onBalanceChange });
+        if (onBalanceChange) await onBalanceChange();
+      }, Number(rowId));
     } else if (action === 'delete') {
       if (!confirm('حذف هذا العنصر؟ سيُحذف أي خصم مرتبط به من رصيدك أيضاً.')) return;
       await deletePurchase(kind, Number(rowId));
-      await renderPurchasesList(kind, container, { limit });
+      await renderPurchasesList(kind, container, { limit, onBalanceChange });
+      if (onBalanceChange) await onBalanceChange();
     }
   });
 }
@@ -405,11 +456,7 @@ function openAddPurchaseModal(kind, onSaved, existingId) {
       <input class="text-input" type="date" id="purchase-date-input" value="${todayStr()}">
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="purchase-photo-preview"><span class="food-photo-placeholder">📷</span></div>
-      <input type="file" accept="image/*" id="purchase-photo-input" class="hidden-file-input">
-      <div class="food-photo-actions">
-        <button class="btn btn-secondary btn-sm" id="purchase-photo-choose">إضافة صورة</button>
-        <button class="btn btn-text btn-sm" id="purchase-photo-remove">إزالة الصورة</button>
-      </div>
+      ${photoPickerHtml('purchase-photo')}
       <div class="modal-actions">
         ${existingId ? `<button class="btn btn-danger btn-sm" id="purchase-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="purchase-cancel">إلغاء</button>
@@ -440,15 +487,11 @@ function openAddPurchaseModal(kind, onSaved, existingId) {
     renderPhotoArea();
   }
 
-  document.getElementById('purchase-photo-choose').addEventListener('click', () => document.getElementById('purchase-photo-input').click());
-  document.getElementById('purchase-photo-input').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  wirePhotoPicker('purchase-photo', async (file) => {
     pendingPhotoBlob = await resizeImageToBlob(file, 1200, 0.8);
     removePhotoFlag = false;
     renderPhotoArea();
-  });
-  document.getElementById('purchase-photo-remove').addEventListener('click', () => {
+  }, () => {
     pendingPhotoBlob = null;
     removePhotoFlag = true;
     renderPhotoArea();
@@ -497,7 +540,7 @@ async function wishlistRowHtml(item, photoUrl) {
     </div>`;
 }
 
-async function renderWishlist(kind, container) {
+async function renderWishlist(kind, container, onBalanceChange) {
   revokeEconomyPhotoUrls();
   const items = await getWishlist(kind);
   if (items.length === 0) {
@@ -515,16 +558,17 @@ async function renderWishlist(kind, container) {
     if (action === 'delete') {
       if (!confirm('حذف هذا العنصر؟')) return;
       await deleteWishlistItem(kind, id);
-      await renderWishlist(kind, container);
+      await renderWishlist(kind, container, onBalanceChange);
     } else if (action === 'edit') {
-      openWishlistModal(kind, { existingId: id, onSaved: () => renderWishlist(kind, container) });
+      openWishlistModal(kind, { existingId: id, onSaved: () => renderWishlist(kind, container, onBalanceChange) });
     } else if (action === 'buy') {
       const item = items.find(w => w.id === id);
       // Uses the item's OWN deduct setting from when it was added/edited —
       // this was hardcoded to false before, silently never deducting.
       await addPurchase(kind, { name: item.name, price: item.price, date: todayStr(), deductFromBalance: item.deductFromBalance ?? false });
       await deleteWishlistItem(kind, id);
-      await renderWishlist(kind, container);
+      await renderWishlist(kind, container, onBalanceChange);
+      if (onBalanceChange) await onBalanceChange();
       toast('انتقل إلى قائمة المشتريات 🌸');
     }
   });
@@ -551,11 +595,7 @@ function openWishlistModal(kind, { existingId, onSaved } = {}) {
       <label class="checkbox-row"><input type="checkbox" id="wish-deduct-input"><span>خصم من الرصيد تلقائياً عند تحديد "تم الشراء"</span></label>
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="wish-photo-preview"></div>
-      <input type="file" accept="image/*" id="wish-photo-input" class="hidden-file-input">
-      <div class="food-photo-actions">
-        <button class="btn btn-secondary btn-sm" id="wish-photo-choose">إضافة صورة</button>
-        <button class="btn btn-text btn-sm" id="wish-photo-remove">إزالة الصورة</button>
-      </div>
+      ${photoPickerHtml('wish-photo')}
       <div class="modal-actions">
         <button class="btn btn-text" id="wish-cancel">إلغاء</button>
         <button class="btn btn-primary" id="wish-save">حفظ</button>
@@ -584,15 +624,11 @@ function openWishlistModal(kind, { existingId, onSaved } = {}) {
     renderPhotoArea();
   }
 
-  document.getElementById('wish-photo-choose').addEventListener('click', () => document.getElementById('wish-photo-input').click());
-  document.getElementById('wish-photo-input').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  wirePhotoPicker('wish-photo', async (file) => {
     pendingPhotoBlob = await resizeImageToBlob(file, 1200, 0.8);
     removePhotoFlag = false;
     renderPhotoArea();
-  });
-  document.getElementById('wish-photo-remove').addEventListener('click', () => {
+  }, () => {
     pendingPhotoBlob = null;
     removePhotoFlag = true;
     renderPhotoArea();
@@ -680,7 +716,7 @@ async function renderTransactionsPage(params, view) {
   async function refresh() {
     const balance = await getEconomyBalance();
     document.getElementById('txn-balance-text').textContent = `${balance.toFixed(2)} ${currency}`;
-    await renderTransactionsList(document.getElementById('txn-list'));
+    await renderTransactionsGroupedByMonth(document.getElementById('txn-list'));
   }
   document.getElementById('txn-add-btn').addEventListener('click', () => openAddTransactionModal(refresh));
   await refresh();
@@ -694,7 +730,7 @@ async function renderEconomyPage(params, view) {
     <div class="page-header">
       <button class="icon-btn" id="economy-back">→</button>
       <h1>الاقتصاد</h1>
-      <button class="link-btn economy-shopping-btn" id="shopping-link">🛒 قوائم التسوق</button>
+      <button class="btn btn-primary btn-sm economy-shopping-btn" id="shopping-link">🛒 قوائم التسوق</button>
     </div>
 
     <div class="card">
@@ -760,30 +796,30 @@ async function renderEconomyPage(params, view) {
 
   await renderTransactionsList(document.getElementById('economy-recent-txns'), { limit: 3 });
 
-  await renderPurchasesList('edibles', document.getElementById('economy-recent-edibles'), { limit: 2 });
+  await renderPurchasesList('edibles', document.getElementById('economy-recent-edibles'), { limit: 2, onBalanceChange: refreshBalance });
   document.getElementById('economy-add-edible').addEventListener('click', () => {
     openAddPurchaseModal('edibles', async () => {
-      await renderPurchasesList('edibles', document.getElementById('economy-recent-edibles'), { limit: 2 });
+      await renderPurchasesList('edibles', document.getElementById('economy-recent-edibles'), { limit: 2, onBalanceChange: refreshBalance });
       await refreshBalance();
     });
   });
 
-  await renderPurchasesList('things', document.getElementById('economy-recent-things'), { limit: 2 });
+  await renderPurchasesList('things', document.getElementById('economy-recent-things'), { limit: 2, onBalanceChange: refreshBalance });
   document.getElementById('economy-add-thing').addEventListener('click', () => {
     openAddPurchaseModal('things', async () => {
-      await renderPurchasesList('things', document.getElementById('economy-recent-things'), { limit: 2 });
+      await renderPurchasesList('things', document.getElementById('economy-recent-things'), { limit: 2, onBalanceChange: refreshBalance });
       await refreshBalance();
     });
   });
 
   const ediblesWishEl = document.getElementById('economy-edibles-wish-preview');
   const ediblesWishItems = await getWishlist('edibles');
-  if (ediblesWishItems.length) await renderWishlist('edibles', ediblesWishEl);
+  if (ediblesWishItems.length) await renderWishlist('edibles', ediblesWishEl, refreshBalance);
   else ediblesWishEl.innerHTML = `<p class="empty-state-sub">القائمة فاضية.</p>`;
 
   const thingsWishEl = document.getElementById('economy-things-wish-preview');
   const thingsWishItems = await getWishlist('things');
-  if (thingsWishItems.length) await renderWishlist('things', thingsWishEl);
+  if (thingsWishItems.length) await renderWishlist('things', thingsWishEl, refreshBalance);
   else thingsWishEl.innerHTML = `<p class="empty-state-sub">القائمة فاضية.</p>`;
 }
 
@@ -807,7 +843,7 @@ async function economyYearlyProvider(year) {
 
   const html = `
     <div class="yearly-row"><span>💰 دخل</span><span>${moneyIn.toFixed(2)} ${currency}</span></div>
-    <div class="yearly-row"><span>💸 مصروف</span><span>${moneyOut.toFixed(2)} ${currency}</span></div>
+    <div class="yearly-row"><span>💸 تم صرف</span><span>${moneyOut.toFixed(2)} ${currency}</span></div>
     <div class="yearly-row"><span>🍎 مأكولات (عدد)</span><span>${yearEdibles.length}</span></div>
     <div class="yearly-row"><span>🍎 مأكولات (التكلفة)</span><span>${ediblesSum.toFixed(2)} ${currency}</span></div>
     <div class="yearly-row"><span>🛍️ أغراض (عدد)</span><span>${yearThings.length}</span></div>

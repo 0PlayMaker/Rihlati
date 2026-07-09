@@ -17,7 +17,7 @@ const SIMPLE_TABLES = [
   'goals', 'diaryEntries',
   'economyTransactions', 'shoppingLists', 'shoppingListItems',
   'edibles', 'edibleWishlist', 'things', 'thingsWishlist',
-  'recipes', 'exercises', 'exerciseLogs', 'standaloneSunnahLogs'
+  'recipes', 'exercises', 'exerciseLogs', 'standaloneSunnahLogs', 'wirdSettings', 'wirdLogs'
 ];
 
 // Tables holding blobs, each keyed by a foreign id — can't go in JSON,

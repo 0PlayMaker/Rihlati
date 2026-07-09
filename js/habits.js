@@ -57,9 +57,28 @@ async function getHabitMissedDates(habitId) {
   const logs = await db.habitLogs.where('habitId').equals(habitId).toArray();
   return logs.filter(l => l.status === 'missed').map(l => l.date);
 }
+// Every day since creation counts as a success automatically — she no
+// longer has to tap "done" daily for it to count. Only an explicit
+// mishap breaks the streak. Kept as the SAME function name/shape as
+// before (still {streak, succeeded, failed}) so every existing caller
+// (yearly overview, Home's top-streak) picks up the new model with no
+// changes needed on their end.
 async function getHabitStats(habitId) {
-  const [doneDates, missedDates] = await Promise.all([getHabitDoneDates(habitId), getHabitMissedDates(habitId)]);
-  return computeStreakStats(doneDates, missedDates, []); // Habits don't use pauses
+  const habit = await db.habits.get(habitId);
+  const missedDates = await getHabitMissedDates(habitId);
+  const today = todayStr();
+  const created = new Date(habit.createdAt).toISOString().slice(0, 10);
+  const totalDays = daysBetween(created, today) + 1;
+  const failed = missedDates.length;
+  const succeeded = Math.max(0, totalDays - failed);
+  let streak;
+  if (missedDates.length === 0) {
+    streak = totalDays;
+  } else {
+    const mostRecent = [...missedDates].sort().reverse()[0];
+    streak = mostRecent < today ? daysBetween(mostRecent, today) : 0;
+  }
+  return { streak, succeeded, failed };
 }
 
 // ---------- live clock: time since creation or last mishap ----------
@@ -139,73 +158,120 @@ async function getHabitsRingData() {
   let done = 0, missed = 0;
   for (const h of habits) {
     const status = await getHabitStatus(h.id, today);
-    if (status === 'done') done++;
-    else if (status === 'missed') missed++;
+    // Auto-registered success by default (see getHabitStats) — only an
+    // explicit mishap counts against today, there's no "pending" state
+    // to wait on anymore.
+    if (status === 'missed') missed++;
+    else done++;
   }
-  return { total: habits.length, done, missed, pending: habits.length - done - missed };
+  return { total: habits.length, done, missed, pending: 0 };
 }
 
 // ---------- rendering ----------
 
-async function habitRowHtml(habit, dateStr, status, { editable, showStreak, stats }) {
+function habitRowHtml(habit, dateStr, status, { editable }) {
   const isBad = getHabitType(habit) === 'bad';
-  const extra = showStreak ? kebabMenuHtml(String(habit.id), [
-    { key: 'edit', label: 'تعديل' },
-    { key: 'reset-clock', label: 'إعادة تعيين العداد' },
-    { key: 'delete', label: 'حذف', danger: true }
-  ]) : '';
-  const rowHtml = threeStateRowHtml({
+  return threeStateRowHtml({
     rowId: String(habit.id),
     colorClass: `habit-color-${habit.color}`,
     icon: habit.emoji,
     name: habit.name,
-    status, editable, showStreak, stats, extra,
+    status, editable,
     doneLabel: isBad ? 'امتنعت' : 'تم',
     missedLabel: isBad ? 'زلة' : 'لم يتم'
   });
-  // Day Detail (showStreak false there) stays row-only, no card/clock —
-  // a live "time since" clock doesn't mean anything when looking at a
-  // single past day out of context.
-  if (!showStreak) return rowHtml;
-  const refMs = await getHabitClockReferenceMs(habit);
-  return `
-    <div class="habit-card">
-      ${rowHtml}
-      <div class="habit-clock-row">
-        <span class="habit-clock-icon">⏱️</span>
-        <span class="habit-clock" data-ref-ms="${refMs}">${formatHabitClock(Date.now() - refMs)}</span>
-      </div>
-    </div>`;
 }
 
-// Renders an already-filtered list of habits into `container`. Both the
-// good and bad sections call this with their own subset, so there's one
-// code path for "mark done/missed/undo" regardless of type.
-async function renderHabitRowsInto(container, habits, dateStr, { editable, showStreak, onChange, emptyText } = {}) {
+// Day Detail only — a specific past day's record, with the full
+// done/missed/undo toggle for correcting history if needed. No card, no
+// live clock (a "time since" reading doesn't mean anything out of
+// today's context), no kebab (editing a habit's definition isn't a
+// per-date action).
+async function renderHabitRowsInto(container, habits, dateStr, { editable, onChange, emptyText } = {}) {
   if (habits.length === 0) {
     container.innerHTML = emptyText ? `<p class="empty-state-sub">${emptyText}</p>` : '';
     return;
   }
   const rows = await Promise.all(habits.map(async h => {
     const status = await getHabitStatus(h.id, dateStr);
-    const stats = showStreak ? await getHabitStats(h.id) : null;
-    return habitRowHtml(h, dateStr, status, { editable, showStreak, stats });
+    return habitRowHtml(h, dateStr, status, { editable });
   }));
   container.innerHTML = rows.join('');
-
-  async function refresh() {
-    await renderHabitRowsInto(container, habits, dateStr, { editable, showStreak, onChange, emptyText });
-    if (onChange) onChange();
-  }
 
   wireThreeStateRows(container, async (rowId, action) => {
     const habitId = Number(rowId);
     if (action === 'done') await setHabitStatus(habitId, dateStr, 'done');
     else if (action === 'missed') await setHabitStatus(habitId, dateStr, 'missed');
     else if (action === 'undo') await clearHabitStatus(habitId, dateStr);
-    await refresh();
+    await renderHabitRowsInto(container, habits, dateStr, { editable, onChange, emptyText });
+    if (onChange) onChange();
   });
+}
 
+// ---------- habit cards (Home + full Habits page) ----------
+// "Register a heart automatically": every day since creation counts as
+// a success on its own (see getHabitStats) — she only needs to act when
+// something goes wrong. So the card has exactly one action button:
+// log today as a slip, or undo it if she tapped by mistake. No daily
+// done-tap anywhere in this flow.
+
+function habitCardHtml(habit, todayStatus, stats, refMs) {
+  const isBad = getHabitType(habit) === 'bad';
+  const missedToday = todayStatus === 'missed';
+  const mishapLabel = isBad ? '⚠️ حدثت زلة' : '❌ فاتني اليوم';
+  return `
+    <div class="habit-card" data-row-id="${habit.id}">
+      <div class="habit-card-top">
+        <span class="habit-card-icon">${habit.emoji}</span>
+        <span class="habit-card-name">${escapeHtml(habit.name)}</span>
+        ${kebabMenuHtml(String(habit.id), [
+          { key: 'edit', label: 'تعديل' },
+          { key: 'reset-clock', label: 'إعادة تعيين العداد' },
+          { key: 'delete', label: 'حذف', danger: true }
+        ])}
+      </div>
+      <div class="habit-clock-row">
+        <span class="habit-clock-icon">⏱️</span>
+        <span class="habit-clock" data-ref-ms="${refMs}">${formatHabitClock(Date.now() - refMs)}</span>
+      </div>
+      <p class="habit-card-stats">${statsLine(stats)}</p>
+      ${missedToday
+        ? `<button class="btn btn-text btn-block" data-habit-undo="${habit.id}">↩️ تراجع عن زلة اليوم</button>`
+        : `<button class="btn btn-secondary btn-block habit-mishap-btn" data-habit-mishap="${habit.id}">${mishapLabel}</button>`}
+    </div>`;
+}
+
+async function renderHabitCards(container, habits, { onChange, emptyText } = {}) {
+  if (habits.length === 0) {
+    container.innerHTML = emptyText ? `<p class="empty-state-sub">${emptyText}</p>` : '';
+    return;
+  }
+  const today = todayStr();
+  const rows = await Promise.all(habits.map(async h => {
+    const status = await getHabitStatus(h.id, today);
+    const stats = await getHabitStats(h.id);
+    const refMs = await getHabitClockReferenceMs(h);
+    return habitCardHtml(h, status, stats, refMs);
+  }));
+  container.innerHTML = rows.join('');
+
+  async function refresh() {
+    await renderHabitCards(container, habits, { onChange, emptyText });
+    if (onChange) onChange();
+  }
+
+  container.querySelectorAll('[data-habit-mishap]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await setHabitStatus(Number(btn.dataset.habitMishap), today, 'missed');
+      await refresh();
+    });
+  });
+  container.querySelectorAll('[data-habit-undo]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await clearHabitStatus(Number(btn.dataset.habitUndo), today);
+      await refresh();
+    });
+  });
   wireKebabMenus(container, async (rowId, action) => {
     const habitId = Number(rowId);
     if (action === 'edit') {
@@ -223,18 +289,6 @@ async function renderHabitRowsInto(container, habits, dateStr, { editable, showS
     }
   });
   startHabitClockTicker();
-}
-
-// Home preview — flat, mixed, limited. Full breakdown lives on the
-// dedicated page; this is just a taste.
-async function renderHabitList(container, dateStr, { editable, showStreak, limit, onChange } = {}) {
-  const habits = await getActiveHabits();
-  const shown = limit ? habits.slice(0, limit) : habits;
-  if (shown.length === 0) {
-    container.innerHTML = `<div class="empty-state"><p>ما في عادات مضافة بعد.</p><p class="empty-state-sub">ابدئي بعادة صغيرة، مثل شرب الماء أو المشي.</p></div>`;
-    return;
-  }
-  await renderHabitRowsInto(container, shown, dateStr, { editable, showStreak, onChange });
 }
 
 function openHabitModal({ existingId, onSaved } = {}) {
@@ -331,8 +385,8 @@ async function renderHabitsPage(params, view) {
   async function refreshBoth() {
     const good = await getActiveHabitsByType('good');
     const bad = await getActiveHabitsByType('bad');
-    await renderHabitRowsInto(goodEl, good, today, { editable: true, showStreak: true, onChange: refreshBoth, emptyText: 'ما في عادات جيدة مضافة بعد.' });
-    await renderHabitRowsInto(badEl, bad, today, { editable: true, showStreak: true, onChange: refreshBoth, emptyText: 'ما في عادات مضافة للإقلاع عنها بعد.' });
+    await renderHabitCards(goodEl, good, { onChange: refreshBoth, emptyText: 'ما في عادات جيدة مضافة بعد.' });
+    await renderHabitCards(badEl, bad, { onChange: refreshBoth, emptyText: 'ما في عادات مضافة للإقلاع عنها بعد.' });
   }
   await refreshBoth();
 
@@ -386,11 +440,21 @@ async function habitsYearlyProvider(year) {
 
   async function summarize(list) {
     let total = 0;
+    const today = todayStr();
     const rows = await Promise.all(list.map(async h => {
       const logs = await db.habitLogs.where('habitId').equals(h.id).toArray();
-      const yearLogs = logs.filter(l => l.date.startsWith(prefix));
-      const done = yearLogs.filter(l => l.status === 'done').length;
-      const missed = yearLogs.filter(l => l.status === 'missed').length;
+      const missed = logs.filter(l => l.status === 'missed' && l.date.startsWith(prefix)).length;
+      // Auto-success days within this year specifically: the days this
+      // habit actually existed during that year, minus explicit misses —
+      // matching getHabitStats' model instead of counting explicit
+      // "done" taps, which aren't expected under the auto-register model.
+      const yearStart = `${year}-01-01`, yearEnd = `${year}-12-31`;
+      const created = new Date(h.createdAt).toISOString().slice(0, 10);
+      const rangeStart = created > yearStart ? created : yearStart;
+      const rangeEnd = today < yearEnd ? today : yearEnd;
+      if (rangeStart > rangeEnd) return '';
+      const daysInRange = daysBetween(rangeStart, rangeEnd) + 1;
+      const done = Math.max(0, daysInRange - missed);
       total += done;
       return done + missed > 0 ? `<div class="yearly-row"><span>${h.emoji} ${escapeHtml(h.name)}</span><span>${done} ❤️ · ${missed} 💔</span></div>` : '';
     }));

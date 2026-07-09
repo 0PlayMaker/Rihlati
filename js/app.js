@@ -13,6 +13,7 @@ async function rescheduleHomeReminders() {
 
 async function renderHome(params, view, renderToken) {
   const profile = await db.profile.get(1);
+  const settings = await db.settings.get(1);
   const today = todayStr();
   const ringData = await getHabitsRingData();
   const fixedTasks = await getActiveFixedTasks();
@@ -48,7 +49,7 @@ async function renderHome(params, view, renderToken) {
       <button class="pfp-preview pfp-small" id="header-pfp" aria-label="الإعدادات">${profile.pictureBlob ? `<img src="${pictureUrl(profile.pictureBlob)}" alt="">` : '🌸'}</button>
       <div class="home-header-text">
         <h1 class="greeting-line">${greetingWord()}، ${escapeHtml(profile.name)} 🌸</h1>
-        <p class="greeting-sub">${escapeHtml(pickWelcomePhrase())}</p>
+        <p class="greeting-sub">${escapeHtml(pickWelcomePhrase(settings?.welcomePhrases))}</p>
       </div>
       <button class="icon-btn" id="header-settings" aria-label="الإعدادات">⚙️</button>
     </header>
@@ -172,8 +173,8 @@ async function renderHome(params, view, renderToken) {
 
   const goodHabits = (await getActiveHabitsByType('good')).slice(0, 3);
   const badHabits = (await getActiveHabitsByType('bad')).slice(0, 3);
-  await renderHabitRowsInto(document.getElementById('home-good-habits'), goodHabits, today, { editable: true, showStreak: true, onChange: () => renderRoute(), emptyText: 'ما في عادات جيدة بعد.' });
-  await renderHabitRowsInto(document.getElementById('home-bad-habits'), badHabits, today, { editable: true, showStreak: true, onChange: () => renderRoute(), emptyText: 'ما في عادات للإقلاع عنها بعد.' });
+  await renderHabitCards(document.getElementById('home-good-habits'), goodHabits, { onChange: () => renderRoute(), emptyText: 'ما في عادات جيدة بعد.' });
+  await renderHabitCards(document.getElementById('home-bad-habits'), badHabits, { onChange: () => renderRoute(), emptyText: 'ما في عادات للإقلاع عنها بعد.' });
 
   await renderFixedTaskList(document.getElementById('home-fixed-tasks'), today, { editable: true, limit: 3, showManage: true, onChange: rescheduleHomeReminders });
   await renderTodoList(document.getElementById('home-custom-todos'), { limit: 3, onlyOpen: true, showManage: true });
@@ -203,6 +204,7 @@ function registerAllDayProviders() {
   registerDayProvider(thingsDayProvider);
   registerDayProvider(exercisesDayProvider);
   registerDayProvider(transactionsDayProvider);
+  registerDayProvider(wirdDayProvider);
 }
 
 function registerAllActivityProviders() {
@@ -215,6 +217,7 @@ function registerAllActivityProviders() {
   registerActivityProvider(async () => (await db.dailyAdhkarLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.customAdhkarLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.standaloneSunnahLogs.toArray()).map(l => l.date));
+  registerActivityProvider(async () => (await db.wirdLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.moodLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.foodLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.waterLogs.toArray()).filter(w => w.liters > 0).map(w => w.date));
@@ -251,6 +254,7 @@ function registerAllYearlyStatsProviders() {
   registerYearlyStatsProvider(diaryYearlyProvider);
   registerYearlyStatsProvider(economyYearlyProvider);
   registerYearlyStatsProvider(trainingYearlyProvider);
+  registerYearlyStatsProvider(wirdYearlyProvider);
 }
 
 async function renderBottomBar() {

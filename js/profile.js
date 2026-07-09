@@ -109,18 +109,14 @@ function renderSetupWizard() {
         <h1 class="wizard-title-sm">صورتك الشخصية</h1>
         <p class="wizard-sub">اختياري — تقدري تتخطي هالخطوة</p>
         <div class="pfp-preview" id="wz-pfp-preview">🌸</div>
-        <input type="file" accept="image/*" id="wz-pfp-input" class="hidden-file-input">
-        <button class="btn btn-secondary btn-block" id="wz-choose-pic">اختيار صورة</button>
+        ${photoPickerHtml('wz-pfp', { withRemove: false })}
         <div class="wizard-actions">
           <button class="btn btn-text" id="wz-skip2">تخطي</button>
           <button class="btn btn-primary" id="wz-next2">التالي</button>
         </div>
       </div>`;
     const preview = document.getElementById('wz-pfp-preview');
-    document.getElementById('wz-choose-pic').addEventListener('click', () => document.getElementById('wz-pfp-input').click());
-    document.getElementById('wz-pfp-input').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
+    wirePhotoPicker('wz-pfp', async (file) => {
       try {
         state.pictureBlob = await resizeImageToBlob(file, 256, 0.85);
         preview.innerHTML = `<img src="${pictureUrl(state.pictureBlob)}" alt="">`;
@@ -291,15 +287,11 @@ async function renderSettingsPage(params, view) {
       <h1>الإعدادات</h1>
     </div>
 
-    ${renderThemeSection(settings?.themeMode, settings?.accentColor)}
+    ${renderThemeSection(settings?.themeMode, settings?.accentColor, settings?.accentColorHistory)}
 
     <div class="card settings-card">
       <div class="pfp-preview pfp-small" id="settings-pfp">${profile.pictureBlob ? `<img src="${pictureUrl(profile.pictureBlob)}" alt="">` : '🌸'}</div>
-      <input type="file" accept="image/*" id="settings-pfp-input" class="hidden-file-input">
-      <div class="food-photo-actions">
-        <button class="btn btn-secondary btn-sm" id="settings-change-pic">تغيير الصورة</button>
-        ${profile.pictureBlob ? `<button class="btn btn-text btn-sm" id="settings-remove-pic">إزالة الصورة</button>` : ''}
-      </div>
+      ${photoPickerHtml('settings-pfp', { withRemove: !!profile.pictureBlob })}
       <label class="field-label">الاسم</label>
       <input class="text-input" id="settings-name" value="${escapeHtml(profile.name)}">
       <button class="btn btn-primary btn-sm" id="settings-save-name">حفظ الاسم</button>
@@ -324,6 +316,16 @@ async function renderSettingsPage(params, view) {
       <h2 class="card-title">العملة</h2>
       <input class="text-input" id="settings-currency" value="${escapeHtml(settings.currency || '')}" placeholder="دينار">
       <button class="link-btn" id="settings-save-currency">حفظ</button>
+    </div>
+
+    <div class="card settings-card">
+      <h2 class="card-title">عبارات الترحيب</h2>
+      <p class="settings-note">تظهر عشوائياً في الصفحة الرئيسية.</p>
+      <div id="welcome-phrases-list"></div>
+      <div class="food-photo-actions">
+        <input class="text-input" id="new-phrase-input" placeholder="أضيفي عبارة جديدة">
+        <button class="btn btn-secondary btn-sm" id="add-phrase-btn">+ إضافة</button>
+      </div>
     </div>
 
     <div class="card settings-card">
@@ -378,16 +380,11 @@ async function renderSettingsPage(params, view) {
   document.getElementById('settings-back').addEventListener('click', () => history.back());
   wireThemeSection(view);
 
-  document.getElementById('settings-change-pic').addEventListener('click', () => document.getElementById('settings-pfp-input').click());
-  document.getElementById('settings-pfp-input').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  wirePhotoPicker('settings-pfp', async (file) => {
     const blob = await resizeImageToBlob(file, 256, 0.85);
     await db.profile.update(1, { pictureBlob: blob });
     document.getElementById('settings-pfp').innerHTML = `<img src="${pictureUrl(blob)}" alt="">`;
-  });
-  const removePicBtn = document.getElementById('settings-remove-pic');
-  if (removePicBtn) removePicBtn.addEventListener('click', async () => {
+  }, async () => {
     await db.profile.update(1, { pictureBlob: null });
     renderSettingsPage(params, view);
   });
@@ -421,6 +418,36 @@ async function renderSettingsPage(params, view) {
     const currency = document.getElementById('settings-currency').value.trim();
     await db.settings.update(1, { currency: currency || null });
     toast('تم حفظ العملة');
+  });
+
+  async function renderWelcomePhrasesList() {
+    const s = await db.settings.get(1);
+    const phrases = (s?.welcomePhrases && s.welcomePhrases.length) ? s.welcomePhrases : WELCOME_PHRASES;
+    const listEl = document.getElementById('welcome-phrases-list');
+    listEl.innerHTML = phrases.map((p, i) => `
+      <div class="txn-row" data-phrase-index="${i}">
+        <div class="txn-info"><span class="txn-note">${escapeHtml(p)}</span></div>
+        <button class="icon-btn icon-btn-danger" data-remove-phrase="${i}">🗑️</button>
+      </div>`).join('');
+    listEl.querySelectorAll('[data-remove-phrase]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const idx = Number(btn.dataset.removePhrase);
+        const updated = phrases.filter((_, i) => i !== idx);
+        await db.settings.update(1, { welcomePhrases: updated });
+        await renderWelcomePhrasesList();
+      });
+    });
+  }
+  await renderWelcomePhrasesList();
+  document.getElementById('add-phrase-btn').addEventListener('click', async () => {
+    const input = document.getElementById('new-phrase-input');
+    const text = input.value.trim();
+    if (!text) return;
+    const s = await db.settings.get(1);
+    const current = (s?.welcomePhrases && s.welcomePhrases.length) ? s.welcomePhrases : WELCOME_PHRASES;
+    await db.settings.update(1, { welcomePhrases: [...current, text] });
+    input.value = '';
+    await renderWelcomePhrasesList();
   });
 
   document.getElementById('settings-pin-toggle').addEventListener('change', async (e) => {

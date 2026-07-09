@@ -233,6 +233,203 @@ async function renderStandaloneSunnah(container, dateStr, { showStreak } = {}) {
   });
 }
 
+// ===================== Wird (daily Quran reading plan) =====================
+// Standard Mushaf page counts, the same approximations most reading-plan
+// apps use — precise enough for "when will I finish," not meant to
+// track exact ayah boundaries.
+const QURAN_TOTAL_PAGES = 604;
+const PAGES_PER_JUZ = 20;
+const PAGES_PER_HIZB = 10;
+
+function wirdUnitToPages(amount, unit) {
+  if (unit === 'juz') return amount * PAGES_PER_JUZ;
+  if (unit === 'hizb') return amount * PAGES_PER_HIZB;
+  return amount;
+}
+function wirdUnitLabel(unit) {
+  return { pages: 'صفحة', hizb: 'حزب', juz: 'جزء' }[unit] || 'صفحة';
+}
+
+async function getWirdPlan() {
+  return db.wirdSettings.get(1);
+}
+async function saveWirdPlan(dailyAmount, unit) {
+  const existing = await getWirdPlan();
+  if (existing) await db.wirdSettings.update(1, { dailyAmount, unit });
+  else await db.wirdSettings.put({ id: 1, dailyAmount, unit, progressPages: 0, khatmCount: 0, createdAt: Date.now() });
+}
+async function deleteWirdPlan() {
+  await db.wirdSettings.delete(1);
+  await db.wirdLogs.clear();
+}
+async function isWirdLoggedToday() {
+  return !!(await db.wirdLogs.where('date').equals(todayStr()).first());
+}
+async function logWirdToday() {
+  const plan = await getWirdPlan();
+  if (!plan || await isWirdLoggedToday()) return;
+  const pagesToAdd = wirdUnitToPages(plan.dailyAmount, plan.unit);
+  let newProgress = plan.progressPages + pagesToAdd;
+  let triggeredKhatm = false;
+  if (newProgress >= QURAN_TOTAL_PAGES) {
+    triggeredKhatm = true;
+    newProgress -= QURAN_TOTAL_PAGES;
+  }
+  await db.wirdSettings.update(1, { progressPages: newProgress, khatmCount: plan.khatmCount + (triggeredKhatm ? 1 : 0) });
+  await db.wirdLogs.add({ date: todayStr(), pagesAdded: pagesToAdd, triggeredKhatm });
+}
+async function undoWirdToday() {
+  const log = await db.wirdLogs.where('date').equals(todayStr()).first();
+  if (!log) return;
+  const plan = await getWirdPlan();
+  let restoredProgress = plan.progressPages - log.pagesAdded;
+  let khatmCount = plan.khatmCount;
+  if (log.triggeredKhatm) {
+    khatmCount -= 1;
+    restoredProgress += QURAN_TOTAL_PAGES;
+  }
+  await db.wirdSettings.update(1, { progressPages: restoredProgress, khatmCount });
+  await db.wirdLogs.delete(log.id);
+}
+async function getWirdStreak() {
+  const logs = await db.wirdLogs.toArray();
+  return computeCurrentStreak(logs.map(l => l.date), []);
+}
+function estimateWirdDaysToFinish(plan) {
+  const dailyPages = wirdUnitToPages(plan.dailyAmount, plan.unit);
+  if (dailyPages <= 0) return null;
+  const remaining = QURAN_TOTAL_PAGES - plan.progressPages;
+  return Math.max(0, Math.ceil(remaining / dailyPages));
+}
+
+async function renderWirdCard(container) {
+  const plan = await getWirdPlan();
+  if (!plan) {
+    container.innerHTML = `
+      <h2 class="card-title">📖 ورد القرآن</h2>
+      <p class="empty-state-sub">حدّدي وردك اليومي لتبدأ.</p>
+      <button class="btn btn-secondary btn-block" id="wird-setup-btn">+ إعداد الورد</button>`;
+    document.getElementById('wird-setup-btn').addEventListener('click', () => openWirdSetupModal(() => renderWirdCard(container)));
+    return;
+  }
+  const loggedToday = await isWirdLoggedToday();
+  const streak = await getWirdStreak();
+  const daysLeft = estimateWirdDaysToFinish(plan);
+  const frac = plan.progressPages / QURAN_TOTAL_PAGES;
+
+  container.innerHTML = `
+    <div class="section-header">
+      <h2 class="card-title">📖 ورد القرآن</h2>
+      ${kebabMenuHtml('wird', [
+        { key: 'edit', label: 'تعديل الورد' },
+        { key: 'delete', label: 'حذف الورد', danger: true }
+      ])}
+    </div>
+    <p class="settings-note">وردك اليومي: ${plan.dailyAmount} ${wirdUnitLabel(plan.unit)}</p>
+    <div class="mini-progress-track"><div class="mini-progress-fill" style="width:${frac * 100}%"></div></div>
+    <p class="mini-progress-text">${plan.progressPages} من ${QURAN_TOTAL_PAGES} صفحة</p>
+    ${daysLeft != null ? `<p class="settings-note">بهذا المعدل، ستختمين خلال ~${daysLeft} ${daysLeft === 1 ? 'يوم' : 'يوماً'}</p>` : ''}
+    <p class="tsr-streak">🌙 عدد الختمات: ${plan.khatmCount} ${streak > 0 ? `· 🔥${streak}` : ''}</p>
+    ${loggedToday
+      ? `<button class="btn btn-text btn-block" id="wird-undo-btn">↩️ تراجع عن ورد اليوم</button>`
+      : `<button class="btn btn-primary btn-block" id="wird-log-btn">✅ أتممت وردي اليوم</button>`}
+  `;
+
+  const logBtn = document.getElementById('wird-log-btn');
+  if (logBtn) logBtn.addEventListener('click', async () => {
+    await logWirdToday();
+    await renderWirdCard(container);
+  });
+  const undoBtn = document.getElementById('wird-undo-btn');
+  if (undoBtn) undoBtn.addEventListener('click', async () => {
+    await undoWirdToday();
+    await renderWirdCard(container);
+  });
+  wireKebabMenus(container, async (rowId, action) => {
+    if (action === 'edit') {
+      openWirdSetupModal(() => renderWirdCard(container));
+    } else if (action === 'delete') {
+      if (!confirm('حذف خطة الورد؟ سيُحذف تقدّمك الحالي وسجل الأيام.')) return;
+      await deleteWirdPlan();
+      await renderWirdCard(container);
+    }
+  });
+}
+
+function openWirdSetupModal(onSaved) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2 class="modal-title">إعداد ورد القرآن</h2>
+      <label class="field-label">الكمية اليومية</label>
+      <input class="text-input" type="number" min="1" id="wird-amount-input" placeholder="مثلاً: 5">
+      <label class="field-label">الوحدة</label>
+      <div class="habit-type-chips" id="wird-unit-chips">
+        <button class="chip active" data-unit="pages">صفحات</button>
+        <button class="chip" data-unit="hizb">أحزاب</button>
+        <button class="chip" data-unit="juz">أجزاء</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-text" id="wird-setup-cancel">إلغاء</button>
+        <button class="btn btn-primary" id="wird-setup-save">حفظ</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  (async () => {
+    const existing = await getWirdPlan();
+    if (existing) {
+      document.getElementById('wird-amount-input').value = existing.dailyAmount;
+      overlay.querySelectorAll('#wird-unit-chips .chip').forEach(c => c.classList.toggle('active', c.dataset.unit === existing.unit));
+    }
+  })();
+
+  overlay.querySelectorAll('#wird-unit-chips .chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      overlay.querySelectorAll('#wird-unit-chips .chip').forEach(c => c.classList.toggle('active', c === chip));
+    });
+  });
+  document.getElementById('wird-setup-cancel').addEventListener('click', () => overlay.remove());
+  document.getElementById('wird-setup-save').addEventListener('click', async () => {
+    const amount = parseFloat(document.getElementById('wird-amount-input').value);
+    if (Number.isNaN(amount) || amount <= 0) return;
+    const unit = overlay.querySelector('#wird-unit-chips .chip.active')?.dataset.unit || 'pages';
+    await saveWirdPlan(amount, unit);
+    overlay.remove();
+    if (onSaved) onSaved();
+  });
+}
+
+// ---------- Day Detail provider ----------
+
+async function wirdDayProvider(dateStr) {
+  const log = await db.wirdLogs.where('date').equals(dateStr).first();
+  if (!log) return null;
+  const node = document.createElement('div');
+  node.innerHTML = `<p class="period-day-note">📖 ${log.pagesAdded} صفحة${log.triggeredKhatm ? ' · 🌙 ختمة!' : ''}</p>`;
+  return { title: 'ورد القرآن', node };
+}
+
+// ---------- Yearly stats provider ----------
+
+async function wirdYearlyProvider(year) {
+  const plan = await getWirdPlan();
+  if (!plan) return null;
+  const prefix = String(year);
+  const logs = await db.wirdLogs.toArray();
+  const yearLogs = logs.filter(l => l.date.startsWith(prefix));
+  if (yearLogs.length === 0) return null;
+  const totalPages = yearLogs.reduce((s, l) => s + l.pagesAdded, 0);
+  const khatms = yearLogs.filter(l => l.triggeredKhatm).length;
+  const html = `
+    <div class="yearly-row"><span>أيام الورد المسجلة</span><span>${yearLogs.length}</span></div>
+    <div class="yearly-row"><span>مجموع الصفحات المقروءة</span><span>${totalPages}</span></div>
+    ${khatms > 0 ? `<div class="yearly-row"><span>🌙 ختمات هذا العام</span><span>${khatms}</span></div>` : ''}
+  `;
+  return { title: 'ورد القرآن', html, count: yearLogs.length };
+}
+
 // ===================== Custom adhkar (name + daily count) =====================
 
 async function createCustomAdhkar(name) {
@@ -391,6 +588,8 @@ async function renderWorshipPage(params, view) {
       <div id="standalone-sunnah"></div>
     </div>
 
+    <div class="card" id="wird-card"></div>
+
     <div class="card">
       <h2 class="card-title">أذكار الصباح والمساء</h2>
       <div class="worship-section-stats" id="daily-adhkar-stats"></div>
@@ -444,6 +643,7 @@ async function renderWorshipPage(params, view) {
   await renderExtrasList(document.getElementById('extras-list'), today);
   await renderDailyAdhkar(document.getElementById('daily-adhkar'), today);
   await renderStandaloneSunnah(document.getElementById('standalone-sunnah'), today, { showStreak: true });
+  await renderWirdCard(document.getElementById('wird-card'));
 
   const adhkarListEl = document.getElementById('custom-adhkar-list');
   await renderCustomAdhkarList(adhkarListEl, today, { editable: true, showStreak: true });

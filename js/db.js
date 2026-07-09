@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v18 · ٩ يوليو ٢٠٢٦';
+const APP_VERSION = 'v22 · ٩ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -206,6 +206,20 @@ db.version(9).stores({
 // 'kind' starts with just 'duha' but leaves room for Witr, Tahajjud, etc.
 db.version(10).stores({
   standaloneSunnahLogs: '++id, &[kind+date], kind'
+});
+
+// ---------- Phase 11 — Wird (daily Quran reading plan) ----------
+// One active plan at a time (id fixed at 1), not a list — she asked for
+// "a daily wird" (singular). progressPages/khatmCount are derived state
+// that lives WITH the plan rather than being recomputed from logs every
+// time, because unlike everything else in this app, the "current page
+// within this cycle" genuinely can't be reconstructed from a log of
+// daily amounts alone once a khatm has wrapped it back past zero — so
+// wirdLogs additionally records whether THAT SPECIFIC day's completion
+// triggered a khatm, which is what makes undo exact rather than a guess.
+db.version(11).stores({
+  wirdSettings: '++id',
+  wirdLogs: '++id, &date'
 });
 
 // ---------- date helpers (used everywhere) ----------

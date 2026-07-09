@@ -57,6 +57,14 @@
   --lavender: #DDD3F0;
   --lavender-deep: #A992D6;
 
+  /* Fixed regardless of mode — for text on top of the light pastel
+     backgrounds above (chip.active, habit color dots, etc.), which
+     themselves don't change across modes. Using --ink for this was the
+     bug: --ink correctly turns light in dark mode for normal body text,
+     but that same light --ink on an unchanged light-mint chip is
+     illegible either way. */
+  --ink-on-pastel: #4A4152;
+
   --track: #F1E7EC;
 
   --radius-sm: 10px;
@@ -95,6 +103,7 @@ body {
   min-height: 100vh;
   font-size: 16px;
   line-height: 1.55;
+  color: var(--ink);
 }
 h1, h2, h3, p { margin: 0; }
 button, input { font-family: var(--font); }
@@ -400,7 +409,7 @@ a { color: var(--pink-deep); text-decoration: none; }
   border: 1.5px solid var(--track); background: var(--surface); color: var(--ink-soft);
   border-radius: var(--radius-round); padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer;
 }
-.chip.active { background: var(--mint); border-color: var(--mint); color: var(--ink); }
+.chip.active { background: var(--mint); border-color: var(--mint); color: var(--ink-on-pastel); }
 .chip:active { transform: scale(0.96); }
 
 .daily-adhkar-row { display: flex; gap: var(--space-3); }
@@ -408,7 +417,7 @@ a { color: var(--pink-deep); text-decoration: none; }
   flex: 1; border: 1.5px solid var(--track); background: var(--surface);
   border-radius: var(--radius-md); padding: var(--space-3); font-size: 14px; font-weight: 700; color: var(--ink-soft); cursor: pointer;
 }
-.chip-lg.active { background: var(--mint); border-color: var(--mint); color: var(--ink); }
+.chip-lg.active { background: var(--mint); border-color: var(--mint); color: var(--ink-on-pastel); }
 .chip-lg:active { transform: scale(0.97); }
 
 .adhkar-counter-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) 0; border-bottom: 1px solid var(--track); gap: var(--space-2); }
@@ -481,7 +490,7 @@ a { color: var(--pink-deep); text-decoration: none; }
 }
 .food-photo-picker img { width: 100%; height: 100%; object-fit: cover; }
 .food-photo-placeholder { font-size: 32px; opacity: 0.4; }
-.food-photo-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+.food-photo-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
 
 .food-row { display: flex; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-3) 0; border-bottom: 1px solid var(--track); background: none; border-left: none; border-right: none; border-top: none; text-align: right; cursor: pointer; }
 .food-row:last-child { border-bottom: none; }
@@ -630,6 +639,11 @@ a { color: var(--pink-deep); text-decoration: none; }
 .diary-textarea { min-height: 100px; }
 .diary-month { margin-bottom: var(--space-3); }
 .diary-month summary { font-weight: 700; font-size: 14px; color: var(--ink-soft); padding: var(--space-2) 0; cursor: pointer; }
+.txn-month summary { display: flex; align-items: center; justify-content: space-between; list-style: none; }
+.txn-month summary::-webkit-details-marker { display: none; }
+.txn-month-name { font-size: 15px; font-weight: 700; color: var(--ink); }
+.txn-month-totals { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
+.txn-month-currency { color: var(--ink-faint); font-weight: 500; }
 .weight-history-details { margin-top: var(--space-3); }
 .weight-history-details summary { font-weight: 700; font-size: 14px; color: var(--ink-soft); padding: var(--space-2) 0; cursor: pointer; }
 .weight-history-details .txn-row { padding: var(--space-2) 0; }
@@ -718,12 +732,16 @@ a { color: var(--pink-deep); text-decoration: none; }
 
 .habit-card {
   background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-soft);
-  margin-bottom: var(--space-3); overflow: hidden;
+  margin-bottom: var(--space-3); padding: var(--space-3);
 }
-.habit-card .tsr-row { border-bottom: none; }
+.habit-card-top { display: flex; align-items: center; gap: var(--space-2); }
+.habit-card-icon { font-size: 22px; flex-shrink: 0; }
+.habit-card-name { font-size: 16px; font-weight: 700; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.habit-card-stats { text-align: center; font-size: 13px; color: var(--ink-soft); margin: 4px 0 var(--space-2); }
+.habit-mishap-btn { width: 100%; }
 .habit-clock-row {
   display: flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 2px var(--space-3) var(--space-3); font-size: 13px; color: var(--ink-soft);
+  padding: var(--space-2) 0; font-size: 13px; color: var(--ink-soft);
 }
 .habit-clock-icon { font-size: 13px; }
 .habit-clock { font-weight: 700; color: var(--pink-deep); }
@@ -739,6 +757,10 @@ body.theme-glass {
   background: linear-gradient(160deg, #EDE3F5 0%, #F6D9E8 45%, #DCEAF7 100%);
   background-attachment: fixed;
 }
+body.theme-glass-dark {
+  background: linear-gradient(160deg, #15121C 0%, #241B33 50%, #1A1F33 100%);
+  background-attachment: fixed;
+}
 body.theme-glass .card,
 body.theme-glass .modal,
 body.theme-glass .sheet,
@@ -746,9 +768,18 @@ body.theme-glass #bottom-bar,
 body.theme-glass .habit-card,
 body.theme-glass .quick-action-card,
 body.theme-glass .glance-card {
-  backdrop-filter: blur(16px) saturate(1.4);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
   border: 1px solid rgba(255,255,255,0.5);
+}
+body.theme-glass-dark .card,
+body.theme-glass-dark .modal,
+body.theme-glass-dark .sheet,
+body.theme-glass-dark #bottom-bar,
+body.theme-glass-dark .habit-card,
+body.theme-glass-dark .quick-action-card,
+body.theme-glass-dark .glance-card {
+  border-color: rgba(255,255,255,0.14);
 }
 
 /* AMOLED and dark: photos/icons on pure-white placeholder backgrounds
@@ -758,9 +789,14 @@ body.theme-dark-ish .food-photo-placeholder {
   background: var(--track);
 }
 
+.theme-mode-chip.active { background: var(--pink-deep); border-color: var(--pink-deep); color: #fff; }
 .theme-color-input {
   width: 56px; height: 56px; border: none; border-radius: var(--radius-md);
   padding: 0; cursor: pointer; background: none;
+}
+.theme-history-row { display: flex; gap: 8px; margin-top: var(--space-2); flex-wrap: wrap; }
+.theme-history-swatch {
+  width: 32px; height: 32px; border-radius: var(--radius-round); border: 2px solid var(--track); cursor: pointer;
 }
 .theme-mode-chips { flex-wrap: wrap; }
 .theme-preview { margin-top: var(--space-3); }

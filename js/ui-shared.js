@@ -2,6 +2,37 @@
 // Habits and Fard prayers both need the exact same ❤️/💔/↩️ interaction
 // and the exact same two-tone ring. One component, two call sites.
 
+// Shared everywhere a photo can be added. Explicit camera + gallery
+// buttons rather than one plain file input — a bare <input type="file">
+// merges them into a single OS picker on some phones/browsers but not
+// others (confirmed: shows both on one phone, gallery-only on
+// another), so relying on that merge isn't reliable. Two inputs, one
+// hinted with capture="environment" to open the camera directly, the
+// other plain for the gallery — guarantees both are always reachable
+// as their own clearly-labeled button, regardless of the device.
+function photoPickerHtml(idPrefix, { withRemove = true } = {}) {
+  return `
+    <input type="file" accept="image/*" capture="environment" id="${idPrefix}-camera-input" class="hidden-file-input">
+    <input type="file" accept="image/*" id="${idPrefix}-gallery-input" class="hidden-file-input">
+    <div class="food-photo-actions">
+      <button type="button" class="btn btn-secondary btn-sm" id="${idPrefix}-camera-btn">📷 كاميرا</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="${idPrefix}-gallery-btn">🖼️ معرض</button>
+      ${withRemove ? `<button type="button" class="btn btn-text btn-sm" id="${idPrefix}-remove-btn">إزالة الصورة</button>` : ''}
+    </div>`;
+}
+function wirePhotoPicker(idPrefix, onFileSelected, onRemove) {
+  document.getElementById(`${idPrefix}-camera-btn`).addEventListener('click', () => document.getElementById(`${idPrefix}-camera-input`).click());
+  document.getElementById(`${idPrefix}-gallery-btn`).addEventListener('click', () => document.getElementById(`${idPrefix}-gallery-input`).click());
+  document.getElementById(`${idPrefix}-camera-input`).addEventListener('change', async (e) => {
+    if (e.target.files[0]) await onFileSelected(e.target.files[0]);
+  });
+  document.getElementById(`${idPrefix}-gallery-input`).addEventListener('change', async (e) => {
+    if (e.target.files[0]) await onFileSelected(e.target.files[0]);
+  });
+  const removeBtn = document.getElementById(`${idPrefix}-remove-btn`);
+  if (removeBtn && onRemove) removeBtn.addEventListener('click', onRemove);
+}
+
 // Resizes+compresses an image client-side before it ever touches
 // IndexedDB. Profile picture uses a small maxDim (it's only ever a
 // circle avatar); Food calls this with a larger one since photos get

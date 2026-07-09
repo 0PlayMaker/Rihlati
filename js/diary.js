@@ -72,11 +72,7 @@ async function openDiaryModal({ date, onSaved }) {
       <textarea class="mood-note-input diary-textarea" id="diary-text-input" placeholder="اكتبي يوميتك هنا...">${escapeHtml(existing?.text || '')}</textarea>
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="diary-photo-preview"></div>
-      <input type="file" accept="image/*" id="diary-photo-input" class="hidden-file-input">
-      <div class="food-photo-actions">
-        <button class="btn btn-secondary btn-sm" id="diary-photo-choose">إضافة صورة</button>
-        <button class="btn btn-text btn-sm" id="diary-photo-remove">إزالة الصورة</button>
-      </div>
+      ${photoPickerHtml('diary-photo')}
       <div class="modal-actions">
         ${existing ? `<button class="btn btn-danger btn-sm" id="diary-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="diary-cancel-btn">إلغاء</button>
@@ -93,15 +89,11 @@ async function openDiaryModal({ date, onSaved }) {
   }
   renderPhotoArea();
 
-  document.getElementById('diary-photo-choose').addEventListener('click', () => document.getElementById('diary-photo-input').click());
-  document.getElementById('diary-photo-input').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  wirePhotoPicker('diary-photo', async (file) => {
     pendingPhotoBlob = await resizeImageToBlob(file, 1200, 0.8);
     removePhotoFlag = false;
     renderPhotoArea();
-  });
-  document.getElementById('diary-photo-remove').addEventListener('click', () => {
+  }, () => {
     pendingPhotoBlob = null;
     removePhotoFlag = true;
     renderPhotoArea();
