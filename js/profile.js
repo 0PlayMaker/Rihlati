@@ -68,6 +68,17 @@ function pickHabitMotivation() { return pickRotating(HABIT_MOTIVATION, 'rahlati_
 
 // ---------- first-run setup wizard ----------
 
+// Shared by the one-time first-launch splash AND the Settings page
+// (she asked for both) — one function so they can't drift apart.
+function creditBlockHtml() {
+  return `
+    <p class="credit-line credit-line-main">صُمم بمحبة ليكون صدقة جارية</p>
+    <p class="credit-dua">"اللهم اجعله نافعاً لمن يستخدمه"</p>
+    <p class="credit-by">صُنع بواسطة ساكوهين (Sakuhin)</p>
+    <a class="credit-instagram" href="https://www.instagram.com/sakuhin_store" target="_blank" rel="noopener">📷 إنستغرام: Sakuhin</a>
+  `;
+}
+
 function renderSetupWizard() {
   const root = document.getElementById('app-root');
   const state = { name: '', pictureBlob: null, pin: null };
@@ -166,10 +177,7 @@ function renderSetupWizard() {
       <div class="wizard credit-screen">
         <div class="wizard-logo"><img src="icons/icon-192.png" alt=""></div>
         <p class="credit-line">🌸 رحلتي</p>
-        <p class="credit-line credit-line-main">صُمم بمحبة ليكون صدقة جارية</p>
-        <p class="credit-dua">"اللهم اجعله نافعاً لمن يستخدمه"</p>
-        <p class="credit-by">صُنع بواسطة ساكوهين (Sakuhin)</p>
-        <a class="credit-instagram" href="https://www.instagram.com/sakuhin_store" target="_blank" rel="noopener">📷 instagram.com/sakuhin_store</a>
+        ${creditBlockHtml()}
         <button class="btn btn-primary btn-block" id="credit-continue">متابعة ←</button>
       </div>`;
     document.getElementById('credit-continue').addEventListener('click', async () => {
@@ -352,6 +360,10 @@ async function renderSettingsPage(params, view) {
             <span>${i.icon} ${i.label}</span>
           </label>`).join('')}
       </div>
+    </div>
+
+    <div class="card settings-card credit-settings-card">
+      ${creditBlockHtml()}
     </div>
 
     <p class="app-footer">🌸 رحلتي — نسخة محلية بالكامل، بياناتك لا تغادر هذا الجهاز أبدًا</p>

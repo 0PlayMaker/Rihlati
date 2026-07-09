@@ -649,6 +649,8 @@ a { color: var(--pink-deep); text-decoration: none; }
 .credit-by { font-size: 13px; color: var(--ink-faint); margin-top: var(--space-4); }
 .credit-instagram { font-size: 13px; color: var(--pink-deep); font-weight: 700; margin-bottom: var(--space-5); }
 .credit-screen .btn { max-width: 280px; margin-top: var(--space-4); }
+.credit-settings-card { text-align: center; }
+.credit-settings-card .credit-instagram { display: inline-block; margin-bottom: 0; }
 
 /* ============================================================
    Economy — transactions
