@@ -542,7 +542,6 @@ a { color: var(--pink-deep); text-decoration: none; }
 .goal-row-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
 .goal-title { font-size: 15px; font-weight: 500; }
 .goal-title.done { color: var(--ink-soft); }
-.goal-edit-btn { width: 32px; height: 32px; font-size: 14px; box-shadow: none; background: var(--track); flex-shrink: 0; }
 .goal-notes { font-size: 13px; color: var(--ink-faint); margin-top: var(--space-2); }
 .goal-slider { width: 100%; accent-color: var(--pink-deep); margin: var(--space-2) 0 4px; }
 
@@ -553,7 +552,7 @@ a { color: var(--pink-deep); text-decoration: none; }
 #bottom-bar {
   position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
   width: 100%; max-width: 480px;
-  display: flex; justify-content: space-around;
+  display: flex; justify-content: flex-start; overflow-x: auto; scroll-snap-type: x proximity;
   background: var(--surface); box-shadow: 0 -2px 16px rgba(232,143,174,0.14);
   padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
   z-index: 50;
@@ -562,7 +561,8 @@ a { color: var(--pink-deep); text-decoration: none; }
 #view.has-bottom-bar { padding-bottom: 76px; }
 .bottom-bar-item {
   background: none; border: none; display: flex; flex-direction: column; align-items: center;
-  gap: 2px; padding: 6px 4px; color: var(--ink-faint); cursor: pointer; flex: 1; min-width: 0;
+  gap: 2px; padding: 6px 4px; color: var(--ink-faint); cursor: pointer;
+  flex: 0 0 62px; scroll-snap-align: start;
 }
 .bottom-bar-item.active { color: var(--pink-deep); }
 .bottom-bar-icon { font-size: 18px; }
@@ -573,9 +573,31 @@ a { color: var(--pink-deep); text-decoration: none; }
    custom adhkar, goals
    ============================================================ */
 
-.row-actions { display: flex; gap: 6px; flex-shrink: 0; }
-.row-actions .icon-btn { width: 32px; height: 32px; font-size: 14px; }
 .icon-btn-danger { background: var(--rose); }
+
+/* ============================================================
+   Kebab (⋮) menu — replaces the old paired edit/delete icons
+   ============================================================ */
+
+.kebab-menu { position: relative; flex-shrink: 0; }
+.kebab-btn {
+  width: 32px; height: 32px; border-radius: var(--radius-round); border: none;
+  background: var(--track); color: var(--ink-soft); font-size: 16px; font-weight: 700;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.kebab-btn:active { transform: scale(0.92); }
+.kebab-dropdown {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
+  background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-soft);
+  display: flex; flex-direction: column; min-width: 120px; overflow: hidden;
+}
+.kebab-dropdown.hidden { display: none; }
+.kebab-item {
+  background: none; border: none; padding: 10px 14px; font-family: var(--font);
+  font-size: 14px; color: var(--ink); text-align: right; cursor: pointer;
+}
+.kebab-item:active { background: var(--track); }
+.kebab-item-danger { color: var(--rose-deep); }
 
 /* ============================================================
    Home: mood strip + streaks strip (in the rings card)
@@ -611,6 +633,63 @@ a { color: var(--pink-deep); text-decoration: none; }
 .diary-entry-date { font-size: 13px; font-weight: 700; color: var(--ink-soft); }
 .diary-entry-photo { width: 100%; max-height: 220px; object-fit: cover; border-radius: var(--radius-md); margin-bottom: var(--space-2); }
 .diary-entry-text { font-size: 14px; white-space: pre-wrap; }
+
+/* ============================================================
+   Credit / dedication screen (first launch only)
+   ============================================================ */
+
+.credit-screen { gap: var(--space-2); }
+.credit-line { font-size: 18px; font-weight: 700; }
+.credit-line-main { font-size: 16px; color: var(--ink-soft); font-weight: 500; }
+.credit-dua { font-style: italic; color: var(--pink-deep); margin: var(--space-3) 0; }
+.credit-by { font-size: 13px; color: var(--ink-faint); margin-top: var(--space-4); }
+.credit-instagram { font-size: 13px; color: var(--pink-deep); font-weight: 700; margin-bottom: var(--space-5); }
+.credit-screen .btn { max-width: 280px; margin-top: var(--space-4); }
+
+/* ============================================================
+   Economy — transactions
+   ============================================================ */
+
+.economy-shopping-btn { margin-inline-start: auto; }
+.txn-row { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) 0; border-bottom: 1px solid var(--track); }
+.txn-row:last-child { border-bottom: none; }
+.txn-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.txn-note { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.txn-date { font-size: 12px; color: var(--ink-faint); }
+.txn-amount { font-size: 15px; font-weight: 700; flex-shrink: 0; }
+.txn-positive { color: var(--mint-deep); }
+.txn-negative { color: var(--rose-deep); }
+
+/* ============================================================
+   Economy — shopping lists
+   ============================================================ */
+
+.shopping-list-card { margin-bottom: var(--space-3); }
+.shopping-items { margin-top: var(--space-2); }
+.shopping-add-row { margin-top: var(--space-2); }
+.wishlist-link { display: block; margin-top: 2px; }
+
+/* ============================================================
+   Training
+   ============================================================ */
+
+.exercise-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--track); }
+.exercise-row:last-child { border-bottom: none; }
+.exercise-row-top { display: flex; align-items: center; gap: var(--space-2); }
+.exercise-desc { font-size: 13px; color: var(--ink-soft); margin: var(--space-2) 0 0; }
+.exercise-controls { display: flex; gap: 6px; align-items: center; margin-top: var(--space-2); flex-wrap: wrap; }
+.timer-display { font-size: 48px; font-weight: 800; text-align: center; direction: ltr; margin: var(--space-3) 0; color: var(--pink-deep); }
+.timer-display.timer-done { color: var(--mint-deep); }
+.timer-duration-row { display: flex; align-items: center; gap: var(--space-2); justify-content: center; }
+.timer-duration-row .text-input { max-width: 100px; text-align: center; }
+.timer-controls { justify-content: center; }
+
+/* ============================================================
+   Recipes
+   ============================================================ */
+
+.youtube-embed-wrap { position: relative; width: 100%; padding-top: 56.25%; margin-bottom: var(--space-3); border-radius: var(--radius-md); overflow: hidden; }
+.youtube-embed-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: none; }
 
 /* ============================================================
    Toast

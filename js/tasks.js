@@ -49,11 +49,10 @@ function fixedTaskRowHtml(task, done, editable, showManage) {
         <span class="task-title">${escapeHtml(task.title)}</span>
         ${task.reminderTime ? `<span class="task-reminder">🔔 ${task.reminderTime}</span>` : ''}
       </label>
-      ${showManage ? `
-        <div class="row-actions">
-          <button class="icon-btn" data-task-action="edit" data-task-id="${task.id}">✏️</button>
-          <button class="icon-btn icon-btn-danger" data-task-action="delete" data-task-id="${task.id}">🗑️</button>
-        </div>` : ''}
+      ${showManage ? kebabMenuHtml(String(task.id), [
+        { key: 'edit', label: 'تعديل' },
+        { key: 'delete', label: 'حذف', danger: true }
+      ]) : ''}
     </div>`;
 }
 
@@ -87,16 +86,16 @@ async function renderFixedTaskList(container, dateStr, { editable, limit, onChan
       await refresh();
     });
   });
-  container.querySelectorAll('[data-task-action="edit"]').forEach(btn => {
-    btn.addEventListener('click', () => openFixedTaskModal({ existingId: Number(btn.dataset.taskId), onSaved: refresh }));
-  });
-  container.querySelectorAll('[data-task-action="delete"]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const task = shown.find(t => t.id === Number(btn.dataset.taskId));
+  wireKebabMenus(container, async (rowId, action) => {
+    const taskId = Number(rowId);
+    if (action === 'edit') {
+      openFixedTaskModal({ existingId: taskId, onSaved: refresh });
+    } else if (action === 'delete') {
+      const task = shown.find(t => t.id === taskId);
       if (!confirm(`حذف "${task.title}"؟`)) return;
-      await archiveFixedTask(task.id);
+      await archiveFixedTask(taskId);
       await refresh();
-    });
+    }
   });
 }
 
@@ -179,11 +178,10 @@ function todoRowHtml(todo, showManage) {
         <span class="task-title">${escapeHtml(todo.title)}</span>
         ${todo.dueDate ? `<span class="task-reminder">📅 ${formatDateArabic(todo.dueDate, { weekday: false })}</span>` : ''}
       </label>
-      ${showManage ? `
-        <div class="row-actions">
-          <button class="icon-btn" data-todo-action="edit" data-todo-id="${todo.id}">✏️</button>
-          <button class="icon-btn icon-btn-danger" data-todo-action="delete" data-todo-id="${todo.id}">🗑️</button>
-        </div>` : ''}
+      ${showManage ? kebabMenuHtml(String(todo.id), [
+        { key: 'edit', label: 'تعديل' },
+        { key: 'delete', label: 'حذف', danger: true }
+      ]) : ''}
     </div>`;
 }
 
@@ -208,15 +206,15 @@ async function renderTodoList(container, { limit, onlyOpen, showManage } = {}) {
       await refresh();
     });
   });
-  container.querySelectorAll('[data-todo-action="edit"]').forEach(btn => {
-    btn.addEventListener('click', () => openTodoModal({ existingId: Number(btn.dataset.todoId), onSaved: refresh }));
-  });
-  container.querySelectorAll('[data-todo-action="delete"]').forEach(btn => {
-    btn.addEventListener('click', async () => {
+  wireKebabMenus(container, async (rowId, action) => {
+    const todoId = Number(rowId);
+    if (action === 'edit') {
+      openTodoModal({ existingId: todoId, onSaved: refresh });
+    } else if (action === 'delete') {
       if (!confirm('حذف هذه المهمة؟')) return;
-      await deleteTodo(Number(btn.dataset.todoId));
+      await deleteTodo(todoId);
       await refresh();
-    });
+    }
   });
 }
 

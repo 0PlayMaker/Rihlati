@@ -96,11 +96,10 @@ async function getHabitsRingData() {
 
 function habitRowHtml(habit, dateStr, status, { editable, showStreak, stats }) {
   const isBad = getHabitType(habit) === 'bad';
-  const extra = showStreak ? `
-    <div class="row-actions">
-      <button class="icon-btn" data-habit-action="edit">✏️</button>
-      <button class="icon-btn icon-btn-danger" data-habit-action="delete">🗑️</button>
-    </div>` : '';
+  const extra = showStreak ? kebabMenuHtml(String(habit.id), [
+    { key: 'edit', label: 'تعديل' },
+    { key: 'delete', label: 'حذف', danger: true }
+  ]) : '';
   return threeStateRowHtml({
     rowId: String(habit.id),
     colorClass: `habit-color-${habit.color}`,
@@ -140,18 +139,16 @@ async function renderHabitRowsInto(container, habits, dateStr, { editable, showS
     await refresh();
   });
 
-  container.querySelectorAll('[data-habit-action="edit"]').forEach(btn => {
-    const habitId = Number(btn.closest('.tsr-row').dataset.rowId);
-    btn.addEventListener('click', () => openHabitModal({ existingId: habitId, onSaved: refresh }));
-  });
-  container.querySelectorAll('[data-habit-action="delete"]').forEach(btn => {
-    const habitId = Number(btn.closest('.tsr-row').dataset.rowId);
-    btn.addEventListener('click', async () => {
+  wireKebabMenus(container, async (rowId, action) => {
+    const habitId = Number(rowId);
+    if (action === 'edit') {
+      openHabitModal({ existingId: habitId, onSaved: refresh });
+    } else if (action === 'delete') {
       const habit = habits.find(h => h.id === habitId);
       if (!confirm(`حذف "${habit.name}"؟ سجل السجلات السابقة يبقى محفوظاً.`)) return;
       await archiveHabit(habitId);
       await refresh();
-    });
+    }
   });
 }
 

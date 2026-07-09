@@ -102,7 +102,7 @@ async function renderHome(params, view) {
       </button>
       <button class="glance-card" id="body-action">
         <span class="glance-icon">⚖️</span>
-        <span class="glance-label">الوزن والمزاج</span>
+        <span class="glance-label">الصحة</span>
         <span class="quick-action-stat">${weightGlanceText(weightStats)}</span>
       </button>
     </section>
@@ -186,6 +186,8 @@ function registerAllDayProviders() {
   registerDayProvider(waterDayProvider);
   registerDayProvider(weightDayProvider);
   registerDayProvider(diaryDayProvider);
+  registerDayProvider(ediblesDayProvider);
+  registerDayProvider(thingsDayProvider);
 }
 
 function registerAllActivityProviders() {
@@ -203,6 +205,8 @@ function registerAllActivityProviders() {
   registerActivityProvider(async () => (await db.weightLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.bodyMeasurementLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.diaryEntries.toArray()).map(e => e.date));
+  registerActivityProvider(async () => (await db.edibles.toArray()).map(e => e.date));
+  registerActivityProvider(async () => (await db.things.toArray()).map(t => t.date));
   registerActivityProvider(async () => {
     const periods = await db.periodLogs.toArray();
     const today = todayStr();
@@ -227,6 +231,8 @@ function registerAllYearlyStatsProviders() {
   registerYearlyStatsProvider(bodyYearlyProvider);
   registerYearlyStatsProvider(goalsYearlyProvider);
   registerYearlyStatsProvider(diaryYearlyProvider);
+  registerYearlyStatsProvider(economyYearlyProvider);
+  registerYearlyStatsProvider(trainingYearlyProvider);
 }
 
 async function renderBottomBar() {
@@ -272,6 +278,15 @@ function startApp(profile, settings) {
   route('/body', renderBodyPage);
   route('/goals', renderGoalsPage);
   route('/diary', renderDiaryPage);
+  route('/economy', renderEconomyPage);
+  route('/shopping-lists', renderShoppingListsPage);
+  route('/transactions', renderTransactionsPage);
+  route('/edibles', renderEdiblesPage);
+  route('/edibles-wishlist', renderEdibleWishlistPage);
+  route('/things', renderThingsPage);
+  route('/things-wishlist', renderThingsWishlistPage);
+  route('/recipes', renderRecipesPage);
+  route('/training', renderTrainingPage);
   route('/yearly', renderYearlyOverviewPage);
   route('/settings', renderSettingsPage);
 

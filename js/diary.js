@@ -177,7 +177,10 @@ async function renderDiaryPage(params, view) {
           <div class="diary-entry" data-date="${e.date}">
             <div class="diary-entry-top">
               <span class="diary-entry-date">${formatDateArabic(e.date, { weekday: true })}</span>
-              <button class="icon-btn" data-diary-edit="${e.date}">✏️</button>
+              ${kebabMenuHtml(e.date, [
+                { key: 'edit', label: 'تعديل' },
+                { key: 'delete', label: 'حذف', danger: true }
+              ])}
             </div>
             ${photoUrl ? `<img class="diary-entry-photo" src="${photoUrl}" alt="">` : ''}
             <p class="diary-entry-text">${escapeHtml(e.text)}</p>
@@ -191,8 +194,14 @@ async function renderDiaryPage(params, view) {
     }));
 
     monthsEl.innerHTML = rowsHtml.join('');
-    monthsEl.querySelectorAll('[data-diary-edit]').forEach(btn => {
-      btn.addEventListener('click', () => openDiaryModal({ date: btn.dataset.diaryEdit, onSaved: refresh }));
+    wireKebabMenus(monthsEl, async (rowId, action) => {
+      if (action === 'edit') {
+        openDiaryModal({ date: rowId, onSaved: refresh });
+      } else if (action === 'delete') {
+        if (!confirm('حذف يومية هذا اليوم؟')) return;
+        await deleteDiaryEntry(rowId);
+        await refresh();
+      }
     });
   }
 

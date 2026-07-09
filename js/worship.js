@@ -246,11 +246,10 @@ async function renderCustomAdhkarList(container, dateStr, { editable = true, sho
         <div class="adhkar-counter-controls">
           <button class="adhkar-count-btn" data-action="edit" ${editable ? '' : 'disabled'}>${count}</button>
           ${editable ? `<button class="adhkar-plus" data-action="inc">+</button>` : ''}
-          ${showStreak ? `
-            <div class="row-actions">
-              <button class="icon-btn" data-action="rename">✏️</button>
-              <button class="icon-btn icon-btn-danger" data-action="remove">🗑️</button>
-            </div>` : ''}
+          ${showStreak ? kebabMenuHtml(String(a.id), [
+            { key: 'rename', label: 'تعديل الاسم' },
+            { key: 'remove', label: 'حذف', danger: true }
+          ]) : ''}
         </div>
       </div>`;
   }));
@@ -273,21 +272,21 @@ async function renderCustomAdhkarList(container, dateStr, { editable = true, sho
         await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
       }
     });
-    const renameBtn = row.querySelector('[data-action="rename"]');
-    if (renameBtn) renameBtn.addEventListener('click', async () => {
+  });
+  wireKebabMenus(container, async (rowId, action) => {
+    const id = Number(rowId);
+    if (action === 'rename') {
       const item = items.find(a => a.id === id);
       const input = prompt('اسم الذكر:', item.name);
       if (input === null || !input.trim()) return;
       await updateCustomAdhkarName(id, input.trim());
       await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
-    });
-    const removeBtn = row.querySelector('[data-action="remove"]');
-    if (removeBtn) removeBtn.addEventListener('click', async () => {
+    } else if (action === 'remove') {
       const item = items.find(a => a.id === id);
       if (!confirm(`حذف "${item.name}"؟`)) return;
       await archiveCustomAdhkar(id);
       await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
-    });
+    }
   });
 }
 

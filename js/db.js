@@ -119,12 +119,13 @@ function mealTypeIcon(key) { return MEAL_TYPES.find(m => m.key === key)?.icon ||
 const BOTTOM_BAR_ITEMS = [
   { key: 'home', label: 'الرئيسية', icon: '🏠', path: '/home' },
   { key: 'food', label: 'الطعام', icon: '🍽️', path: '/food' },
-  { key: 'body', label: 'الوزن', icon: '⚖️', path: '/body' },
+  { key: 'body', label: 'الصحة', icon: '⚖️', path: '/body' },
   { key: 'worship', label: 'العبادة', icon: '🕌', path: '/worship' },
   { key: 'habits', label: 'العادات', icon: '🌱', path: '/habits' },
   { key: 'period', label: 'الدورة', icon: '🌙', path: '/period' },
   { key: 'goals', label: 'الأهداف', icon: '🎯', path: '/goals' },
-  { key: 'diary', label: 'يومياتي', icon: '📔', path: '/diary' }
+  { key: 'diary', label: 'يومياتي', icon: '📔', path: '/diary' },
+  { key: 'economy', label: 'الاقتصاد', icon: '💰', path: '/economy' }
 ];
 
 // ---------- Phase 5 (Body + Goals) — new tables only ----------
@@ -151,6 +152,42 @@ db.version(6).stores({
   diaryEntries: '++id, &date',
   // Strict 1:1 with diaryEntries, same pattern as foodPhotos.
   diaryPhotos: 'entryId'
+});
+
+// ---------- Phase 7 (Economy) — new tables only ----------
+// Balance is never stored directly — it's always the sum of
+// economyTransactions, same "derive, don't store" rule as everywhere
+// else (habit streaks, goal progress, food calorie totals). Setting
+// "the balance" to a number just adds a reconciliation transaction for
+// the difference, so the history always explains itself.
+db.version(7).stores({
+  economyTransactions: '++id',
+  shoppingLists: '++id',
+  shoppingListItems: '++id, listId',
+  edibles: '++id',
+  ediblePhotos: 'edibleId',
+  edibleWishlist: '++id',
+  edibleWishlistPhotos: 'wishlistId',
+  things: '++id',
+  thingPhotos: 'thingId',
+  thingsWishlist: '++id',
+  thingsWishlistPhotos: 'wishlistId'
+});
+
+// ---------- Phase 8 (Recipe book) — new tables only ----------
+db.version(8).stores({
+  recipes: '++id',
+  recipePhotos: 'recipeId'
+});
+
+// ---------- Phase 9 (Training) — new tables only ----------
+// Same shape as custom adhkar: a numeric per-day log, presence = done,
+// so it reuses computeImplicitStats for streak/succeeded/failed without
+// inventing a new pattern.
+db.version(9).stores({
+  exercises: '++id',
+  exercisePhotos: 'exerciseId',
+  exerciseLogs: '++id, &[exerciseId+date], exerciseId'
 });
 
 // ---------- date helpers (used everywhere) ----------

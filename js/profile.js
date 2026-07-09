@@ -60,7 +60,10 @@ function pickRotating(bank, lastIndexKey) {
   return bank[idx];
 }
 
-function pickWelcomePhrase() { return pickRotating(WELCOME_PHRASES, 'rahlati_last_welcome'); }
+function pickWelcomePhrase(customPhrases) {
+  const pool = (customPhrases && customPhrases.length) ? customPhrases : WELCOME_PHRASES;
+  return pickRotating(pool, 'rahlati_last_welcome');
+}
 function pickHabitMotivation() { return pickRotating(HABIT_MOTIVATION, 'rahlati_last_habit_tip'); }
 
 // ---------- first-run setup wizard ----------
@@ -155,7 +158,23 @@ function renderSetupWizard() {
       lastBackupAt: null
     });
     sessionStorage.setItem('rahlati_unlocked', '1');
-    startApp(await db.profile.get(1), await db.settings.get(1));
+    renderCreditScreen();
+  }
+
+  function renderCreditScreen() {
+    root.innerHTML = `
+      <div class="wizard credit-screen">
+        <div class="wizard-logo"><img src="icons/icon-192.png" alt=""></div>
+        <p class="credit-line">🌸 رحلتي</p>
+        <p class="credit-line credit-line-main">صُمم بمحبة ليكون صدقة جارية</p>
+        <p class="credit-dua">"اللهم اجعله نافعاً لمن يستخدمه"</p>
+        <p class="credit-by">صُنع بواسطة ساكوهين (Sakuhin)</p>
+        <a class="credit-instagram" href="https://www.instagram.com/sakuhin_store" target="_blank" rel="noopener">📷 instagram.com/sakuhin_store</a>
+        <button class="btn btn-primary btn-block" id="credit-continue">متابعة ←</button>
+      </div>`;
+    document.getElementById('credit-continue').addEventListener('click', async () => {
+      startApp(await db.profile.get(1), await db.settings.get(1));
+    });
   }
 
   step1();
@@ -289,6 +308,12 @@ async function renderSettingsPage(params, view) {
     </div>
 
     <div class="card settings-card">
+      <h2 class="card-title">العملة</h2>
+      <input class="text-input" id="settings-currency" value="${escapeHtml(settings.currency || '')}" placeholder="دينار">
+      <button class="link-btn" id="settings-save-currency">حفظ</button>
+    </div>
+
+    <div class="card settings-card">
       <div class="settings-row">
         <span>رمز الحماية (PIN)</span>
         <label class="switch"><input type="checkbox" id="settings-pin-toggle" ${settings.pinEnabled ? 'checked' : ''}><span class="switch-track"></span></label>
@@ -366,6 +391,12 @@ async function renderSettingsPage(params, view) {
     if (age != null && (age < 1 || age > 120)) { alert('أدخلي عمراً صحيحاً'); return; }
     await db.settings.update(1, { age, sex: selectedSex, heightCm });
     toast('تم حفظ المعلومات الصحية');
+  });
+
+  document.getElementById('settings-save-currency').addEventListener('click', async () => {
+    const currency = document.getElementById('settings-currency').value.trim();
+    await db.settings.update(1, { currency: currency || null });
+    toast('تم حفظ العملة');
   });
 
   document.getElementById('settings-pin-toggle').addEventListener('change', async (e) => {

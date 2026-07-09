@@ -100,6 +100,49 @@ function statsLine(stats) {
   return `🔥${stats.streak} · ✅${stats.succeeded} · 💔${stats.failed}`;
 }
 
+// ---------- kebab (⋮) menu ----------
+// Replaces the old paired ✏️/🗑️ icon buttons everywhere — one small
+// button that opens a 2-3 item dropdown instead of two icons competing
+// for space on every row. `actions` is [{key, label, danger?}]; the
+// dropdown closes on any outside tap via one document-level listener
+// (guarded so repeated renders don't stack up duplicate listeners).
+
+function kebabMenuHtml(rowId, actions) {
+  return `
+    <div class="kebab-menu" data-kebab-row="${rowId}">
+      <button class="kebab-btn" data-kebab-toggle aria-label="خيارات">⋮</button>
+      <div class="kebab-dropdown hidden" data-kebab-dropdown>
+        ${actions.map(a => `<button class="kebab-item ${a.danger ? 'kebab-item-danger' : ''}" data-kebab-action="${a.key}">${a.label}</button>`).join('')}
+      </div>
+    </div>`;
+}
+
+function wireKebabMenus(container, onAction) {
+  container.querySelectorAll('.kebab-menu').forEach(menu => {
+    const rowId = menu.dataset.kebabRow;
+    const toggleBtn = menu.querySelector('[data-kebab-toggle]');
+    const dropdown = menu.querySelector('[data-kebab-dropdown]');
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.kebab-dropdown').forEach(d => { if (d !== dropdown) d.classList.add('hidden'); });
+      dropdown.classList.toggle('hidden');
+    });
+    dropdown.querySelectorAll('[data-kebab-action]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.add('hidden');
+        onAction(rowId, btn.dataset.kebabAction);
+      });
+    });
+  });
+  if (!window._kebabGlobalListenerAdded) {
+    document.addEventListener('click', () => {
+      document.querySelectorAll('.kebab-dropdown').forEach(d => d.classList.add('hidden'));
+    });
+    window._kebabGlobalListenerAdded = true;
+  }
+}
+
 // A row with an icon, a name, an optional streak+stats badge, and the
 // shared ❤️ done / 💔 missed / ↩️ undo control. `rowId` is any string
 // unique within the list (e.g. `habit-3` or `prayer-fajr`) — callers
@@ -118,12 +161,12 @@ function threeStateRowHtml({ rowId, colorClass, icon, name, status, editable, sh
         </div>
         ${showStreak ? `<span class="tsr-streak">${statsLine(stats)}</span>` : ''}
       </div>
-      ${extra ? `<div class="tsr-extra">${extra}</div>` : ''}
       <div class="tsr-actions ${editable ? '' : 'disabled'}">
         <button class="tsr-btn tsr-btn-done ${status === 'done' ? 'active' : ''}" data-action="done" ${editable ? '' : 'disabled'} aria-label="${doneLabel || 'تم'}">❤️</button>
         <button class="tsr-btn tsr-btn-missed ${status === 'missed' ? 'active' : ''}" data-action="missed" ${editable ? '' : 'disabled'} aria-label="${missedLabel || 'لم يتم'}">💔</button>
         <button class="tsr-btn tsr-btn-undo" data-action="undo" ${editable && status ? '' : 'disabled'} aria-label="تراجع">↩️</button>
       </div>
+      ${extra ? `<div class="tsr-extra">${extra}</div>` : ''}
     </div>`;
 }
 

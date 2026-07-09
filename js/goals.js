@@ -90,10 +90,10 @@ function goalRowHtml(goal) {
     <div class="goal-row" data-goal-id="${goal.id}">
       <div class="goal-row-top">
         <span class="goal-title ${done ? 'done' : ''}">${done ? '✅ ' : ''}${escapeHtml(goal.title)}</span>
-        <div class="row-actions">
-          <button class="icon-btn goal-edit-btn" data-action="edit">✏️</button>
-          <button class="icon-btn icon-btn-danger goal-delete-btn" data-action="delete">🗑️</button>
-        </div>
+        ${kebabMenuHtml(String(goal.id), [
+          { key: 'edit', label: 'تعديل' },
+          { key: 'delete', label: 'حذف', danger: true }
+        ])}
       </div>
       ${progressHtml}
       ${goal.notes ? `<p class="goal-notes">${escapeHtml(goal.notes)}</p>` : ''}
@@ -109,18 +109,19 @@ async function renderGoalsList(container, { limit } = {}) {
   }
   container.innerHTML = goals.map(goalRowHtml).join('');
 
-  container.querySelectorAll('.goal-row').forEach(row => {
-    const id = Number(row.dataset.goalId);
-    const editBtn = row.querySelector('[data-action="edit"]');
-    if (editBtn) editBtn.addEventListener('click', () => openGoalModal({ existingId: id, onSaved: () => renderGoalsList(container, { limit }) }));
-
-    const deleteBtn = row.querySelector('[data-action="delete"]');
-    if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+  wireKebabMenus(container, async (rowId, action) => {
+    const id = Number(rowId);
+    if (action === 'edit') {
+      openGoalModal({ existingId: id, onSaved: () => renderGoalsList(container, { limit }) });
+    } else if (action === 'delete') {
       if (!confirm('حذف هذا الهدف؟')) return;
       await archiveGoal(id);
       await renderGoalsList(container, { limit });
-    });
+    }
+  });
 
+  container.querySelectorAll('.goal-row').forEach(row => {
+    const id = Number(row.dataset.goalId);
     const progressBar = row.querySelector('[data-action="tap-progress"]');
     if (progressBar) progressBar.addEventListener('click', async () => {
       const goal = (await db.goals.toArray()).find(g => g.id === id);

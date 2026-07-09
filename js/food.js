@@ -278,6 +278,13 @@ async function renderFoodPage(params, view) {
       <button class="btn btn-primary btn-block" id="food-add-btn">+ تسجيل وجبة</button>
       <div id="food-list"></div>
     </div>
+    <div class="card">
+      <div class="section-header">
+        <h2 class="card-title">📖 وصفاتي</h2>
+        <a class="see-all-link" href="#/recipes">فتح ←</a>
+      </div>
+      <p class="settings-note">احفظي وصفاتك: فيديو يوتيوب، صور، مكونات وطريقة التحضير.</p>
+    </div>
   `;
   document.getElementById('food-back').addEventListener('click', () => history.back());
 
