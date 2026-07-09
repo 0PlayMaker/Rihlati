@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v11 · ٩ يوليو ٢٠٢٦';
+const APP_VERSION = 'v12 · ٩ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.

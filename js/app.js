@@ -23,6 +23,8 @@ async function renderHome(params, view) {
   const foodStats = await getFoodTodayStats();
   const diaryStreak = await getDiaryStreak();
   const weightStats = await getWeightStats();
+  const economyBalance = await getEconomyBalance();
+  const currency = await getCurrencyLabel();
   const activeGoals = await getActiveGoals();
   const last7DaysMood = await getLast7DaysMood();
   const [goodStreak, badStreak] = await Promise.all([getTopHabitStreak('good'), getTopHabitStreak('bad')]);
@@ -94,11 +96,16 @@ async function renderHome(params, view) {
       <div id="home-calendar"></div>
     </section>
 
-    <section class="glance-row">
+    <section class="glance-row glance-row-3">
       <button class="glance-card" id="period-action">
         <span class="glance-icon">🌙</span>
         <span class="glance-label">الدورة الشهرية</span>
         <span class="quick-action-stat">${periodGlanceText(periodStatus)}</span>
+      </button>
+      <button class="glance-card" id="economy-action">
+        <span class="glance-icon">💰</span>
+        <span class="glance-label">الاقتصاد</span>
+        <span class="quick-action-stat">${economyBalance.toFixed(2)} ${currency}</span>
       </button>
       <button class="glance-card" id="body-action">
         <span class="glance-icon">⚖️</span>
@@ -149,6 +156,7 @@ async function renderHome(params, view) {
   document.getElementById('worship-action').addEventListener('click', () => goTo('/worship'));
   document.getElementById('diary-action').addEventListener('click', () => goTo('/diary'));
   document.getElementById('period-action').addEventListener('click', () => goTo('/period'));
+  document.getElementById('economy-action').addEventListener('click', () => goTo('/economy'));
   document.getElementById('body-action').addEventListener('click', () => goTo('/body'));
   document.getElementById('yearly-overview-btn').addEventListener('click', () => goTo('/yearly'));
   view.querySelectorAll('[data-soon]').forEach(el => {

@@ -612,6 +612,9 @@ a { color: var(--pink-deep); text-decoration: none; }
 .quick-actions-row-3 { grid-template-columns: repeat(3, 1fr); }
 .quick-actions-row-3 .quick-action-icon { font-size: 22px; }
 .quick-actions-row-3 .quick-action-label { font-size: 12px; }
+.glance-row-3 { grid-template-columns: repeat(3, 1fr); }
+.glance-row-3 .glance-icon { font-size: 22px; }
+.glance-row-3 .glance-label { font-size: 12px; }
 
 /* ============================================================
    Weight chart controls
