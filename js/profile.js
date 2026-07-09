@@ -291,10 +291,15 @@ async function renderSettingsPage(params, view) {
       <h1>الإعدادات</h1>
     </div>
 
+    ${renderThemeSection(settings?.themeMode, settings?.accentColor)}
+
     <div class="card settings-card">
       <div class="pfp-preview pfp-small" id="settings-pfp">${profile.pictureBlob ? `<img src="${pictureUrl(profile.pictureBlob)}" alt="">` : '🌸'}</div>
       <input type="file" accept="image/*" id="settings-pfp-input" class="hidden-file-input">
-      <button class="btn btn-secondary btn-sm" id="settings-change-pic">تغيير الصورة</button>
+      <div class="food-photo-actions">
+        <button class="btn btn-secondary btn-sm" id="settings-change-pic">تغيير الصورة</button>
+        ${profile.pictureBlob ? `<button class="btn btn-text btn-sm" id="settings-remove-pic">إزالة الصورة</button>` : ''}
+      </div>
       <label class="field-label">الاسم</label>
       <input class="text-input" id="settings-name" value="${escapeHtml(profile.name)}">
       <button class="btn btn-primary btn-sm" id="settings-save-name">حفظ الاسم</button>
@@ -371,6 +376,7 @@ async function renderSettingsPage(params, view) {
   `;
 
   document.getElementById('settings-back').addEventListener('click', () => history.back());
+  wireThemeSection(view);
 
   document.getElementById('settings-change-pic').addEventListener('click', () => document.getElementById('settings-pfp-input').click());
   document.getElementById('settings-pfp-input').addEventListener('change', async (e) => {
@@ -379,6 +385,11 @@ async function renderSettingsPage(params, view) {
     const blob = await resizeImageToBlob(file, 256, 0.85);
     await db.profile.update(1, { pictureBlob: blob });
     document.getElementById('settings-pfp').innerHTML = `<img src="${pictureUrl(blob)}" alt="">`;
+  });
+  const removePicBtn = document.getElementById('settings-remove-pic');
+  if (removePicBtn) removePicBtn.addEventListener('click', async () => {
+    await db.profile.update(1, { pictureBlob: null });
+    renderSettingsPage(params, view);
   });
 
   document.getElementById('settings-save-name').addEventListener('click', async () => {

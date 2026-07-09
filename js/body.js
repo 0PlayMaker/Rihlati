@@ -109,21 +109,35 @@ function openWeightModal(onSaved) {
   });
 }
 
-function openWeightModalForDate(dateStr, onSaved) {
+async function deleteWeight(dateStr) {
+  const existing = await db.weightLogs.where('date').equals(dateStr).first();
+  if (existing) await db.weightLogs.delete(existing.id);
+}
+
+async function openWeightModalForDate(dateStr, onSaved) {
+  const existing = await db.weightLogs.where('date').equals(dateStr).first();
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
       <h2 class="modal-title">الوزن — ${formatDateArabic(dateStr, { weekday: false })}</h2>
       <label class="field-label">الوزن (كغ)</label>
-      <input class="text-input" type="number" step="0.1" min="0" id="weight-input-d" autofocus>
+      <input class="text-input" type="number" step="0.1" min="0" id="weight-input-d" value="${existing ? existing.value : ''}" autofocus>
       <div class="modal-actions">
+        ${existing ? `<button class="btn btn-danger btn-sm" id="weight-delete-d">حذف</button>` : ''}
         <button class="btn btn-text" id="weight-cancel-d">إلغاء</button>
         <button class="btn btn-primary" id="weight-save-d">حفظ</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
   document.getElementById('weight-cancel-d').addEventListener('click', () => overlay.remove());
+  const deleteBtn = document.getElementById('weight-delete-d');
+  if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+    if (!confirm('حذف تسجيل الوزن لهذا اليوم؟')) return;
+    await deleteWeight(dateStr);
+    overlay.remove();
+    if (onSaved) onSaved();
+  });
   document.getElementById('weight-save-d').addEventListener('click', async () => {
     const v = parseFloat(document.getElementById('weight-input-d').value);
     if (Number.isNaN(v) || v <= 0) return;
@@ -280,6 +294,10 @@ async function renderBodyPage(params, view) {
     </div>
     <div class="card">
       <button class="btn btn-primary btn-block" id="weight-add-btn">+ تسجيل وزن اليوم</button>
+      <details class="weight-history-details">
+        <summary>كل التسجيلات</summary>
+        <div id="weight-history-list"></div>
+      </details>
     </div>
     <div class="card" id="bmi-card"></div>
     <div class="card">
@@ -326,6 +344,33 @@ async function renderBodyPage(params, view) {
           `${formatDateArabic(circle.dataset.date, { weekday: false })} · ${circle.dataset.value} كغ`;
       });
     });
+
+    const historyEl = document.getElementById('weight-history-list');
+    if (allPoints.length === 0) {
+      historyEl.innerHTML = `<p class="empty-state-sub">ما في تسجيلات بعد.</p>`;
+    } else {
+      const rows = [...allPoints].reverse().map(p => `
+        <div class="txn-row" data-weight-date="${p.date}">
+          <div class="txn-info">
+            <span class="txn-note">${p.value} كغ</span>
+            <span class="txn-date">${formatDateArabic(p.date, { weekday: false })}</span>
+          </div>
+          ${kebabMenuHtml(p.date, [
+            { key: 'edit', label: 'تعديل' },
+            { key: 'delete', label: 'حذف', danger: true }
+          ])}
+        </div>`).join('');
+      historyEl.innerHTML = rows;
+      wireKebabMenus(historyEl, async (rowId, action) => {
+        if (action === 'edit') {
+          openWeightModalForDate(rowId, refreshWeight);
+        } else if (action === 'delete') {
+          if (!confirm('حذف هذا التسجيل؟')) return;
+          await deleteWeight(rowId);
+          await refreshWeight();
+        }
+      });
+    }
   }
 
   document.getElementById('chart-range-chips').querySelectorAll('.chip').forEach(chip => {

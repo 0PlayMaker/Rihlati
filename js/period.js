@@ -1,20 +1,43 @@
 // period.js — Phase 3.
 // Periods are episodes (start/end), not per-day logs, so this table
-// stays small and just gets read in full. Prediction uses the median of
-// past cycle/period lengths, not the mean — a single 45-day outlier
-// shouldn't drag a normally-28-day cycle's estimate around.
+// stays small and just gets read in full. Predictions are NEVER stored
+// — only real start/end dates ever go in periodLogs, and every
+// prediction is fully recomputed from those logs on every read, so an
+// edited or deleted period can never leave a stale prediction behind.
 //
-// Starting/ending a period also starts/ends Worship's fard pause
-// automatically (both call the same idempotent functions the manual 🌸
-// button uses) — she shouldn't have to tell the app the same thing
-// twice. The manual button in Worship still works independently for
-// edge cases.
+// Prediction model:
+//   - median (not mean) of a ROLLING WINDOW of the last 8 cycle gaps
+//     and period lengths — recent cycles predict the next one better
+//     than ones from a year ago, and a single 45-day outlier shouldn't
+//     drag a normally-28-day estimate around either way.
+//   - shown as a DATE RANGE, not one falsely-precise date — width of
+//     the range comes from how much recent cycles actually vary
+//     (median absolute deviation), not a fixed number.
+//   - a confidence level (low/medium/high) from sample count + that
+//     same variability, and a plain "not enough data yet" state below
+//     2 samples rather than a confident-looking guess from one cycle.
+//
+// Starting/ending a period asks (via a checkbox in the modal, checked
+// by default) whether to pause/resume Worship's fard tracking — it
+// used to do this silently and automatically, which meant she couldn't
+// opt out. The manual 🌸 button in Worship still works independently.
 
 function median(nums) {
   if (!nums.length) return null;
   const sorted = [...nums].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// How much the recent cycles actually vary — the basis for both the
+// confidence level and how wide the predicted range needs to be. A
+// cycle history that's consistently ~28 days needs a narrow range; one
+// that swings between 24 and 35 needs a wide one and lower confidence,
+// rather than reporting a falsely-precise single date either way.
+function medianAbsoluteDeviation(nums) {
+  const med = median(nums);
+  if (med === null) return 0;
+  return median(nums.map(n => Math.abs(n - med))) ?? 0;
 }
 
 async function getAllPeriods() {
@@ -30,12 +53,10 @@ async function startPeriod(startDate) {
   const ongoing = await getOngoingPeriod();
   if (ongoing) return ongoing; // one ongoing at a time — no duplicates
   const id = await db.periodLogs.add({ startDate, endDate: null, createdAt: Date.now() });
-  await startFardPause();
   return db.periodLogs.get(id);
 }
 async function endPeriod(periodId, endDate) {
   await db.periodLogs.update(periodId, { endDate });
-  await endFardPause();
 }
 async function editPeriod(periodId, startDate, endDate) {
   await db.periodLogs.update(periodId, { startDate, endDate: endDate || null });
@@ -45,24 +66,43 @@ async function deletePeriod(periodId) {
 }
 
 async function getPeriodStats() {
-  const periods = await getAllPeriods();
+  const periods = await getAllPeriods(); // newest first
   const chronological = [...periods].sort((a, b) => a.startDate.localeCompare(b.startDate));
-  const cycleLengths = [];
+
+  const allCycleLengths = [];
   for (let i = 1; i < chronological.length; i++) {
     const gap = daysBetween(chronological[i - 1].startDate, chronological[i].startDate);
-    if (gap > 10 && gap < 90) cycleLengths.push(gap); // sanity bounds — drop obvious data-entry mistakes
+    if (gap > 10 && gap < 90) allCycleLengths.push(gap); // sanity bounds — drop obvious data-entry mistakes
   }
-  const periodLengths = periods
+  const recentCycleLengths = allCycleLengths.slice(-8); // oldest→newest order, so the last 8 = most recent 8
+
+  const allPeriodLengths = periods
     .filter(p => p.endDate !== null)
     .map(p => daysBetween(p.startDate, p.endDate) + 1)
     .filter(n => n > 0 && n < 20);
+  const recentPeriodLengths = allPeriodLengths.slice(0, 8); // periods is newest-first already
+
+  const cycleSpread = medianAbsoluteDeviation(recentCycleLengths);
+
+  let confidence = 'none';
+  if (recentCycleLengths.length >= 2) {
+    if (recentCycleLengths.length >= 5 && cycleSpread <= 2) confidence = 'high';
+    else if (recentCycleLengths.length >= 3 && cycleSpread <= 5) confidence = 'medium';
+    else confidence = 'low';
+  }
 
   return {
-    avgCycleLength: median(cycleLengths) ?? 28,
-    avgPeriodLength: median(periodLengths) ?? 5,
-    cycleSamples: cycleLengths.length,
-    periodSamples: periodLengths.length
+    avgCycleLength: median(recentCycleLengths) ?? 28,
+    avgPeriodLength: median(recentPeriodLengths) ?? 5,
+    cycleSamples: recentCycleLengths.length,
+    periodSamples: recentPeriodLengths.length,
+    cycleSpread,
+    confidence
   };
+}
+
+function confidenceLabel(level) {
+  return { high: 'ثقة عالية', medium: 'ثقة متوسطة', low: 'ثقة منخفضة', none: '' }[level] || '';
 }
 
 async function getPeriodStatus() {
@@ -78,24 +118,39 @@ async function getPeriodStatus() {
 
   const periods = await getAllPeriods();
   if (periods.length === 0) return { state: 'no-data', stats };
+  if (stats.confidence === 'none') return { state: 'unknown', stats };
 
-  const predictedNext = addDays(periods[0].startDate, Math.round(stats.avgCycleLength));
-  const daysUntil = daysBetween(today, predictedNext);
+  // Predicted window: center ± spread (at least ±1 day so the range
+  // is never a single degenerate point pretending to be a range).
+  const halfWidth = Math.max(1, Math.round(stats.cycleSpread));
+  const center = addDays(periods[0].startDate, Math.round(stats.avgCycleLength));
+  const rangeStart = addDays(center, -halfWidth);
+  const rangeEnd = addDays(center, halfWidth);
 
-  if (daysUntil > 0) return { state: 'upcoming', daysUntil, predictedNext, stats };
-  return { state: 'late', daysLate: -daysUntil, predictedNext, stats };
+  if (today < rangeStart) {
+    return { state: 'upcoming', daysUntil: daysBetween(today, rangeStart), rangeStart, rangeEnd, stats };
+  }
+  if (today <= rangeEnd) {
+    return { state: 'due', rangeStart, rangeEnd, stats };
+  }
+  return { state: 'late', daysLate: daysBetween(rangeEnd, today), rangeStart, rangeEnd, stats };
 }
 
 function periodStatusText(status) {
+  const conf = status.stats?.confidence && status.stats.confidence !== 'none' ? ` (${confidenceLabel(status.stats.confidence)})` : '';
   switch (status.state) {
     case 'ongoing':
       if (status.remaining > 0) return `اليوم ${status.dayNum} من الدورة 🌸 — يُتوقع الانتهاء بعد ${status.remaining} ${status.remaining === 1 ? 'يوم' : 'أيام'}`;
       if (status.remaining === 0) return `اليوم ${status.dayNum} من الدورة 🌸 — من المتوقع تنتهي اليوم`;
       return `اليوم ${status.dayNum} من الدورة 🌸 — تجاوزت المعتاد بـ ${-status.remaining} ${(-status.remaining) === 1 ? 'يوم' : 'أيام'}`;
     case 'upcoming':
-      return status.daysUntil === 1 ? 'الدورة القادمة بعد يوم واحد تقريباً 🌸' : `الدورة القادمة بعد ${status.daysUntil} يوم تقريباً 🌸`;
+      return `الدورة القادمة متوقعة بين ${formatDateArabic(status.rangeStart, { weekday: false })} و${formatDateArabic(status.rangeEnd, { weekday: false })}${conf} 🌸`;
+    case 'due':
+      return `الدورة متوقعة خلال هذه الأيام (حتى ${formatDateArabic(status.rangeEnd, { weekday: false })})${conf} 🌸`;
     case 'late':
-      return status.daysLate === 1 ? 'الدورة متأخرة يوم واحد ⏳' : `الدورة متأخرة ${status.daysLate} أيام ⏳`;
+      return status.daysLate === 1 ? `الدورة متأخرة يوم واحد عن نافذة التوقع ⏳${conf}` : `الدورة متأخرة ${status.daysLate} أيام عن نافذة التوقع ⏳${conf}`;
+    case 'unknown':
+      return 'سجلي دورة أخرى على الأقل ليصبح التوقع ممكناً 🌸';
     default:
       return 'سجلي أول دورة لتبدأ التوقعات 🌸';
   }
@@ -104,8 +159,10 @@ function periodStatusText(status) {
 function periodGlanceText(status) {
   switch (status.state) {
     case 'ongoing': return `يوم ${status.dayNum}${status.remaining > 0 ? ` · ${status.remaining}` : ''}`;
-    case 'upcoming': return `بعد ${status.daysUntil} يوم`;
-    case 'late': return `متأخرة ${status.daysLate}`;
+    case 'upcoming': return `بعد ${status.daysUntil}+ يوم`;
+    case 'due': return 'متوقعة الآن';
+    case 'late': return `متأخرة ${status.daysLate}+`;
+    case 'unknown': return 'دورة أخرى للتوقع';
     default: return 'سجلي أول دورة';
   }
 }
@@ -120,6 +177,7 @@ function openStartPeriodModal(onDone) {
       <h2 class="modal-title">بدء دورة جديدة</h2>
       <label class="field-label">تاريخ البداية</label>
       <input class="text-input" type="date" id="period-start-input" value="${todayStr()}">
+      <label class="checkbox-row"><input type="checkbox" id="period-start-pause-input" checked><span>إيقاف تتبع الصلوات مؤقتاً خلال الدورة</span></label>
       <div class="modal-actions">
         <button class="btn btn-text" id="period-start-cancel">إلغاء</button>
         <button class="btn btn-primary" id="period-start-save">بدء</button>
@@ -130,9 +188,11 @@ function openStartPeriodModal(onDone) {
   document.getElementById('period-start-save').addEventListener('click', async () => {
     const date = document.getElementById('period-start-input').value;
     if (!date) return;
+    const pausePrayers = document.getElementById('period-start-pause-input').checked;
     await startPeriod(date);
+    if (pausePrayers) await startFardPause();
     overlay.remove();
-    toast('🌸 تم تسجيل بداية الدورة — تم إيقاف تتبع الصلوات تلقائياً');
+    toast(pausePrayers ? '🌸 تم تسجيل بداية الدورة — تم إيقاف تتبع الصلوات' : '🌸 تم تسجيل بداية الدورة');
     if (onDone) onDone();
   });
 }
@@ -145,6 +205,7 @@ function openEndPeriodModal(period, onDone) {
       <h2 class="modal-title">إنهاء الدورة</h2>
       <label class="field-label">تاريخ الانتهاء</label>
       <input class="text-input" type="date" id="period-end-input" value="${todayStr()}" min="${period.startDate}">
+      <label class="checkbox-row"><input type="checkbox" id="period-end-unpause-input" checked><span>استئناف تتبع الصلوات</span></label>
       <div class="modal-actions">
         <button class="btn btn-text" id="period-end-cancel">إلغاء</button>
         <button class="btn btn-primary" id="period-end-save">إنهاء</button>
@@ -155,9 +216,11 @@ function openEndPeriodModal(period, onDone) {
   document.getElementById('period-end-save').addEventListener('click', async () => {
     const date = document.getElementById('period-end-input').value;
     if (!date || date < period.startDate) return;
+    const unpausePrayers = document.getElementById('period-end-unpause-input').checked;
     await endPeriod(period.id, date);
+    if (unpausePrayers) await endFardPause();
     overlay.remove();
-    toast('🌸 تم تسجيل انتهاء الدورة — تم استئناف تتبع الصلوات');
+    toast(unpausePrayers ? '🌸 تم تسجيل انتهاء الدورة — تم استئناف تتبع الصلوات' : '🌸 تم تسجيل انتهاء الدورة');
     if (onDone) onDone();
   });
 }
@@ -346,6 +409,7 @@ async function periodYearlyProvider(year) {
     <div class="yearly-row"><span>إجمالي أيام الدورة</span><span>${totalDays} يوم</span></div>
     <div class="yearly-row"><span>متوسط طول الدورة نفسها</span><span>${stats.periodSamples > 0 ? Math.round(stats.avgPeriodLength) + ' يوم' : 'غير كافٍ بعد'}</span></div>
     <div class="yearly-row"><span>متوسط الفترة بين الدورات</span><span>${stats.cycleSamples > 0 ? Math.round(stats.avgCycleLength) + ' يوم' : 'غير كافٍ بعد (تحتاج دورتين على الأقل)'}</span></div>
+    ${stats.confidence !== 'none' ? `<div class="yearly-row"><span>موثوقية التوقع</span><span>${confidenceLabel(stats.confidence)}</span></div>` : ''}
   `;
   return { title: 'الدورة الشهرية', html, count: yearPeriods.length };
 }

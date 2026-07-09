@@ -15,6 +15,17 @@ function currentPath() {
 
 let _renderToken = 0;
 
+// Route handlers that do a lot of awaiting BEFORE their first
+// view.innerHTML assignment (renderHome especially) can call this right
+// before writing to the DOM, to bail out quietly if a newer navigation
+// already started and finished while they were still loading — without
+// this, a slow render finishing late could overwrite a page the person
+// has already moved past, even though the error-path guard below
+// already stops that from happening on a THROWN failure.
+function isCurrentRenderToken(token) {
+  return token === _renderToken;
+}
+
 async function renderRoute() {
   const myToken = ++_renderToken;
   const path = currentPath();
@@ -25,7 +36,7 @@ async function renderRoute() {
   const view = document.getElementById('view');
   if (!view) return;
   try {
-    await handler(params, view);
+    await handler(params, view, myToken);
   } catch (err) {
     console.error('Route render failed:', err);
     // A newer navigation may have already started while this one was

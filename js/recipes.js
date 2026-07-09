@@ -5,16 +5,16 @@
 // measurements, then the method," just as free text rather than a
 // dynamic add/remove-row UI.
 
-async function createRecipe({ title, youtubeLink, ingredientsText, methodText, photoBlob }) {
+async function createRecipe({ title, youtubeLink, ingredientsText, methodText, photoBlob, photoDisplayMode }) {
   const id = await db.recipes.add({
     title, youtubeLink: youtubeLink || '', ingredientsText: ingredientsText || '',
-    methodText: methodText || '', createdAt: Date.now()
+    methodText: methodText || '', photoDisplayMode: photoDisplayMode || 'thumb_and_detail', createdAt: Date.now()
   });
   if (photoBlob) await db.recipePhotos.put({ recipeId: id, photoBlob });
   return id;
 }
-async function updateRecipe(id, { title, youtubeLink, ingredientsText, methodText, photoBlob, removePhoto }) {
-  await db.recipes.update(id, { title, youtubeLink: youtubeLink || '', ingredientsText: ingredientsText || '', methodText: methodText || '' });
+async function updateRecipe(id, { title, youtubeLink, ingredientsText, methodText, photoBlob, removePhoto, photoDisplayMode }) {
+  await db.recipes.update(id, { title, youtubeLink: youtubeLink || '', ingredientsText: ingredientsText || '', methodText: methodText || '', photoDisplayMode: photoDisplayMode || 'thumb_and_detail' });
   if (photoBlob) await db.recipePhotos.put({ recipeId: id, photoBlob });
   else if (removePhoto) await db.recipePhotos.delete(id);
 }
@@ -66,7 +66,14 @@ async function openRecipeModal({ existingId, onSaved } = {}) {
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="recipe-photo-preview"></div>
       <input type="file" accept="image/*" id="recipe-photo-input" class="hidden-file-input">
-      <button class="btn btn-secondary btn-sm" id="recipe-photo-choose">إضافة صورة</button>
+      <div class="food-photo-actions">
+        <button class="btn btn-secondary btn-sm" id="recipe-photo-choose">إضافة صورة</button>
+        <button class="btn btn-text btn-sm" id="recipe-photo-remove">إزالة الصورة</button>
+      </div>
+      <div class="habit-type-chips" id="recipe-photo-mode-chips">
+        <button class="chip" data-mode="thumb_only">مصغرة فقط في القائمة</button>
+        <button class="chip active" data-mode="thumb_and_detail">مصغرة + داخل الوصفة</button>
+      </div>
       <label class="field-label">المكونات (سطر لكل مكوّن)</label>
       <textarea class="mood-note-input diary-textarea" id="recipe-ingredients-input" placeholder="مثلاً:&#10;كوبين دقيق&#10;بيضة واحدة&#10;نصف كوب سكر"></textarea>
       <label class="field-label">طريقة التحضير</label>
@@ -142,7 +149,7 @@ function openRecipeDetail(recipe, photoUrl, onChanged) {
       <div class="sheet-handle"></div>
       <h2 class="sheet-title">${escapeHtml(recipe.title)}</h2>
       <div class="sheet-body">
-        ${photoUrl ? `<img class="diary-entry-photo" src="${photoUrl}" alt="">` : ''}
+        ${photoUrl && (recipe.photoDisplayMode ?? 'thumb_and_detail') === 'thumb_and_detail' ? `<img class="diary-entry-photo" src="${photoUrl}" alt="">` : ''}
         ${embedUrl ? `<div class="youtube-embed-wrap"><iframe src="${embedUrl}" allowfullscreen loading="lazy"></iframe></div>` : ''}
         ${recipe.ingredientsText ? `<h3 class="day-detail-section-title">المكونات</h3><p class="diary-entry-text">${escapeHtml(recipe.ingredientsText)}</p>` : ''}
         ${recipe.methodText ? `<h3 class="day-detail-section-title">طريقة التحضير</h3><p class="diary-entry-text">${escapeHtml(recipe.methodText)}</p>` : ''}

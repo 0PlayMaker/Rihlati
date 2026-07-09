@@ -152,7 +152,7 @@ async function openFoodModal({ date, existingId, onSaved }) {
 
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="food-photo-preview"></div>
-      <input type="file" accept="image/*" capture="environment" id="food-photo-input" class="hidden-file-input">
+      <input type="file" accept="image/*" id="food-photo-input" class="hidden-file-input">
       <div class="food-photo-actions">
         <button class="btn btn-secondary btn-sm" id="food-photo-choose">إضافة صورة</button>
         <button class="btn btn-text btn-sm" id="food-photo-remove">إزالة الصورة</button>

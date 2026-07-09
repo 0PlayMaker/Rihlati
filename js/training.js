@@ -6,17 +6,18 @@
 // vibration on completion), not a decorative widget — "make it work"
 // was explicit.
 
-async function createExercise({ name, description, youtubeLink, defaultDurationSec, photoBlob }) {
+async function createExercise({ name, description, youtubeLink, defaultDurationSec, photoBlob, photoDisplayMode }) {
   const all = await db.exercises.toArray();
   const id = await db.exercises.add({
     name, description: description || '', youtubeLink: youtubeLink || '',
-    defaultDurationSec: defaultDurationSec || null, archived: false, order: all.length, createdAt: Date.now()
+    defaultDurationSec: defaultDurationSec || null, photoDisplayMode: photoDisplayMode || 'thumb_and_detail',
+    archived: false, order: all.length, createdAt: Date.now()
   });
   if (photoBlob) await db.exercisePhotos.put({ exerciseId: id, photoBlob });
   return id;
 }
-async function updateExercise(id, { name, description, youtubeLink, defaultDurationSec, photoBlob, removePhoto }) {
-  await db.exercises.update(id, { name, description: description || '', youtubeLink: youtubeLink || '', defaultDurationSec: defaultDurationSec || null });
+async function updateExercise(id, { name, description, youtubeLink, defaultDurationSec, photoBlob, removePhoto, photoDisplayMode }) {
+  await db.exercises.update(id, { name, description: description || '', youtubeLink: youtubeLink || '', defaultDurationSec: defaultDurationSec || null, photoDisplayMode: photoDisplayMode || 'thumb_and_detail' });
   if (photoBlob) await db.exercisePhotos.put({ exerciseId: id, photoBlob });
   else if (removePhoto) await db.exercisePhotos.delete(id);
 }
@@ -177,12 +178,23 @@ async function openExerciseModal({ existingId, onSaved } = {}) {
       <textarea class="mood-note-input" id="exercise-desc-input" placeholder="تفاصيل عن التمرين..."></textarea>
       <label class="field-label">رابط يوتيوب (اختياري)</label>
       <input class="text-input" type="url" id="exercise-youtube-input" placeholder="https://youtube.com/...">
-      <label class="field-label">مدة المؤقّت الافتراضية بالثواني (اختياري)</label>
-      <input class="text-input" type="number" min="5" step="5" id="exercise-duration-input" placeholder="مثلاً: 60">
+      <label class="field-label">مدة المؤقّت الافتراضية (اختياري)</label>
+      <div class="timer-duration-row">
+        <input class="text-input" type="number" min="0" id="exercise-duration-min-input" placeholder="دقائق">
+        <span>:</span>
+        <input class="text-input" type="number" min="0" max="59" id="exercise-duration-sec-input" placeholder="ثواني">
+      </div>
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="exercise-photo-preview"></div>
       <input type="file" accept="image/*" id="exercise-photo-input" class="hidden-file-input">
-      <button class="btn btn-secondary btn-sm" id="exercise-photo-choose">إضافة صورة</button>
+      <div class="food-photo-actions">
+        <button class="btn btn-secondary btn-sm" id="exercise-photo-choose">إضافة صورة</button>
+        <button class="btn btn-text btn-sm" id="exercise-photo-remove">إزالة الصورة</button>
+      </div>
+      <div class="habit-type-chips" id="exercise-photo-mode-chips">
+        <button class="chip" data-mode="thumb_only">مصغرة فقط في القائمة</button>
+        <button class="chip active" data-mode="thumb_and_detail">مصغرة + داخل التمرين</button>
+      </div>
       <div class="modal-actions">
         ${existingId ? `<button class="btn btn-danger btn-sm" id="exercise-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="exercise-cancel-btn">إلغاء</button>
@@ -190,6 +202,12 @@ async function openExerciseModal({ existingId, onSaved } = {}) {
       </div>
     </div>`;
   document.body.appendChild(overlay);
+
+  overlay.querySelectorAll('#exercise-photo-mode-chips .chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      overlay.querySelectorAll('#exercise-photo-mode-chips .chip').forEach(c => c.classList.toggle('active', c === chip));
+    });
+  });
 
   function renderPhotoArea() {
     const el = document.getElementById('exercise-photo-preview');
@@ -206,7 +224,11 @@ async function openExerciseModal({ existingId, onSaved } = {}) {
     document.getElementById('exercise-name-input').value = existing.name;
     document.getElementById('exercise-desc-input').value = existing.description || '';
     document.getElementById('exercise-youtube-input').value = existing.youtubeLink || '';
-    document.getElementById('exercise-duration-input').value = existing.defaultDurationSec || '';
+    const dur = existing.defaultDurationSec || 0;
+    document.getElementById('exercise-duration-min-input').value = dur ? Math.floor(dur / 60) : '';
+    document.getElementById('exercise-duration-sec-input').value = dur ? dur % 60 : '';
+    const mode = existing.photoDisplayMode || 'thumb_and_detail';
+    overlay.querySelectorAll('#exercise-photo-mode-chips .chip').forEach(c => c.classList.toggle('active', c.dataset.mode === mode));
     const photoRow = await getExercisePhoto(existingId);
     if (photoRow) existingPhotoUrl = trackExercisePhotoUrl(photoRow.photoBlob);
     renderPhotoArea();
@@ -218,6 +240,11 @@ async function openExerciseModal({ existingId, onSaved } = {}) {
     if (!file) return;
     pendingPhotoBlob = await resizeImageToBlob(file, 1200, 0.8);
     removePhotoFlag = false;
+    renderPhotoArea();
+  });
+  document.getElementById('exercise-photo-remove').addEventListener('click', () => {
+    pendingPhotoBlob = null;
+    removePhotoFlag = true;
     renderPhotoArea();
   });
   document.getElementById('exercise-cancel-btn').addEventListener('click', () => overlay.remove());
@@ -233,10 +260,12 @@ async function openExerciseModal({ existingId, onSaved } = {}) {
     if (!name) return;
     const description = document.getElementById('exercise-desc-input').value.trim();
     const youtubeLink = document.getElementById('exercise-youtube-input').value.trim();
-    const durationRaw = document.getElementById('exercise-duration-input').value;
-    const defaultDurationSec = durationRaw === '' ? null : parseInt(durationRaw, 10);
-    if (existingId) await updateExercise(existingId, { name, description, youtubeLink, defaultDurationSec, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
-    else await createExercise({ name, description, youtubeLink, defaultDurationSec, photoBlob: pendingPhotoBlob });
+    const min = parseInt(document.getElementById('exercise-duration-min-input').value, 10) || 0;
+    const sec = parseInt(document.getElementById('exercise-duration-sec-input').value, 10) || 0;
+    const defaultDurationSec = (min > 0 || sec > 0) ? (min * 60 + sec) : null;
+    const photoDisplayMode = overlay.querySelector('#exercise-photo-mode-chips .chip.active')?.dataset.mode || 'thumb_and_detail';
+    if (existingId) await updateExercise(existingId, { name, description, youtubeLink, defaultDurationSec, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag, photoDisplayMode });
+    else await createExercise({ name, description, youtubeLink, defaultDurationSec, photoBlob: pendingPhotoBlob, photoDisplayMode });
     overlay.remove();
     if (onSaved) onSaved();
   });
@@ -260,6 +289,7 @@ function exerciseRowHtml(exercise, sets, photoUrl, statsText) {
           { key: 'delete', label: 'حذف', danger: true }
         ])}
       </div>
+      ${photoUrl && (exercise.photoDisplayMode ?? 'thumb_and_detail') === 'thumb_and_detail' ? `<img class="diary-entry-photo" src="${photoUrl}" alt="">` : ''}
       ${exercise.description ? `<p class="exercise-desc">${escapeHtml(exercise.description)}</p>` : ''}
       <div class="exercise-controls">
         <button class="adhkar-count-btn" data-action="sets">${sets} مجموعة</button>
@@ -339,6 +369,22 @@ async function renderTrainingPage(params, view) {
   document.getElementById('add-exercise-btn').addEventListener('click', () => {
     openExerciseModal({ onSaved: () => renderExercisesList(listEl) });
   });
+}
+
+// ---------- Day Detail provider ----------
+
+async function exercisesDayProvider(dateStr) {
+  const exercises = await getActiveExercises();
+  if (exercises.length === 0) return null;
+  const rows = [];
+  for (const ex of exercises) {
+    const sets = await getExerciseSets(ex.id, dateStr);
+    if (sets > 0) rows.push(`<div class="yearly-row"><span>${escapeHtml(ex.name)}</span><span>${sets} مجموعة</span></div>`);
+  }
+  if (rows.length === 0) return null;
+  const node = document.createElement('div');
+  node.innerHTML = rows.join('');
+  return { title: 'التمارين', node };
 }
 
 // ---------- Yearly stats provider ----------

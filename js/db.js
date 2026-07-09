@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v13 · ٩ يوليو ٢٠٢٦';
+const APP_VERSION = 'v18 · ٩ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -195,6 +195,17 @@ db.version(9).stores({
   exercises: '++id',
   exercisePhotos: 'exerciseId',
   exerciseLogs: '++id, &[exerciseId+date], exerciseId'
+});
+
+// ---------- Phase 10 — standalone sunnah prayers (not tied to a fard) ----------
+// Deliberately a separate table from dailyAdhkarLogs — Duha is a SALAH
+// (prayer), not adhkar (remembrance/recitation), and conflating them
+// would misrepresent both even though the storage shape is identical.
+// Also separate from sunnahLogs, which is specifically sunnah rawatib
+// paired with one of the 5 fard prayers — Duha stands on its own.
+// 'kind' starts with just 'duha' but leaves room for Witr, Tahajjud, etc.
+db.version(10).stores({
+  standaloneSunnahLogs: '++id, &[kind+date], kind'
 });
 
 // ---------- date helpers (used everywhere) ----------

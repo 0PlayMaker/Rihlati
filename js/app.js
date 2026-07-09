@@ -11,7 +11,7 @@ async function rescheduleHomeReminders() {
   return isDoneToday;
 }
 
-async function renderHome(params, view) {
+async function renderHome(params, view, renderToken) {
   const profile = await db.profile.get(1);
   const today = todayStr();
   const ringData = await getHabitsRingData();
@@ -37,6 +37,11 @@ async function renderHome(params, view) {
       { frac: habitMissedFrac, color: 'var(--rose-deep)' }
     ]
   });
+
+  // Everything above this line was just reading data — nothing has
+  // touched the DOM yet, so it's safe to quietly abandon here if she's
+  // already navigated elsewhere while all of it was loading.
+  if (renderToken != null && !isCurrentRenderToken(renderToken)) return;
 
   view.innerHTML = `
     <header class="home-header">
@@ -196,6 +201,8 @@ function registerAllDayProviders() {
   registerDayProvider(diaryDayProvider);
   registerDayProvider(ediblesDayProvider);
   registerDayProvider(thingsDayProvider);
+  registerDayProvider(exercisesDayProvider);
+  registerDayProvider(transactionsDayProvider);
 }
 
 function registerAllActivityProviders() {
@@ -207,6 +214,7 @@ function registerAllActivityProviders() {
   registerActivityProvider(async () => (await db.adhkarAfterLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.dailyAdhkarLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.customAdhkarLogs.toArray()).map(l => l.date));
+  registerActivityProvider(async () => (await db.standaloneSunnahLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.moodLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.foodLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.waterLogs.toArray()).filter(w => w.liters > 0).map(w => w.date));
@@ -215,6 +223,8 @@ function registerAllActivityProviders() {
   registerActivityProvider(async () => (await db.diaryEntries.toArray()).map(e => e.date));
   registerActivityProvider(async () => (await db.edibles.toArray()).map(e => e.date));
   registerActivityProvider(async () => (await db.things.toArray()).map(t => t.date));
+  registerActivityProvider(async () => (await db.exerciseLogs.toArray()).filter(l => l.sets > 0).map(l => l.date));
+  registerActivityProvider(async () => (await db.economyTransactions.toArray()).map(t => t.date));
   registerActivityProvider(async () => {
     const periods = await db.periodLogs.toArray();
     const today = todayStr();
@@ -318,6 +328,7 @@ function startApp(profile, settings) {
 }
 
 async function boot() {
+  await applyStoredTheme();
   const profile = await db.profile.get(1);
   if (!profile) {
     renderSetupWizard();

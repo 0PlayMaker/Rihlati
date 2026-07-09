@@ -554,7 +554,7 @@ a { color: var(--pink-deep); text-decoration: none; }
   position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
   width: 100%; max-width: 480px;
   display: flex; justify-content: flex-start; overflow-x: auto; scroll-snap-type: x proximity;
-  background: var(--surface); box-shadow: 0 -2px 16px rgba(232,143,174,0.14);
+  background: var(--surface); box-shadow: var(--shadow-soft);
   padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
   z-index: 50;
 }
@@ -630,6 +630,9 @@ a { color: var(--pink-deep); text-decoration: none; }
 .diary-textarea { min-height: 100px; }
 .diary-month { margin-bottom: var(--space-3); }
 .diary-month summary { font-weight: 700; font-size: 14px; color: var(--ink-soft); padding: var(--space-2) 0; cursor: pointer; }
+.weight-history-details { margin-top: var(--space-3); }
+.weight-history-details summary { font-weight: 700; font-size: 14px; color: var(--ink-soft); padding: var(--space-2) 0; cursor: pointer; }
+.weight-history-details .txn-row { padding: var(--space-2) 0; }
 .diary-month-body { margin-top: var(--space-2); }
 .diary-entry { padding: var(--space-3) 0; border-bottom: 1px solid var(--track); }
 .diary-entry:last-child { border-bottom: none; }
@@ -703,8 +706,67 @@ a { color: var(--pink-deep); text-decoration: none; }
 
 .toast {
   position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(10px);
-  background: var(--ink); color: #fff; padding: 10px 20px; border-radius: var(--radius-round);
+  background: #2A2530; color: #fff; padding: 10px 20px; border-radius: var(--radius-round);
   font-size: 13px; opacity: 0; transition: opacity 0.25s ease, transform 0.25s ease; z-index: 200;
   max-width: 88%; text-align: center;
 }
 .toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ============================================================
+   Habit cards with live clock
+   ============================================================ */
+
+.habit-card {
+  background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-soft);
+  margin-bottom: var(--space-3); overflow: hidden;
+}
+.habit-card .tsr-row { border-bottom: none; }
+.habit-clock-row {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 2px var(--space-3) var(--space-3); font-size: 13px; color: var(--ink-soft);
+}
+.habit-clock-icon { font-size: 13px; }
+.habit-clock { font-weight: 700; color: var(--pink-deep); }
+
+/* ============================================================
+   Theming
+   ============================================================ */
+
+/* Glass mode: --surface is already a translucent rgba() in this mode
+   (set in theme.js), so cards just need the blur — everything else
+   (text color, borders) already flows through the normal variables. */
+body.theme-glass {
+  background: linear-gradient(160deg, #EDE3F5 0%, #F6D9E8 45%, #DCEAF7 100%);
+  background-attachment: fixed;
+}
+body.theme-glass .card,
+body.theme-glass .modal,
+body.theme-glass .sheet,
+body.theme-glass #bottom-bar,
+body.theme-glass .habit-card,
+body.theme-glass .quick-action-card,
+body.theme-glass .glance-card {
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border: 1px solid rgba(255,255,255,0.5);
+}
+
+/* AMOLED and dark: photos/icons on pure-white placeholder backgrounds
+   would look like glaring white boxes against a near-black page. */
+body.theme-dark-ish .food-thumb-placeholder,
+body.theme-dark-ish .food-photo-placeholder {
+  background: var(--track);
+}
+
+.theme-color-input {
+  width: 56px; height: 56px; border: none; border-radius: var(--radius-md);
+  padding: 0; cursor: pointer; background: none;
+}
+.theme-mode-chips { flex-wrap: wrap; }
+.theme-preview { margin-top: var(--space-3); }
+.theme-preview-card {
+  background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-soft);
+  padding: var(--space-3); display: flex; align-items: center; justify-content: space-between;
+}
+.theme-preview-title { color: var(--ink); font-weight: 500; }
+.theme-preview-btn { pointer-events: none; }

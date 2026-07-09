@@ -62,6 +62,59 @@ async function getHabitStats(habitId) {
   return computeStreakStats(doneDates, missedDates, []); // Habits don't use pauses
 }
 
+// ---------- live clock: time since creation or last mishap ----------
+// Derived from the SAME habitLogs data the streak system already
+// reads — no separate precise-timestamp field to drift out of sync.
+// A slip logged for a past day counts clean time from the start of the
+// day after it; a slip logged for TODAY counts from the start of today
+// itself (not "tomorrow," which would show a nonsensical negative
+// countup) — so right after logging a same-day slip the clock reads a
+// small number of hours rather than exactly zero. `manualResetAt` is a
+// deliberate small exception: "restart my counter" without it being a
+// logged failure, for when she just wants a fresh start.
+async function getHabitClockReferenceMs(habit) {
+  const missedDates = await getHabitMissedDates(habit.id);
+  let ref = habit.createdAt;
+  if (missedDates.length > 0) {
+    const mostRecent = [...missedDates].sort().reverse()[0];
+    const missedDayStart = new Date(mostRecent + 'T00:00:00').getTime();
+    ref = mostRecent < todayStr() ? missedDayStart + 24 * 60 * 60 * 1000 : missedDayStart;
+  }
+  if (habit.manualResetAt && habit.manualResetAt > ref) ref = habit.manualResetAt;
+  return ref;
+}
+async function resetHabitClock(habitId) {
+  await db.habits.update(habitId, { manualResetAt: Date.now() });
+}
+
+function formatHabitClock(elapsedMs) {
+  if (elapsedMs < 0) elapsedMs = 0;
+  const totalMinutes = Math.floor(elapsedMs / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const parts = [];
+  if (days > 0) parts.push(`${days} ${days === 1 ? 'يوم' : 'أيام'}`);
+  parts.push(`${hours} ${hours === 1 ? 'ساعة' : 'ساعات'}`);
+  parts.push(`${minutes} ${minutes === 1 ? 'دقيقة' : 'دقائق'}`);
+  return parts.join(' ، ');
+}
+
+// A single interval updates every visible clock element in place, by
+// reading its own data-ref-ms — no page re-render, so it can't disrupt
+// anything she's mid-interacting with. Started once; safe to call
+// again (the guard prevents stacking up duplicate intervals).
+function startHabitClockTicker() {
+  if (window._habitClockIntervalStarted) return;
+  window._habitClockIntervalStarted = true;
+  setInterval(() => {
+    document.querySelectorAll('.habit-clock[data-ref-ms]').forEach(el => {
+      const ref = Number(el.dataset.refMs);
+      el.textContent = formatHabitClock(Date.now() - ref);
+    });
+  }, 30000); // every 30s is plenty for a minute-granularity display, and much lighter than every second
+}
+
 // Best current streak within one type — used for Home's "top streaks"
 // summary. Returns null if there are no habits of that type, or if
 // none currently has a streak going.
@@ -94,13 +147,14 @@ async function getHabitsRingData() {
 
 // ---------- rendering ----------
 
-function habitRowHtml(habit, dateStr, status, { editable, showStreak, stats }) {
+async function habitRowHtml(habit, dateStr, status, { editable, showStreak, stats }) {
   const isBad = getHabitType(habit) === 'bad';
   const extra = showStreak ? kebabMenuHtml(String(habit.id), [
     { key: 'edit', label: 'تعديل' },
+    { key: 'reset-clock', label: 'إعادة تعيين العداد' },
     { key: 'delete', label: 'حذف', danger: true }
   ]) : '';
-  return threeStateRowHtml({
+  const rowHtml = threeStateRowHtml({
     rowId: String(habit.id),
     colorClass: `habit-color-${habit.color}`,
     icon: habit.emoji,
@@ -109,6 +163,19 @@ function habitRowHtml(habit, dateStr, status, { editable, showStreak, stats }) {
     doneLabel: isBad ? 'امتنعت' : 'تم',
     missedLabel: isBad ? 'زلة' : 'لم يتم'
   });
+  // Day Detail (showStreak false there) stays row-only, no card/clock —
+  // a live "time since" clock doesn't mean anything when looking at a
+  // single past day out of context.
+  if (!showStreak) return rowHtml;
+  const refMs = await getHabitClockReferenceMs(habit);
+  return `
+    <div class="habit-card">
+      ${rowHtml}
+      <div class="habit-clock-row">
+        <span class="habit-clock-icon">⏱️</span>
+        <span class="habit-clock" data-ref-ms="${refMs}">${formatHabitClock(Date.now() - refMs)}</span>
+      </div>
+    </div>`;
 }
 
 // Renders an already-filtered list of habits into `container`. Both the
@@ -143,6 +210,11 @@ async function renderHabitRowsInto(container, habits, dateStr, { editable, showS
     const habitId = Number(rowId);
     if (action === 'edit') {
       openHabitModal({ existingId: habitId, onSaved: refresh });
+    } else if (action === 'reset-clock') {
+      const habit = habits.find(h => h.id === habitId);
+      if (!confirm(`إعادة تعيين عداد "${habit.name}"؟ هذا لا يسجّل زلة، فقط يبدأ العدّ من الآن.`)) return;
+      await resetHabitClock(habitId);
+      await refresh();
     } else if (action === 'delete') {
       const habit = habits.find(h => h.id === habitId);
       if (!confirm(`حذف "${habit.name}"؟ سجل السجلات السابقة يبقى محفوظاً.`)) return;
@@ -150,6 +222,7 @@ async function renderHabitRowsInto(container, habits, dateStr, { editable, showS
       await refresh();
     }
   });
+  startHabitClockTicker();
 }
 
 // Home preview — flat, mixed, limited. Full breakdown lives on the

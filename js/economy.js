@@ -16,7 +16,7 @@ async function getEconomyBalance() {
   return all.reduce((sum, t) => sum + t.amount, 0);
 }
 async function addTransaction(amount, note, date) {
-  await db.economyTransactions.add({ amount, note: note || '', date: date || todayStr(), createdAt: Date.now() });
+  return db.economyTransactions.add({ amount, note: note || '', date: date || todayStr(), createdAt: Date.now() });
 }
 async function setBalance(newBalance, note) {
   const current = await getEconomyBalance();
@@ -35,7 +35,8 @@ async function getCurrencyLabel() {
   return settings?.currency || 'دينار';
 }
 
-function transactionRowHtml(t) {
+async function transactionRowHtml(t) {
+  const currency = await getCurrencyLabel();
   const isPositive = t.amount > 0;
   return `
     <div class="txn-row" data-txn-id="${t.id}">
@@ -43,7 +44,7 @@ function transactionRowHtml(t) {
         <span class="txn-note">${escapeHtml(t.note || (isPositive ? 'دخل' : 'مصروف'))}</span>
         <span class="txn-date">${formatDateArabic(t.date, { weekday: false })}</span>
       </div>
-      <span class="txn-amount ${isPositive ? 'txn-positive' : 'txn-negative'}">${isPositive ? '+' : ''}${t.amount.toFixed(2)}</span>
+      <span class="txn-amount ${isPositive ? 'txn-positive' : 'txn-negative'}">${isPositive ? '+' : ''}${t.amount.toFixed(2)} ${currency}</span>
       ${kebabMenuHtml(String(t.id), [{ key: 'delete', label: 'حذف', danger: true }])}
     </div>`;
 }
@@ -55,7 +56,7 @@ async function renderTransactionsList(container, { limit } = {}) {
     container.innerHTML = `<div class="empty-state"><p>ما في معاملات مسجلة بعد.</p></div>`;
     return;
   }
-  container.innerHTML = all.map(transactionRowHtml).join('');
+  container.innerHTML = (await Promise.all(all.map(transactionRowHtml))).join('');
   wireKebabMenus(container, async (rowId, action) => {
     if (action === 'delete') {
       if (!confirm('حذف هذه المعاملة؟')) return;
@@ -270,13 +271,42 @@ async function getPurchases(kind) {
 async function addPurchase(kind, { name, price, date, deductFromBalance, photoBlob }) {
   const cfg = ECONOMY_KINDS[kind];
   const purchaseDate = date || todayStr();
-  const id = await db[cfg.table].add({ name, price: price ?? null, date: purchaseDate, createdAt: Date.now() });
+  const id = await db[cfg.table].add({ name, price: price ?? null, date: purchaseDate, deductFromBalance: !!deductFromBalance, linkedTransactionId: null, createdAt: Date.now() });
   if (photoBlob) await db[cfg.photoTable].put({ [cfg.photoKey]: id, photoBlob });
-  if (deductFromBalance && price) await addTransaction(-Math.abs(price), `${cfg.singular}: ${name}`, purchaseDate);
+  if (price != null) {
+    // Always logged as a transaction, even when she chose not to deduct —
+    // so "بدون خصم" purchases still show up in her history, just at zero
+    // impact on the balance. Editing later can flip this without losing
+    // the entry.
+    const amount = deductFromBalance ? -Math.abs(price) : 0;
+    const txnId = await addTransaction(amount, `${cfg.singular}: ${name}`, purchaseDate);
+    await db[cfg.table].update(id, { linkedTransactionId: txnId });
+  }
   return id;
+}
+async function updatePurchase(kind, id, { name, price, date, deductFromBalance, photoBlob, removePhoto }) {
+  const cfg = ECONOMY_KINDS[kind];
+  const existing = await db[cfg.table].get(id);
+  const purchaseDate = date || existing.date;
+  await db[cfg.table].update(id, { name, price: price ?? null, date: purchaseDate, deductFromBalance: !!deductFromBalance });
+  if (photoBlob) await db[cfg.photoTable].put({ [cfg.photoKey]: id, photoBlob });
+  else if (removePhoto) await db[cfg.photoTable].delete(id);
+
+  // Reconcile the linked transaction to whatever the deduct setting is
+  // NOW — this is what makes "I marked it don't-deduct, now I want it
+  // to" (or the reverse) actually take effect on the balance.
+  const newAmount = (price != null && deductFromBalance) ? -Math.abs(price) : 0;
+  if (existing.linkedTransactionId != null) {
+    await db.economyTransactions.update(existing.linkedTransactionId, { amount: newAmount, note: `${cfg.singular}: ${name}`, date: purchaseDate });
+  } else if (price != null) {
+    const txnId = await addTransaction(newAmount, `${cfg.singular}: ${name}`, purchaseDate);
+    await db[cfg.table].update(id, { linkedTransactionId: txnId });
+  }
 }
 async function deletePurchase(kind, id) {
   const cfg = ECONOMY_KINDS[kind];
+  const existing = await db[cfg.table].get(id);
+  if (existing?.linkedTransactionId != null) await db.economyTransactions.delete(existing.linkedTransactionId);
   await db[cfg.table].delete(id);
   await db[cfg.photoTable].delete(id);
 }
@@ -290,15 +320,15 @@ async function getWishlist(kind) {
   const all = await db[cfg.wishTable].toArray();
   return all.filter(w => !w.archived).sort((a, b) => b.createdAt - a.createdAt);
 }
-async function addWishlistItem(kind, { name, link, price, photoBlob }) {
+async function addWishlistItem(kind, { name, link, price, deductFromBalance, photoBlob }) {
   const cfg = ECONOMY_KINDS[kind];
-  const id = await db[cfg.wishTable].add({ name, link: link || '', price: price ?? null, archived: false, createdAt: Date.now() });
+  const id = await db[cfg.wishTable].add({ name, link: link || '', price: price ?? null, deductFromBalance: !!deductFromBalance, archived: false, createdAt: Date.now() });
   if (photoBlob) await db[cfg.wishPhotoTable].put({ [cfg.wishPhotoKey]: id, photoBlob });
   return id;
 }
-async function updateWishlistItem(kind, id, { name, link, price, photoBlob, removePhoto }) {
+async function updateWishlistItem(kind, id, { name, link, price, deductFromBalance, photoBlob, removePhoto }) {
   const cfg = ECONOMY_KINDS[kind];
-  await db[cfg.wishTable].update(id, { name, link: link || '', price: price ?? null });
+  await db[cfg.wishTable].update(id, { name, link: link || '', price: price ?? null, deductFromBalance: !!deductFromBalance });
   if (photoBlob) await db[cfg.wishPhotoTable].put({ [cfg.wishPhotoKey]: id, photoBlob });
   else if (removePhoto) await db[cfg.wishPhotoTable].delete(id);
 }
@@ -312,15 +342,21 @@ async function getWishlistPhoto(kind, id) {
   return db[cfg.wishPhotoTable].get(id);
 }
 
-function purchaseRowHtml(item, photoUrl) {
+async function purchaseRowHtml(item, photoUrl) {
+  const currency = await getCurrencyLabel();
+  const deducts = item.deductFromBalance ?? false; // old records made before this fix default to "no"
   return `
     <div class="food-row" data-purchase-id="${item.id}">
       ${photoUrl ? `<img class="food-thumb" src="${photoUrl}" alt="">` : `<span class="food-thumb food-thumb-placeholder">🛍️</span>`}
       <div class="food-row-info">
         <span class="food-row-title">${escapeHtml(item.name)}${item.date ? ' · ' + formatDateArabic(item.date, { weekday: false }) : ''}</span>
+        ${item.price != null ? `<span class="food-row-notes">${deducts ? '💳 خُصم من الرصيد' : '➖ لم يُخصم'}</span>` : ''}
       </div>
-      ${item.price != null ? `<span class="food-row-calories">${item.price}</span>` : ''}
-      ${kebabMenuHtml(String(item.id), [{ key: 'delete', label: 'حذف', danger: true }])}
+      ${item.price != null ? `<span class="food-row-calories">${item.price} ${currency}</span>` : ''}
+      ${kebabMenuHtml(String(item.id), [
+        { key: 'edit', label: 'تعديل' },
+        { key: 'delete', label: 'حذف', danger: true }
+      ])}
     </div>`;
 }
 
@@ -339,22 +375,27 @@ async function renderPurchasesList(kind, container, { limit } = {}) {
   }));
   container.innerHTML = rows.join('');
   wireKebabMenus(container, async (rowId, action) => {
-    if (action === 'delete') {
-      if (!confirm('حذف هذا العنصر؟')) return;
+    if (action === 'edit') {
+      openAddPurchaseModal(kind, () => renderPurchasesList(kind, container, { limit }), Number(rowId));
+    } else if (action === 'delete') {
+      if (!confirm('حذف هذا العنصر؟ سيُحذف أي خصم مرتبط به من رصيدك أيضاً.')) return;
       await deletePurchase(kind, Number(rowId));
       await renderPurchasesList(kind, container, { limit });
     }
   });
 }
 
-function openAddPurchaseModal(kind, onSaved) {
+function openAddPurchaseModal(kind, onSaved, existingId) {
   const cfg = ECONOMY_KINDS[kind];
+  let existing = null;
+  let existingPhotoUrl = null;
   let pendingPhotoBlob = null;
+  let removePhotoFlag = false;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal modal-lg">
-      <h2 class="modal-title">${cfg.singular} جديد</h2>
+      <h2 class="modal-title" id="purchase-modal-title">${cfg.singular} جديد</h2>
       <label class="field-label">الاسم</label>
       <input class="text-input" id="purchase-name-input" autofocus>
       <label class="field-label">السعر (اختياري)</label>
@@ -365,21 +406,61 @@ function openAddPurchaseModal(kind, onSaved) {
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="purchase-photo-preview"><span class="food-photo-placeholder">📷</span></div>
       <input type="file" accept="image/*" id="purchase-photo-input" class="hidden-file-input">
-      <button class="btn btn-secondary btn-sm" id="purchase-photo-choose">إضافة صورة</button>
+      <div class="food-photo-actions">
+        <button class="btn btn-secondary btn-sm" id="purchase-photo-choose">إضافة صورة</button>
+        <button class="btn btn-text btn-sm" id="purchase-photo-remove">إزالة الصورة</button>
+      </div>
       <div class="modal-actions">
+        ${existingId ? `<button class="btn btn-danger btn-sm" id="purchase-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="purchase-cancel">إلغاء</button>
         <button class="btn btn-primary" id="purchase-save">حفظ</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
+
+  function renderPhotoArea() {
+    const el = document.getElementById('purchase-photo-preview');
+    if (pendingPhotoBlob) el.innerHTML = `<img src="${trackEconomyPhotoUrl(pendingPhotoBlob)}" alt="">`;
+    else if (existingPhotoUrl && !removePhotoFlag) el.innerHTML = `<img src="${existingPhotoUrl}" alt="">`;
+    else el.innerHTML = '<span class="food-photo-placeholder">📷</span>';
+  }
+
+  async function applyExisting() {
+    if (!existingId) { renderPhotoArea(); return; }
+    const cfgLocal = ECONOMY_KINDS[kind];
+    existing = await db[cfgLocal.table].get(existingId);
+    if (!existing) { renderPhotoArea(); return; }
+    document.getElementById('purchase-modal-title').textContent = `تعديل ${cfgLocal.singular}`;
+    document.getElementById('purchase-name-input').value = existing.name;
+    document.getElementById('purchase-price-input').value = existing.price ?? '';
+    document.getElementById('purchase-deduct-input').checked = existing.deductFromBalance ?? false;
+    document.getElementById('purchase-date-input').value = existing.date || todayStr();
+    const photoRow = await getPurchasePhoto(kind, existingId);
+    if (photoRow) existingPhotoUrl = trackEconomyPhotoUrl(photoRow.photoBlob);
+    renderPhotoArea();
+  }
+
   document.getElementById('purchase-photo-choose').addEventListener('click', () => document.getElementById('purchase-photo-input').click());
   document.getElementById('purchase-photo-input').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     pendingPhotoBlob = await resizeImageToBlob(file, 1200, 0.8);
-    document.getElementById('purchase-photo-preview').innerHTML = `<img src="${trackEconomyPhotoUrl(pendingPhotoBlob)}" alt="">`;
+    removePhotoFlag = false;
+    renderPhotoArea();
+  });
+  document.getElementById('purchase-photo-remove').addEventListener('click', () => {
+    pendingPhotoBlob = null;
+    removePhotoFlag = true;
+    renderPhotoArea();
   });
   document.getElementById('purchase-cancel').addEventListener('click', () => overlay.remove());
+  const deleteBtn = document.getElementById('purchase-delete-btn');
+  if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+    if (!confirm('حذف هذا العنصر؟ سيُحذف أي خصم مرتبط به من رصيدك أيضاً.')) return;
+    await deletePurchase(kind, existingId);
+    overlay.remove();
+    if (onSaved) onSaved();
+  });
   document.getElementById('purchase-save').addEventListener('click', async () => {
     const name = document.getElementById('purchase-name-input').value.trim();
     if (!name) return;
@@ -387,21 +468,27 @@ function openAddPurchaseModal(kind, onSaved) {
     const price = priceRaw === '' ? null : parseFloat(priceRaw);
     const deduct = document.getElementById('purchase-deduct-input').checked;
     const date = document.getElementById('purchase-date-input').value || todayStr();
-    await addPurchase(kind, { name, price, date, deductFromBalance: deduct, photoBlob: pendingPhotoBlob });
+    if (existingId) await updatePurchase(kind, existingId, { name, price, date, deductFromBalance: deduct, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
+    else await addPurchase(kind, { name, price, date, deductFromBalance: deduct, photoBlob: pendingPhotoBlob });
     overlay.remove();
     if (onSaved) onSaved();
   });
+
+  applyExisting();
 }
 
-function wishlistRowHtml(item, photoUrl) {
+async function wishlistRowHtml(item, photoUrl) {
+  const currency = await getCurrencyLabel();
+  const deducts = item.deductFromBalance ?? false;
   return `
     <div class="food-row" data-wish-id="${item.id}">
       ${photoUrl ? `<img class="food-thumb" src="${photoUrl}" alt="">` : `<span class="food-thumb food-thumb-placeholder">⭐</span>`}
       <div class="food-row-info">
         <span class="food-row-title">${escapeHtml(item.name)}</span>
+        ${item.price != null ? `<span class="food-row-notes">${deducts ? '💳 سيُخصم عند الشراء' : '➖ لن يُخصم'}</span>` : ''}
         ${item.link ? `<a class="see-all-link wishlist-link" href="${escapeHtml(item.link)}" target="_blank" rel="noopener">الرابط ←</a>` : ''}
       </div>
-      ${item.price != null ? `<span class="food-row-calories">${item.price}</span>` : ''}
+      ${item.price != null ? `<span class="food-row-calories">${item.price} ${currency}</span>` : ''}
       ${kebabMenuHtml(String(item.id), [
         { key: 'edit', label: 'تعديل' },
         { key: 'buy', label: 'تم الشراء' },
@@ -433,7 +520,9 @@ async function renderWishlist(kind, container) {
       openWishlistModal(kind, { existingId: id, onSaved: () => renderWishlist(kind, container) });
     } else if (action === 'buy') {
       const item = items.find(w => w.id === id);
-      await addPurchase(kind, { name: item.name, price: item.price, date: todayStr(), deductFromBalance: false });
+      // Uses the item's OWN deduct setting from when it was added/edited —
+      // this was hardcoded to false before, silently never deducting.
+      await addPurchase(kind, { name: item.name, price: item.price, date: todayStr(), deductFromBalance: item.deductFromBalance ?? false });
       await deleteWishlistItem(kind, id);
       await renderWishlist(kind, container);
       toast('انتقل إلى قائمة المشتريات 🌸');
@@ -459,10 +548,14 @@ function openWishlistModal(kind, { existingId, onSaved } = {}) {
       <input class="text-input" type="url" id="wish-link-input" placeholder="https://...">
       <label class="field-label">السعر (اختياري)</label>
       <input class="text-input" type="number" step="0.01" id="wish-price-input">
+      <label class="checkbox-row"><input type="checkbox" id="wish-deduct-input"><span>خصم من الرصيد تلقائياً عند تحديد "تم الشراء"</span></label>
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="wish-photo-preview"></div>
       <input type="file" accept="image/*" id="wish-photo-input" class="hidden-file-input">
-      <button class="btn btn-secondary btn-sm" id="wish-photo-choose">إضافة صورة</button>
+      <div class="food-photo-actions">
+        <button class="btn btn-secondary btn-sm" id="wish-photo-choose">إضافة صورة</button>
+        <button class="btn btn-text btn-sm" id="wish-photo-remove">إزالة الصورة</button>
+      </div>
       <div class="modal-actions">
         <button class="btn btn-text" id="wish-cancel">إلغاء</button>
         <button class="btn btn-primary" id="wish-save">حفظ</button>
@@ -485,6 +578,7 @@ function openWishlistModal(kind, { existingId, onSaved } = {}) {
     document.getElementById('wish-name-input').value = existing.name;
     document.getElementById('wish-link-input').value = existing.link || '';
     document.getElementById('wish-price-input').value = existing.price ?? '';
+    document.getElementById('wish-deduct-input').checked = existing.deductFromBalance ?? false;
     const photoRow = await getWishlistPhoto(kind, existingId);
     if (photoRow) existingPhotoUrl = trackEconomyPhotoUrl(photoRow.photoBlob);
     renderPhotoArea();
@@ -498,6 +592,11 @@ function openWishlistModal(kind, { existingId, onSaved } = {}) {
     removePhotoFlag = false;
     renderPhotoArea();
   });
+  document.getElementById('wish-photo-remove').addEventListener('click', () => {
+    pendingPhotoBlob = null;
+    removePhotoFlag = true;
+    renderPhotoArea();
+  });
   document.getElementById('wish-cancel').addEventListener('click', () => overlay.remove());
   document.getElementById('wish-save').addEventListener('click', async () => {
     const name = document.getElementById('wish-name-input').value.trim();
@@ -505,8 +604,9 @@ function openWishlistModal(kind, { existingId, onSaved } = {}) {
     const link = document.getElementById('wish-link-input').value.trim();
     const priceRaw = document.getElementById('wish-price-input').value;
     const price = priceRaw === '' ? null : parseFloat(priceRaw);
-    if (existingId) await updateWishlistItem(kind, existingId, { name, link, price, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
-    else await addWishlistItem(kind, { name, link, price, photoBlob: pendingPhotoBlob });
+    const deductFromBalance = document.getElementById('wish-deduct-input').checked;
+    if (existingId) await updateWishlistItem(kind, existingId, { name, link, price, deductFromBalance, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
+    else await addWishlistItem(kind, { name, link, price, deductFromBalance, photoBlob: pendingPhotoBlob });
     overlay.remove();
     if (onSaved) onSaved();
   });
@@ -691,6 +791,7 @@ async function renderEconomyPage(params, view) {
 
 async function economyYearlyProvider(year) {
   const prefix = String(year);
+  const currency = await getCurrencyLabel();
   const [txns, edibles, things] = await Promise.all([
     db.economyTransactions.toArray(), db.edibles.toArray(), db.things.toArray()
   ]);
@@ -705,12 +806,12 @@ async function economyYearlyProvider(year) {
   const thingsSum = yearThings.filter(t => t.price != null).reduce((s, t) => s + t.price, 0);
 
   const html = `
-    <div class="yearly-row"><span>💰 دخل</span><span>${moneyIn.toFixed(2)}</span></div>
-    <div class="yearly-row"><span>💸 مصروف</span><span>${moneyOut.toFixed(2)}</span></div>
+    <div class="yearly-row"><span>💰 دخل</span><span>${moneyIn.toFixed(2)} ${currency}</span></div>
+    <div class="yearly-row"><span>💸 مصروف</span><span>${moneyOut.toFixed(2)} ${currency}</span></div>
     <div class="yearly-row"><span>🍎 مأكولات (عدد)</span><span>${yearEdibles.length}</span></div>
-    <div class="yearly-row"><span>🍎 مأكولات (مجموع)</span><span>${ediblesSum.toFixed(2)}</span></div>
+    <div class="yearly-row"><span>🍎 مأكولات (التكلفة)</span><span>${ediblesSum.toFixed(2)} ${currency}</span></div>
     <div class="yearly-row"><span>🛍️ أغراض (عدد)</span><span>${yearThings.length}</span></div>
-    <div class="yearly-row"><span>🛍️ أغراض (مجموع)</span><span>${thingsSum.toFixed(2)}</span></div>
+    <div class="yearly-row"><span>🛍️ أغراض (التكلفة)</span><span>${thingsSum.toFixed(2)} ${currency}</span></div>
   `;
   return { title: 'الاقتصاد', html, count: yearTxns.length + yearEdibles.length + yearThings.length };
 }
@@ -718,6 +819,19 @@ async function economyYearlyProvider(year) {
 // ---------- Day Detail providers ----------
 // Read-only (no kebab) — same reasoning as habits.js: editing an
 // entry's definition isn't a per-date action.
+
+async function transactionsDayProvider(dateStr) {
+  const all = (await db.economyTransactions.toArray()).filter(t => t.date === dateStr);
+  if (all.length === 0) return null;
+  const currency = await getCurrencyLabel();
+  const node = document.createElement('div');
+  node.innerHTML = all.map(t => `
+    <div class="yearly-row">
+      <span>${escapeHtml(t.note || (t.amount > 0 ? 'دخل' : 'مصروف'))}</span>
+      <span class="${t.amount > 0 ? 'txn-positive' : 'txn-negative'}">${t.amount > 0 ? '+' : ''}${t.amount.toFixed(2)} ${currency}</span>
+    </div>`).join('');
+  return { title: 'المعاملات', node };
+}
 
 async function purchaseDayProvider(kind, title, dateStr) {
   const items = (await getPurchases(kind)).filter(i => i.date === dateStr);

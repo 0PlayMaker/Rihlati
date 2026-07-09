@@ -195,6 +195,44 @@ async function renderDailyAdhkar(container, dateStr) {
   });
 }
 
+// ===================== Standalone sunnah prayers (not tied to a fard) =====================
+// Starts with just Duha; the list is structured to make adding Witr,
+// Tahajjud, etc. later a one-line change, not a redesign.
+
+const STANDALONE_SUNNAH_PRAYERS = [
+  { kind: 'duha', label: '☀️ صلاة الضحى' }
+];
+
+async function isStandaloneSunnahDone(kind, date) { return !!(await getLog(db.standaloneSunnahLogs, 'kind', kind, date)); }
+async function toggleStandaloneSunnah(kind, date) {
+  const existing = await getLog(db.standaloneSunnahLogs, 'kind', kind, date);
+  if (existing) await deleteLog(db.standaloneSunnahLogs, 'kind', kind, date);
+  else await upsertLog(db.standaloneSunnahLogs, 'kind', kind, date, {});
+}
+async function getStandaloneSunnahStats(kind) {
+  const logs = await db.standaloneSunnahLogs.where('kind').equals(kind).toArray();
+  return computeImplicitStats(logs.map(l => l.date), []);
+}
+
+async function renderStandaloneSunnah(container, dateStr, { showStreak } = {}) {
+  const rows = await Promise.all(STANDALONE_SUNNAH_PRAYERS.map(async p => {
+    const done = await isStandaloneSunnahDone(p.kind, dateStr);
+    const statsText = showStreak ? statsLine(await getStandaloneSunnahStats(p.kind)) : '';
+    return `
+      <div class="daily-adhkar-row">
+        <button class="chip-lg ${done ? 'active' : ''}" data-kind="${p.kind}">${p.label}</button>
+        ${statsText ? `<span class="tsr-streak">${statsText}</span>` : ''}
+      </div>`;
+  }));
+  container.innerHTML = rows.join('');
+  container.querySelectorAll('.chip-lg').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await toggleStandaloneSunnah(btn.dataset.kind, dateStr);
+      await renderStandaloneSunnah(container, dateStr, { showStreak });
+    });
+  });
+}
+
 // ===================== Custom adhkar (name + daily count) =====================
 
 async function createCustomAdhkar(name) {
@@ -349,6 +387,11 @@ async function renderWorshipPage(params, view) {
     </div>
 
     <div class="card">
+      <h2 class="card-title">نوافل</h2>
+      <div id="standalone-sunnah"></div>
+    </div>
+
+    <div class="card">
       <h2 class="card-title">أذكار الصباح والمساء</h2>
       <div class="worship-section-stats" id="daily-adhkar-stats"></div>
       <div id="daily-adhkar"></div>
@@ -400,6 +443,7 @@ async function renderWorshipPage(params, view) {
 
   await renderExtrasList(document.getElementById('extras-list'), today);
   await renderDailyAdhkar(document.getElementById('daily-adhkar'), today);
+  await renderStandaloneSunnah(document.getElementById('standalone-sunnah'), today, { showStreak: true });
 
   const adhkarListEl = document.getElementById('custom-adhkar-list');
   await renderCustomAdhkarList(adhkarListEl, today, { editable: true, showStreak: true });
@@ -421,9 +465,16 @@ async function worshipExtrasDayProvider(dateStr) {
   const anyAdhkar = await Promise.all(PRAYER_NAMES.map(p => isAdhkarAfterDone(p, dateStr)));
   const morning = await isDailyAdhkarDone('morning', dateStr);
   const evening = await isDailyAdhkarDone('evening', dateStr);
-  if (!anySunnah.some(Boolean) && !anyAdhkar.some(Boolean) && !morning && !evening) return null;
+  const duha = await isStandaloneSunnahDone('duha', dateStr);
+  if (!anySunnah.some(Boolean) && !anyAdhkar.some(Boolean) && !morning && !evening && !duha) return null;
   const node = document.createElement('div');
   await renderExtrasList(node, dateStr);
+  if (duha) {
+    const duhaNode = document.createElement('p');
+    duhaNode.className = 'period-day-note';
+    duhaNode.textContent = '☀️ صلاة الضحى';
+    node.appendChild(duhaNode);
+  }
   const adhkarNode = document.createElement('div');
   adhkarNode.className = 'day-detail-subsection';
   await renderDailyAdhkar(adhkarNode, dateStr);
@@ -444,18 +495,19 @@ async function customAdhkarDayProvider(dateStr) {
 
 async function worshipYearlyProvider(year) {
   const prefix = String(year);
-  const [prayerLogs, sunnahLogs, adhkarAfterLogs, dailyAdhkarLogs, customAdhkar, customAdhkarLogs] = await Promise.all([
+  const [prayerLogs, sunnahLogs, adhkarAfterLogs, dailyAdhkarLogs, customAdhkar, customAdhkarLogs, standaloneSunnahLogs] = await Promise.all([
     db.prayerLogs.toArray(), db.sunnahLogs.toArray(), db.adhkarAfterLogs.toArray(), db.dailyAdhkarLogs.toArray(),
-    getActiveCustomAdhkar(), db.customAdhkarLogs.toArray()
+    getActiveCustomAdhkar(), db.customAdhkarLogs.toArray(), db.standaloneSunnahLogs.toArray()
   ]);
   const fardDone = prayerLogs.filter(l => l.date.startsWith(prefix) && l.status === 'done').length;
   const sunnahDone = sunnahLogs.filter(l => l.date.startsWith(prefix)).length;
   const adhkarAfterDone = adhkarAfterLogs.filter(l => l.date.startsWith(prefix)).length;
   const dailyAdhkarDone = dailyAdhkarLogs.filter(l => l.date.startsWith(prefix)).length;
+  const duhaDone = standaloneSunnahLogs.filter(l => l.kind === 'duha' && l.date.startsWith(prefix)).length;
   const yearCustomLogs = customAdhkarLogs.filter(l => l.date.startsWith(prefix));
   const customTotal = yearCustomLogs.reduce((s, l) => s + l.count, 0);
 
-  if (fardDone === 0 && sunnahDone === 0 && adhkarAfterDone === 0 && dailyAdhkarDone === 0 && customTotal === 0) return null;
+  if (fardDone === 0 && sunnahDone === 0 && adhkarAfterDone === 0 && dailyAdhkarDone === 0 && duhaDone === 0 && customTotal === 0) return null;
 
   const customRows = customAdhkar.map(a => {
     const sum = yearCustomLogs.filter(l => l.adhkarId === a.id).reduce((s, l) => s + l.count, 0);
@@ -467,7 +519,8 @@ async function worshipYearlyProvider(year) {
     <div class="yearly-row"><span>السنن</span><span>${sunnahDone}</span></div>
     <div class="yearly-row"><span>أذكار بعد الصلاة</span><span>${adhkarAfterDone}</span></div>
     <div class="yearly-row"><span>أذكار الصباح والمساء</span><span>${dailyAdhkarDone}</span></div>
+    ${duhaDone > 0 ? `<div class="yearly-row"><span>☀️ صلاة الضحى</span><span>${duhaDone} يوم</span></div>` : ''}
     ${customRows}
   `;
-  return { title: 'العبادة', html, count: fardDone + sunnahDone + adhkarAfterDone + dailyAdhkarDone + customTotal };
+  return { title: 'العبادة', html, count: fardDone + sunnahDone + adhkarAfterDone + dailyAdhkarDone + duhaDone + customTotal };
 }
