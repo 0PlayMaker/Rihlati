@@ -63,22 +63,6 @@ function revokeExercisePhotoUrls() {
 
 // ---------- working countdown timer ----------
 
-function playBeep() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.frequency.value = 880;
-    gain.gain.setValueAtTime(0.001, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.4);
-  } catch (e) { /* Web Audio unavailable — fail silently, vibration still fires */ }
-}
-
 function formatTimer(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
   const s = totalSeconds % 60;
@@ -131,6 +115,7 @@ function openTimerModal(exercise) {
       intervalId = null;
       toggleBtn.textContent = 'استئناف';
     } else {
+      unlockAudioContext(); // must happen inside this real tap, not later when the timer fires
       if (remaining <= 0) remaining = Number(durationInput.value) || duration;
       display.classList.remove('timer-done');
       intervalId = setInterval(tick, 1000);

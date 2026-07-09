@@ -33,6 +33,39 @@ function wirePhotoPicker(idPrefix, onFileSelected, onRemove) {
   if (removeBtn && onRemove) removeBtn.addEventListener('click', onRemove);
 }
 
+// Shared beep for any timer (training's exercise timer, Pomodoro).
+// Deliberately two functions, not one: browsers only reliably allow
+// audio that's tied to a genuine user gesture (a tap), and a
+// timer-completion beep is fired from a setInterval callback, which is
+// NOT a gesture — many mobile browsers silently block audio created
+// there. The fix is to create (or resume) the AudioContext ONCE,
+// directly inside the actual tap that starts the timer, then have the
+// later timer-fired beep reuse that already-unlocked context instead
+// of creating a fresh one at completion time.
+let _sharedAudioCtx = null;
+function unlockAudioContext() {
+  if (!_sharedAudioCtx) {
+    try { _sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch { return; }
+  }
+  if (_sharedAudioCtx.state === 'suspended') _sharedAudioCtx.resume();
+}
+function playBeep() {
+  if (!_sharedAudioCtx) return; // never unlocked by a real tap — skip rather than risk a blocked context
+  try {
+    const osc = _sharedAudioCtx.createOscillator();
+    const gain = _sharedAudioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(_sharedAudioCtx.destination);
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.001, _sharedAudioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.3, _sharedAudioCtx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, _sharedAudioCtx.currentTime + 0.35);
+    osc.start();
+    osc.stop(_sharedAudioCtx.currentTime + 0.4);
+  } catch (e) { /* fail silently — vibration still fires separately */ }
+}
+
 // Resizes+compresses an image client-side before it ever touches
 // IndexedDB. Profile picture uses a small maxDim (it's only ever a
 // circle avatar); Food calls this with a larger one since photos get

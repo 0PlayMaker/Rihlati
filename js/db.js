@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v22 · ٩ يوليو ٢٠٢٦';
+const APP_VERSION = 'v24 · ٩ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -132,7 +132,8 @@ const BOTTOM_BAR_ITEMS = [
   { key: 'period', label: 'الدورة', icon: '🌙', path: '/period' },
   { key: 'goals', label: 'الأهداف', icon: '🎯', path: '/goals' },
   { key: 'diary', label: 'يومياتي', icon: '📔', path: '/diary' },
-  { key: 'economy', label: 'الاقتصاد', icon: '💰', path: '/economy' }
+  { key: 'economy', label: 'الاقتصاد', icon: '💰', path: '/economy' },
+  { key: 'study', label: 'التعلم', icon: '🎓', path: '/study' }
 ];
 
 // ---------- Phase 5 (Body + Goals) — new tables only ----------
@@ -220,6 +221,17 @@ db.version(10).stores({
 db.version(11).stores({
   wirdSettings: '++id',
   wirdLogs: '++id, &date'
+});
+
+// ---------- Phase 12 — التعلم (Study/Learning) ----------
+// Pomodoro's work/break minutes live as plain fields on the existing
+// settings row, not a new table — it's just two numbers, no version
+// bump needed for that part.
+db.version(12).stores({
+  courses: '++id',
+  courseTodos: '++id, courseId',
+  courseMaterials: '++id, courseId',
+  courseMaterialPhotos: 'materialId'
 });
 
 // ---------- date helpers (used everywhere) ----------

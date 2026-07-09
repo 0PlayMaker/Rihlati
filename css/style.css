@@ -66,6 +66,7 @@
   --ink-on-pastel: #4A4152;
 
   --track: #F1E7EC;
+  --card-border: transparent;
 
   --radius-sm: 10px;
   --radius-md: 14px;
@@ -167,6 +168,7 @@ a { color: var(--pink-deep); text-decoration: none; }
   border-radius: var(--radius-lg);
   padding: var(--space-4);
   box-shadow: var(--shadow-soft);
+  border: 1px solid var(--card-border);
 }
 .card-title { font-size: 17px; font-weight: 700; margin-bottom: var(--space-2); }
 .section-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: var(--space-2); }
@@ -224,7 +226,7 @@ a { color: var(--pink-deep); text-decoration: none; }
 .quick-actions-row, .glance-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 .quick-action-card, .glance-card {
   background: var(--surface);
-  border: none;
+  border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
   padding: var(--space-4);
   display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
@@ -325,7 +327,7 @@ a { color: var(--pink-deep); text-decoration: none; }
 }
 .modal {
   background: var(--surface); border-radius: var(--radius-lg); padding: var(--space-5);
-  width: 100%; max-width: 380px; box-shadow: var(--shadow-soft);
+  width: 100%; max-width: 380px; box-shadow: var(--shadow-soft); border: 1px solid var(--card-border);
 }
 .modal-lg { max-width: 420px; max-height: 85vh; overflow-y: auto; }
 .modal-title { font-size: 18px; font-weight: 800; margin-bottom: var(--space-2); text-align: center; }
@@ -732,7 +734,7 @@ a { color: var(--pink-deep); text-decoration: none; }
 
 .habit-card {
   background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-soft);
-  margin-bottom: var(--space-3); padding: var(--space-3);
+  margin-bottom: var(--space-3); padding: var(--space-3); border: 1px solid var(--card-border);
 }
 .habit-card-top { display: flex; align-items: center; gap: var(--space-2); }
 .habit-card-icon { font-size: 22px; flex-shrink: 0; }
@@ -745,6 +747,15 @@ a { color: var(--pink-deep); text-decoration: none; }
 }
 .habit-clock-icon { font-size: 13px; }
 .habit-clock { font-weight: 700; color: var(--pink-deep); }
+
+/* ============================================================
+   Study (التعلم)
+   ============================================================ */
+
+.course-todo-source { font-size: 12px; color: var(--ink-faint); }
+.row-actions-wrap { flex-shrink: 0; }
+.material-card { margin-bottom: var(--space-3); }
+.material-type-label { font-size: 13px; font-weight: 700; color: var(--ink-soft); }
 
 /* ============================================================
    Theming
@@ -767,10 +778,28 @@ body.theme-glass .sheet,
 body.theme-glass #bottom-bar,
 body.theme-glass .habit-card,
 body.theme-glass .quick-action-card,
-body.theme-glass .glance-card {
+body.theme-glass .glance-card,
+body.theme-glass .goal-row,
+body.theme-glass .material-card {
   backdrop-filter: blur(20px) saturate(1.6);
   -webkit-backdrop-filter: blur(20px) saturate(1.6);
   border: 1px solid rgba(255,255,255,0.5);
+}
+body.theme-glass .icon-btn,
+body.theme-glass .chip,
+body.theme-glass .kebab-btn,
+body.theme-glass .btn-secondary,
+body.theme-glass .text-input,
+body.theme-glass .kebab-dropdown {
+  background: rgba(255,255,255,0.45);
+  backdrop-filter: blur(14px) saturate(1.5);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  border: 1px solid rgba(255,255,255,0.5);
+}
+body.theme-glass .btn-primary,
+body.theme-glass .btn-danger {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 body.theme-glass-dark .card,
 body.theme-glass-dark .modal,
@@ -778,7 +807,18 @@ body.theme-glass-dark .sheet,
 body.theme-glass-dark #bottom-bar,
 body.theme-glass-dark .habit-card,
 body.theme-glass-dark .quick-action-card,
-body.theme-glass-dark .glance-card {
+body.theme-glass-dark .glance-card,
+body.theme-glass-dark .goal-row,
+body.theme-glass-dark .material-card {
+  border-color: rgba(255,255,255,0.14);
+}
+body.theme-glass-dark .icon-btn,
+body.theme-glass-dark .chip,
+body.theme-glass-dark .kebab-btn,
+body.theme-glass-dark .btn-secondary,
+body.theme-glass-dark .text-input,
+body.theme-glass-dark .kebab-dropdown {
+  background: rgba(255,255,255,0.08);
   border-color: rgba(255,255,255,0.14);
 }
 
@@ -794,6 +834,8 @@ body.theme-dark-ish .food-photo-placeholder {
   width: 56px; height: 56px; border: none; border-radius: var(--radius-md);
   padding: 0; cursor: pointer; background: none;
 }
+.theme-accent-row { display: flex; gap: var(--space-2); align-items: center; }
+.theme-hex-input { flex: 1; direction: ltr; text-align: center; font-family: monospace; }
 .theme-history-row { display: flex; gap: 8px; margin-top: var(--space-2); flex-wrap: wrap; }
 .theme-history-swatch {
   width: 32px; height: 32px; border-radius: var(--radius-round); border: 2px solid var(--track); cursor: pointer;

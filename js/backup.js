@@ -17,7 +17,8 @@ const SIMPLE_TABLES = [
   'goals', 'diaryEntries',
   'economyTransactions', 'shoppingLists', 'shoppingListItems',
   'edibles', 'edibleWishlist', 'things', 'thingsWishlist',
-  'recipes', 'exercises', 'exerciseLogs', 'standaloneSunnahLogs', 'wirdSettings', 'wirdLogs'
+  'recipes', 'exercises', 'exerciseLogs', 'standaloneSunnahLogs', 'wirdSettings', 'wirdLogs',
+  'courses', 'courseTodos', 'courseMaterials'
 ];
 
 // Tables holding blobs, each keyed by a foreign id — can't go in JSON,
@@ -30,7 +31,8 @@ const PHOTO_TABLES = [
   { table: 'thingPhotos', keyField: 'thingId', prefix: 'thing' },
   { table: 'thingsWishlistPhotos', keyField: 'wishlistId', prefix: 'things-wish' },
   { table: 'recipePhotos', keyField: 'recipeId', prefix: 'recipe' },
-  { table: 'exercisePhotos', keyField: 'exerciseId', prefix: 'exercise' }
+  { table: 'exercisePhotos', keyField: 'exerciseId', prefix: 'exercise' },
+  { table: 'courseMaterialPhotos', keyField: 'materialId', prefix: 'material' }
 ];
 
 async function exportBackup() {

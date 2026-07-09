@@ -17,23 +17,23 @@
 const THEME_MODES = {
   light: {
     label: '☀️ فاتح',
-    vars: { '--bg': '#FFF9F5', '--surface': '#FFFFFF', '--ink': '#4A4152', '--ink-soft': '#8B8394', '--ink-faint': '#C3BAC6', '--track': '#F1E7EC' }
+    vars: { '--bg': '#FFF9F5', '--surface': '#FFFFFF', '--ink': '#4A4152', '--ink-soft': '#8B8394', '--ink-faint': '#C3BAC6', '--track': '#F1E7EC', '--card-border': 'transparent' }
   },
   dark: {
     label: '🌙 داكن',
-    vars: { '--bg': '#1E1A22', '--surface': '#2A2530', '--ink': '#F0EBF2', '--ink-soft': '#B8AEC0', '--ink-faint': '#6E6578', '--track': '#3A3441' }
+    vars: { '--bg': '#17141C', '--surface': '#2E2838', '--ink': '#F5F1F7', '--ink-soft': '#BCB2C7', '--ink-faint': '#7A7186', '--track': '#3E3749', '--card-border': 'rgba(255,255,255,0.09)' }
   },
   amoled: {
     label: '⚫ أسود عميق',
-    vars: { '--bg': '#000000', '--surface': '#0D0D0D', '--ink': '#F0EBF2', '--ink-soft': '#A8A0B0', '--ink-faint': '#5A5262', '--track': '#1A1A1A' }
+    vars: { '--bg': '#000000', '--surface': '#161616', '--ink': '#F5F1F7', '--ink-soft': '#B8AFC2', '--ink-faint': '#6B6373', '--track': '#242424', '--card-border': 'rgba(255,255,255,0.10)' }
   },
   glass: {
     label: '🔮 زجاجي',
-    vars: { '--bg': '#EDE3F5', '--surface': 'rgba(255,255,255,0.5)', '--ink': '#3A3145', '--ink-soft': '#756B85', '--ink-faint': '#A99FBB', '--track': 'rgba(255,255,255,0.35)' }
+    vars: { '--bg': '#EDE3F5', '--surface': 'rgba(255,255,255,0.5)', '--ink': '#3A3145', '--ink-soft': '#756B85', '--ink-faint': '#A99FBB', '--track': 'rgba(255,255,255,0.35)', '--card-border': 'rgba(255,255,255,0.6)' }
   },
   glassDark: {
     label: '🌌 زجاجي داكن',
-    vars: { '--bg': '#15121C', '--surface': 'rgba(255,255,255,0.08)', '--ink': '#F0EBF2', '--ink-soft': '#C4BBD0', '--ink-faint': '#8A8095', '--track': 'rgba(255,255,255,0.14)' }
+    vars: { '--bg': '#15121C', '--surface': 'rgba(255,255,255,0.08)', '--ink': '#F5F1F7', '--ink-soft': '#C4BBD0', '--ink-faint': '#8A8095', '--track': 'rgba(255,255,255,0.14)', '--card-border': 'rgba(255,255,255,0.16)' }
   }
 };
 const DEFAULT_ACCENT = '#E88FAE'; // the original --pink-deep
@@ -133,8 +133,11 @@ function renderThemeSection(currentMode, currentAccent, accentHistory) {
   return `
     <div class="card settings-card">
       <h2 class="card-title">المظهر</h2>
-      <label class="field-label">لون التمييز (اضغطي لتغييره)</label>
-      <input type="color" id="theme-accent-input" value="${currentAccent || DEFAULT_ACCENT}" class="theme-color-input">
+      <label class="field-label">لون التمييز</label>
+      <div class="theme-accent-row">
+        <input type="color" id="theme-accent-input" value="${currentAccent || DEFAULT_ACCENT}" class="theme-color-input">
+        <input type="text" id="theme-accent-hex-input" class="text-input theme-hex-input" value="${currentAccent || DEFAULT_ACCENT}" placeholder="#E88FAE" maxlength="7">
+      </div>
       ${history.length ? `
         <div class="theme-history-row" id="theme-history-row">
           ${history.map(c => `<button class="theme-history-swatch" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join('')}
@@ -151,11 +154,13 @@ function renderThemeSection(currentMode, currentAccent, accentHistory) {
           <button class="btn btn-primary btn-sm theme-preview-btn">زر رئيسي</button>
         </div>
       </div>
+      <button class="link-btn" id="theme-restore-default">استعادة المظهر الافتراضي</button>
     </div>`;
 }
 
 function wireThemeSection(view) {
   const accentInput = document.getElementById('theme-accent-input');
+  const hexInput = document.getElementById('theme-accent-hex-input');
   const modeChips = document.getElementById('theme-mode-chips');
   let selectedMode = modeChips.querySelector('.chip.active')?.dataset.mode || 'light';
 
@@ -173,7 +178,13 @@ function wireThemeSection(view) {
     if (newAccent) renderSettingsPage([], view); // refresh so the history row reflects the new state
   }
 
-  accentInput.addEventListener('change', () => saveAndApply(accentInput.value));
+  accentInput.addEventListener('change', () => { hexInput.value = accentInput.value; saveAndApply(accentInput.value); });
+  hexInput.addEventListener('change', () => {
+    const val = hexInput.value.trim();
+    if (!/^#[0-9a-fA-F]{6}$/.test(val)) { hexInput.value = accentInput.value; return; }
+    accentInput.value = val;
+    saveAndApply(val);
+  });
   const historyRow = document.getElementById('theme-history-row');
   if (historyRow) historyRow.querySelectorAll('.theme-history-swatch').forEach(sw => {
     sw.addEventListener('click', () => saveAndApply(sw.dataset.color));
@@ -184,5 +195,12 @@ function wireThemeSection(view) {
       modeChips.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c === chip));
       saveAndApply();
     });
+  });
+  document.getElementById('theme-restore-default').addEventListener('click', async () => {
+    if (!confirm('استعادة المظهر الافتراضي (فاتح، اللون الوردي الأصلي)؟')) return;
+    selectedMode = 'light';
+    await db.settings.update(1, { themeMode: 'light', accentColor: DEFAULT_ACCENT });
+    applyTheme('light', DEFAULT_ACCENT);
+    renderSettingsPage([], view);
   });
 }

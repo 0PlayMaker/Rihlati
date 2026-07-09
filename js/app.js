@@ -27,6 +27,8 @@ async function renderHome(params, view, renderToken) {
   const economyBalance = await getEconomyBalance();
   const currency = await getCurrencyLabel();
   const activeGoals = await getActiveGoals();
+  const studyCourseCount = (await getActiveCourses()).length;
+  const studyOpenTodoCount = (await getAllOpenCourseTodosWithCourse()).length;
   const last7DaysMood = await getLast7DaysMood();
   const [goodStreak, badStreak] = await Promise.all([getTopHabitStreak('good'), getTopHabitStreak('bad')]);
 
@@ -151,6 +153,14 @@ async function renderHome(params, view, renderToken) {
       <div id="home-goals-preview"></div>
     </section>
 
+    <section class="card">
+      <div class="section-header">
+        <h2 class="card-title">🎓 التعلم</h2>
+        <a class="see-all-link" href="#/study">عرض الكل ←</a>
+      </div>
+      <p class="mini-progress-text">${studyGlanceText(studyCourseCount, studyOpenTodoCount)}</p>
+    </section>
+
     <button class="btn btn-secondary btn-block yearly-overview-btn" id="yearly-overview-btn">📊 نظرة على عامك</button>
 
     <p class="app-footer">🌸 رحلتي — نسخة محلية بالكامل، بياناتك لا تغادر هذا الجهاز</p>
@@ -205,6 +215,7 @@ function registerAllDayProviders() {
   registerDayProvider(exercisesDayProvider);
   registerDayProvider(transactionsDayProvider);
   registerDayProvider(wirdDayProvider);
+  registerDayProvider(courseTodosDayProvider);
 }
 
 function registerAllActivityProviders() {
@@ -218,6 +229,7 @@ function registerAllActivityProviders() {
   registerActivityProvider(async () => (await db.customAdhkarLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.standaloneSunnahLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.wirdLogs.toArray()).map(l => l.date));
+  registerActivityProvider(async () => (await db.courseTodos.toArray()).filter(t => t.dueDate).map(t => t.dueDate));
   registerActivityProvider(async () => (await db.moodLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.foodLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.waterLogs.toArray()).filter(w => w.liters > 0).map(w => w.date));
@@ -255,6 +267,7 @@ function registerAllYearlyStatsProviders() {
   registerYearlyStatsProvider(economyYearlyProvider);
   registerYearlyStatsProvider(trainingYearlyProvider);
   registerYearlyStatsProvider(wirdYearlyProvider);
+  registerYearlyStatsProvider(studyYearlyProvider);
 }
 
 async function renderBottomBar() {
@@ -309,6 +322,8 @@ function startApp(profile, settings) {
   route('/things-wishlist', renderThingsWishlistPage);
   route('/recipes', renderRecipesPage);
   route('/training', renderTrainingPage);
+  route('/study', renderStudyPage);
+  route('/course', renderCoursePage);
   route('/yearly', renderYearlyOverviewPage);
   route('/settings', renderSettingsPage);
 
