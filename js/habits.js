@@ -45,19 +45,9 @@ async function getHabitStatus(habitId, date) {
 }
 async function setHabitStatus(habitId, date, status) {
   await upsertLog(db.habitLogs, 'habitId', habitId, date, { status });
-  if (status === 'missed' && date === todayStr()) {
-    // A precise "right now" timestamp for the clock to use instead of
-    // approximating from the date alone — without this, tapping the
-    // mishap button at, say, 3pm would show the clock jump to "3 hours"
-    // immediately (measuring from midnight) instead of reading ~0.
-    await db.habits.update(habitId, { lastMishapAt: Date.now() });
-  }
 }
 async function clearHabitStatus(habitId, date) {
   await deleteLog(db.habitLogs, 'habitId', habitId, date);
-  if (date === todayStr()) {
-    await db.habits.update(habitId, { lastMishapAt: null });
-  }
 }
 async function getHabitDoneDates(habitId) {
   const logs = await db.habitLogs.where('habitId').equals(habitId).toArray();
@@ -67,77 +57,75 @@ async function getHabitMissedDates(habitId) {
   const logs = await db.habitLogs.where('habitId').equals(habitId).toArray();
   return logs.filter(l => l.status === 'missed').map(l => l.date);
 }
+
+// ---------- live events: مشکلة (زلة) vs انتكاسة (relapse) ----------
+// Mishaps are tracked but don't touch the clock — only a relapse
+// resets it. Both are a real append-only log (not a day-unique flag),
+// so multiple mishaps in one day each count toward the yearly total
+// rather than collapsing into a single day-level marker.
+
+async function logHabitMishap(habitId) {
+  await db.habitEvents.add({ habitId, type: 'mishap', timestamp: Date.now(), date: todayStr() });
+}
+async function logHabitRelapse(habitId) {
+  await db.habitEvents.add({ habitId, type: 'relapse', timestamp: Date.now(), date: todayStr() });
+}
+async function undoLastHabitEvent(habitId) {
+  const events = (await db.habitEvents.where('habitId').equals(habitId).toArray()).sort((a, b) => b.timestamp - a.timestamp);
+  if (events.length > 0) await db.habitEvents.delete(events[0].id);
+}
+async function getHabitEvents(habitId) {
+  return db.habitEvents.where('habitId').equals(habitId).toArray();
+}
+async function getHabitEventCounts(habitId) {
+  const events = await getHabitEvents(habitId);
+  return {
+    mishaps: events.filter(e => e.type === 'mishap').length,
+    relapses: events.filter(e => e.type === 'relapse').length
+  };
+}
 // Every day since creation counts as a success automatically — she no
-// longer has to tap "done" daily for it to count. Only an explicit
-// mishap breaks the streak. The streak here is derived from the EXACT
-// SAME reference point the live clock uses (getHabitClockReferenceMs),
-// including manual resets — these two numbers showing different things
-// (clock at 0, streak still at the old value after a manual reset) is
-// what read as "the timer doesn't reset properly."
+// longer has to tap "done" daily for it to count. Only a relapse
+// breaks the streak (a mishap alone does not). Streak is derived from
+// the exact same reference the live clock uses, so they can never
+// disagree.
 async function getHabitStats(habitId) {
   const habit = await db.habits.get(habitId);
-  const missedDates = await getHabitMissedDates(habitId);
-  const today = todayStr();
-  const created = new Date(habit.createdAt).toISOString().slice(0, 10);
-  const totalDays = daysBetween(created, today) + 1;
-  const failed = missedDates.length;
-  const succeeded = Math.max(0, totalDays - failed);
   const refMs = await getHabitClockReferenceMs(habit);
   const streak = Math.floor((Date.now() - refMs) / 86400000);
-  return { streak, succeeded, failed };
+  const counts = await getHabitEventCounts(habitId);
+  return { streak, mishaps: counts.mishaps, relapses: counts.relapses };
 }
 
-// Habit-specific stats line — no ✅ segment, since "succeeded" is
-// redundant with the automatic timer now (every day counts unless
-// explicitly broken). Labeled explicitly rather than a bare 🔥 number.
+// 💔 for mishaps (logged but doesn't break the streak), ⛔ for
+// relapses (the ones that actually reset the clock).
 function habitStatsLine(stats) {
-  return `🔥 أيام على التوالي: ${stats.streak}&nbsp;&nbsp;·&nbsp;&nbsp;💔${stats.failed}`;
+  return `🔥 أيام على التوالي: ${stats.streak}&nbsp;&nbsp;·&nbsp;&nbsp;💔${stats.mishaps}&nbsp;&nbsp;·&nbsp;&nbsp;⛔${stats.relapses}`;
 }
 
 async function getHabitLongestStreakMs(habit) {
-  const missedDates = [...(await getHabitMissedDates(habit.id))].sort();
-  const created = new Date(habit.createdAt).toISOString().slice(0, 10);
+  const relapses = (await getHabitEvents(habit.id)).filter(e => e.type === 'relapse').sort((a, b) => a.timestamp - b.timestamp);
   let maxMs = 0;
-  let segmentStart = created;
-  for (const missed of missedDates) {
-    const segmentMs = daysBetween(segmentStart, missed) * 24 * 60 * 60 * 1000;
+  let segmentStart = habit.createdAt;
+  for (const r of relapses) {
+    const segmentMs = r.timestamp - segmentStart;
     if (segmentMs > maxMs) maxMs = segmentMs;
-    segmentStart = addDays(missed, 1);
+    segmentStart = r.timestamp;
   }
-  // The final, still-ongoing segment reuses the live clock's precise
-  // reference (including any manual reset) — history only gives
-  // whole-day precision for past, completed segments, but the current
-  // one can be exact.
   const liveRefMs = await getHabitClockReferenceMs(habit);
   const ongoingMs = Date.now() - liveRefMs;
   if (ongoingMs > maxMs) maxMs = ongoingMs;
   return maxMs;
 }
 
-// ---------- live clock: time since creation or last mishap ----------
-// Derived from the SAME habitLogs data the streak system already
-// reads — no separate precise-timestamp field to drift out of sync.
-// A slip logged for a past day counts clean time from the start of the
-// day after it; a slip logged for TODAY counts from the start of today
-// itself (not "tomorrow," which would show a nonsensical negative
-// countup) — so right after logging a same-day slip the clock reads a
-// small number of hours rather than exactly zero. `manualResetAt` is a
-// deliberate small exception: "restart my counter" without it being a
-// logged failure, for when she just wants a fresh start.
+// ---------- live clock: time since creation or last relapse ----------
+// Only relapse events move this — a plain mishap (زلة / فاتني اليوم) is
+// logged and counted but deliberately leaves the clock running.
+// manualResetAt is the "restart without it being a relapse" exception
+// (the ⋮ menu's "إعادة تعيين العداد").
 async function getHabitClockReferenceMs(habit) {
-  const missedDates = await getHabitMissedDates(habit.id);
-  let ref = habit.createdAt;
-  if (missedDates.length > 0) {
-    const mostRecent = [...missedDates].sort().reverse()[0];
-    if (mostRecent === todayStr() && habit.lastMishapAt) {
-      // Today's mishap has a precise moment recorded — use it directly
-      // instead of the day-boundary approximation.
-      ref = habit.lastMishapAt;
-    } else {
-      const missedDayStart = new Date(mostRecent + 'T00:00:00').getTime();
-      ref = mostRecent < todayStr() ? missedDayStart + 24 * 60 * 60 * 1000 : missedDayStart;
-    }
-  }
+  const relapses = (await getHabitEvents(habit.id)).filter(e => e.type === 'relapse').sort((a, b) => b.timestamp - a.timestamp);
+  let ref = relapses.length > 0 ? relapses[0].timestamp : habit.createdAt;
   if (habit.manualResetAt && habit.manualResetAt > ref) ref = habit.manualResetAt;
   return ref;
 }
@@ -254,9 +242,8 @@ async function renderHabitRowsInto(container, habits, dateStr, { editable, onCha
 // log today as a slip, or undo it if she tapped by mistake. No daily
 // done-tap anywhere in this flow.
 
-function habitCardHtml(habit, todayStatus, stats, refMs) {
+function habitCardHtml(habit, stats, refMs) {
   const isBad = getHabitType(habit) === 'bad';
-  const missedToday = todayStatus === 'missed';
   const mishapLabel = isBad ? '⚠️ حدثت زلة' : '❌ فاتني اليوم';
   return `
     <div class="habit-card" data-row-id="${habit.id}">
@@ -265,6 +252,7 @@ function habitCardHtml(habit, todayStatus, stats, refMs) {
         <span class="habit-card-name">${escapeHtml(habit.name)}</span>
         ${kebabMenuHtml(String(habit.id), [
           { key: 'edit', label: 'تعديل' },
+          { key: 'undo', label: 'التراجع عن آخر حدث' },
           { key: 'reset-clock', label: 'إعادة تعيين العداد' },
           { key: 'delete', label: 'حذف', danger: true }
         ])}
@@ -274,9 +262,10 @@ function habitCardHtml(habit, todayStatus, stats, refMs) {
         <span class="habit-clock" data-ref-ms="${refMs}">${formatHabitClock(Date.now() - refMs)}</span>
       </div>
       <p class="habit-card-stats">${habitStatsLine(stats)}</p>
-      ${missedToday
-        ? `<button class="btn btn-text btn-block" data-habit-undo="${habit.id}">↩️ تراجع عن زلة اليوم</button>`
-        : `<button class="btn btn-secondary btn-block habit-mishap-btn" data-habit-mishap="${habit.id}">${mishapLabel}</button>`}
+      <div class="habit-card-actions">
+        <button class="btn btn-secondary habit-mishap-btn" data-habit-mishap="${habit.id}">${mishapLabel}</button>
+        <button class="btn btn-danger habit-relapse-btn" data-habit-relapse="${habit.id}">⛔ انتكاسة: تصفير</button>
+      </div>
     </div>`;
 }
 
@@ -285,12 +274,10 @@ async function renderHabitCards(container, habits, { onChange, emptyText } = {})
     container.innerHTML = emptyText ? `<p class="empty-state-sub">${emptyText}</p>` : '';
     return;
   }
-  const today = todayStr();
   const rows = await Promise.all(habits.map(async h => {
-    const status = await getHabitStatus(h.id, today);
     const stats = await getHabitStats(h.id);
     const refMs = await getHabitClockReferenceMs(h);
-    return habitCardHtml(h, status, stats, refMs);
+    return habitCardHtml(h, stats, refMs);
   }));
   container.innerHTML = rows.join('');
 
@@ -301,23 +288,29 @@ async function renderHabitCards(container, habits, { onChange, emptyText } = {})
 
   container.querySelectorAll('[data-habit-mishap]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      await setHabitStatus(Number(btn.dataset.habitMishap), today, 'missed');
+      // Logged and counted, but deliberately does NOT touch the clock.
+      await logHabitMishap(Number(btn.dataset.habitMishap));
       await refresh();
     });
   });
-  container.querySelectorAll('[data-habit-undo]').forEach(btn => {
+  container.querySelectorAll('[data-habit-relapse]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      await clearHabitStatus(Number(btn.dataset.habitUndo), today);
-      await refresh();
+      const habitId = Number(btn.dataset.habitRelapse);
+      if (!confirm('تسجيل انتكاسة؟ سيبدأ العدّاد من جديد.')) return;
+      await logHabitRelapse(habitId);
+      await refresh(); // re-renders in place — new reference, new clock, no page reload needed
     });
   });
   wireKebabMenus(container, async (rowId, action) => {
     const habitId = Number(rowId);
     if (action === 'edit') {
       openHabitModal({ existingId: habitId, onSaved: refresh });
+    } else if (action === 'undo') {
+      await undoLastHabitEvent(habitId);
+      await refresh();
     } else if (action === 'reset-clock') {
       const habit = habits.find(h => h.id === habitId);
-      if (!confirm(`إعادة تعيين عداد "${habit.name}"؟ هذا لا يسجّل زلة، فقط يبدأ العدّ من الآن.`)) return;
+      if (!confirm(`إعادة تعيين عداد "${habit.name}"؟ هذا لا يسجّل انتكاسة، فقط يبدأ العدّ من الآن.`)) return;
       await resetHabitClock(habitId);
       await refresh();
     } else if (action === 'delete') {
@@ -495,7 +488,13 @@ async function habitsYearlyProvider(year) {
       const daysInRange = daysBetween(rangeStart, rangeEnd) + 1;
       const done = Math.max(0, daysInRange - missed);
       total += done;
-      return done + missed > 0 ? `<div class="yearly-row"><span>${h.emoji} ${escapeHtml(h.name)}</span><span>${done} ❤️ · ${missed} 💔</span></div>` : '';
+
+      const events = (await getHabitEvents(h.id)).filter(e => e.date.startsWith(prefix));
+      const mishaps = events.filter(e => e.type === 'mishap').length;
+      const relapses = events.filter(e => e.type === 'relapse').length;
+      const eventsLine = (mishaps + relapses) > 0 ? ` · 💔${mishaps} · ⛔${relapses}` : '';
+
+      return done + missed + mishaps + relapses > 0 ? `<div class="yearly-row"><span>${h.emoji} ${escapeHtml(h.name)}</span><span>${done} ❤️${eventsLine}</span></div>` : '';
     }));
     return { html: rows.join(''), total };
   }

@@ -101,7 +101,7 @@ function openWeightModal(onSaved) {
   document.body.appendChild(overlay);
   document.getElementById('weight-cancel').addEventListener('click', () => overlay.remove());
   document.getElementById('weight-save').addEventListener('click', async () => {
-    const v = parseFloat(document.getElementById('weight-input').value);
+    const v = parseFloat(normalizeArabicNumerals(document.getElementById('weight-input').value));
     if (Number.isNaN(v) || v <= 0) return;
     await setWeight(todayStr(), v);
     overlay.remove();
@@ -139,7 +139,7 @@ async function openWeightModalForDate(dateStr, onSaved) {
     if (onSaved) onSaved();
   });
   document.getElementById('weight-save-d').addEventListener('click', async () => {
-    const v = parseFloat(document.getElementById('weight-input-d').value);
+    const v = parseFloat(normalizeArabicNumerals(document.getElementById('weight-input-d').value));
     if (Number.isNaN(v) || v <= 0) return;
     await setWeight(dateStr, v);
     overlay.remove();
@@ -198,6 +198,12 @@ async function createMeasurement(name) {
   const all = await db.bodyMeasurements.toArray();
   await db.bodyMeasurements.add({ name, archived: false, order: all.length, createdAt: Date.now() });
 }
+async function updateMeasurementName(id, name) {
+  await db.bodyMeasurements.update(id, { name });
+}
+async function deleteMeasurement(id) {
+  await db.bodyMeasurements.update(id, { archived: true });
+}
 async function getActiveMeasurements() {
   const all = await db.bodyMeasurements.toArray();
   return all.filter(m => !m.archived).sort((a, b) => a.order - b.order);
@@ -224,6 +230,10 @@ async function renderMeasurementsList(container) {
         <span class="adhkar-name">${escapeHtml(m.name)}</span>
         <div class="adhkar-counter-controls">
           <button class="adhkar-count-btn" data-action="edit">${latest ? latest.value + ' سم' : '—'}</button>
+          ${kebabMenuHtml(String(m.id), [
+            { key: 'rename', label: 'تعديل الاسم' },
+            { key: 'delete', label: 'حذف', danger: true }
+          ])}
         </div>
       </div>`;
   }));
@@ -234,12 +244,26 @@ async function renderMeasurementsList(container) {
       const latest = await getMeasurementLatest(id);
       const input = prompt('القيمة بالسنتيمتر:', latest ? String(latest.value) : '');
       if (input === null || input === '') return;
-      const n = parseFloat(input);
+      const n = parseFloat(normalizeArabicNumerals(input));
       if (!Number.isNaN(n) && n > 0) {
         await setMeasurementValue(id, todayStr(), n);
         await renderMeasurementsList(container);
       }
     });
+  });
+  wireKebabMenus(container, async (rowId, action) => {
+    const id = Number(rowId);
+    if (action === 'rename') {
+      const item = items.find(m => m.id === id);
+      const name = prompt('اسم القياس:', item.name);
+      if (!name || !name.trim()) return;
+      await updateMeasurementName(id, name.trim());
+      await renderMeasurementsList(container);
+    } else if (action === 'delete') {
+      if (!confirm('حذف هذا القياس؟ سجل القياسات السابقة يبقى محفوظاً.')) return;
+      await deleteMeasurement(id);
+      await renderMeasurementsList(container);
+    }
   });
 }
 
@@ -283,6 +307,7 @@ async function renderBodyPage(params, view) {
       </div>
       <p class="settings-note">تمارينك اليومية، بعداد مجموعات، تكرار، ومؤقّت.</p>
     </div>
+    <div class="card" id="daily-care-card"></div>
     <div class="card" id="weight-glance-card"></div>
     <div class="card">
       <h2 class="card-title">الرسم البياني</h2>
@@ -384,9 +409,10 @@ async function renderBodyPage(params, view) {
 
   document.getElementById('weight-add-btn').addEventListener('click', () => openWeightModal(refreshWeight));
   await renderSleepSummaryCard(document.getElementById('body-sleep-summary'));
+  await renderDailyCareCard(document.getElementById('daily-care-card'));
   document.getElementById('save-target-btn').addEventListener('click', async () => {
     const raw = document.getElementById('target-weight-input').value;
-    const v = raw === '' ? null : parseFloat(raw);
+    const v = raw === '' ? null : parseFloat(normalizeArabicNumerals(raw));
     await db.settings.update(1, { targetWeightKg: (v != null && !Number.isNaN(v)) ? v : null });
     toast('تم حفظ الهدف');
     refreshWeight();

@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v37 · ٩ يوليو ٢٠٢٦';
+const APP_VERSION = 'v39 · ٩ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -263,6 +263,31 @@ db.version(15).stores({
   qadaFasting: '++id'
 });
 
+// ---------- Phase 16 — habit events (زلة vs انتكاسة) ----------
+// A real append-only event log, not a day-unique flag — she can log
+// more than one mishap in a day and each counts, which the old
+// one-status-per-day habitLogs row couldn't represent. Two event
+// types share one table since they're the same shape, just filtered
+// differently: 'mishap' (حدثت زلة / فاتني اليوم) only increments a
+// counter; 'relapse' (انتكاسة) does that AND is what the live clock's
+// reference point is now computed from — every event has a precise
+// timestamp, so the clock no longer needs the old day-boundary
+// approximation for "today" at all.
+db.version(16).stores({
+  habitEvents: '++id, habitId'
+});
+
+// ---------- Phase 17 — العناية اليومية (daily care routines) ----------
+// Each routine item is its own thing to check off daily (and its own
+// streak), grouped under 'morning' or 'evening' — a level more
+// detailed than dailyAdhkarItems, which only tracks one combined
+// done/not-done per time-of-day rather than per item.
+db.version(17).stores({
+  dailyCareRoutines: '++id, kind',
+  dailyCareRoutinePhotos: 'routineId',
+  dailyCareLogs: '++id, &[routineId+date], routineId'
+});
+
 // ---------- date helpers (used everywhere) ----------
 
 function todayStr(d = new Date()) {
@@ -277,6 +302,15 @@ function addDays(dateStr, delta) {
   const dt = new Date(y, m - 1, d);
   dt.setDate(dt.getDate() + delta);
   return todayStr(dt);
+}
+
+// parseFloat/parseInt only understand Western digits (0-9) — typing
+// Arabic-Indic numerals (١٢٣) into any numeric field would silently
+// parse as NaN without this first.
+function normalizeArabicNumerals(str) {
+  if (!str) return str;
+  const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
+  return String(str).replace(/[٠-٩]/g, d => arabicDigits.indexOf(d));
 }
 
 function daysBetween(dateStrA, dateStrB) {

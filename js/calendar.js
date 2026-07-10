@@ -167,7 +167,7 @@ async function renderYearlyOverviewPage(params, view) {
   // Grouped by category so related sections land next to each other,
   // rather than in whatever order their providers happened to register.
   const YEARLY_CATEGORY_ORDER = [
-    'الوزن', 'النوم', 'التمارين', 'الطعام والماء', 'المزاج', 'الدورة الشهرية',
+    'الوزن', 'النوم', 'العناية اليومية', 'التمارين', 'الطعام والماء', 'المزاج', 'الدورة الشهرية',
     'العبادة', 'ورد القرآن', 'القضاء (الحالة الحالية)',
     'العادات', 'المهام اليومية', 'قائمة المهام', 'الأهداف (الحالة الحالية)', 'التعلم',
     'يومياتي', 'الاقتصاد'

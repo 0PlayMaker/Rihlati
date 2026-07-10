@@ -786,6 +786,8 @@ body.theme-glass-dark .kebab-item {
   padding: var(--space-2) 0; font-size: 13px; color: var(--ink-soft);
 }
 .habit-clock-icon { font-size: 13px; }
+.habit-card-actions { display: flex; gap: var(--space-2); }
+.habit-card-actions .btn { flex: 1; font-size: 12px; padding: var(--space-2); }
 .habit-clock { font-weight: 700; color: var(--pink-deep); }
 
 /* ============================================================
@@ -795,6 +797,8 @@ body.theme-glass-dark .kebab-item {
 .course-todo-source { font-size: 12px; color: var(--ink-faint); }
 .row-actions-wrap { flex-shrink: 0; }
 .material-card { margin-bottom: var(--space-3); }
+.care-routine-card { padding-bottom: var(--space-2); }
+.care-routine-photo, .care-routine-video { margin-top: var(--space-2); }
 .material-type-label { font-size: 13px; font-weight: 700; color: var(--ink-soft); }
 
 /* ============================================================

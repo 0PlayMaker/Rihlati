@@ -288,6 +288,7 @@ function registerAllDayProviders() {
   registerDayProvider(wirdDayProvider);
   registerDayProvider(courseTodosDayProvider);
   registerDayProvider(sleepDayProvider);
+  registerDayProvider(dailyCareDayProvider);
 }
 
 function registerAllActivityProviders() {
@@ -303,6 +304,7 @@ function registerAllActivityProviders() {
   registerActivityProvider(async () => (await db.wirdLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.courseTodos.toArray()).filter(t => t.dueDate).map(t => t.dueDate));
   registerActivityProvider(async () => (await db.sleepLogs.toArray()).map(l => l.date));
+  registerActivityProvider(async () => (await db.dailyCareLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.moodLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.foodLogs.toArray()).map(l => l.date));
   registerActivityProvider(async () => (await db.waterLogs.toArray()).filter(w => w.liters > 0).map(w => w.date));
@@ -343,6 +345,7 @@ function registerAllYearlyStatsProviders() {
   registerYearlyStatsProvider(studyYearlyProvider);
   registerYearlyStatsProvider(sleepYearlyProvider);
   registerYearlyStatsProvider(qadaYearlyProvider);
+  registerYearlyStatsProvider(dailyCareYearlyProvider);
 }
 
 async function renderBottomBar() {
