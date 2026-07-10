@@ -19,11 +19,12 @@ async function getDiaryStreak() {
 async function getDiaryPhoto(entryId) {
   return db.diaryPhotos.get(entryId);
 }
-async function setDiaryEntry(date, text, photoBlob, removePhoto) {
+async function setDiaryEntry(date, { title, text, emoji, photoBlob, removePhoto, photoDisplayMode }) {
   const existing = await getDiaryEntry(date);
   let id;
-  if (existing) { await db.diaryEntries.update(existing.id, { text }); id = existing.id; }
-  else { id = await db.diaryEntries.add({ date, text, createdAt: Date.now() }); }
+  const fields = { title: title || '', text, emoji: emoji || '', photoDisplayMode: photoDisplayMode || 'thumb_and_detail' };
+  if (existing) { await db.diaryEntries.update(existing.id, fields); id = existing.id; }
+  else { id = await db.diaryEntries.add({ date, ...fields, createdAt: Date.now() }); }
   if (photoBlob) await db.diaryPhotos.put({ entryId: id, photoBlob });
   else if (removePhoto) await db.diaryPhotos.delete(id);
   return id;
@@ -69,10 +70,18 @@ async function openDiaryModal({ date, onSaved }) {
   overlay.innerHTML = `
     <div class="modal modal-lg">
       <h2 class="modal-title">${formatDateArabic(date, { weekday: false })}</h2>
+      <label class="field-label">عنوان (اختياري)</label>
+      <input class="text-input" id="diary-title-input" placeholder="مثلاً: يوم جميل" value="${escapeHtml(existing?.title || '')}">
+      <label class="field-label">رمز مصغّر (اختياري)</label>
+      <input class="text-input emoji-input" id="diary-emoji-input" placeholder="📔" maxlength="2" value="${existing?.emoji || ''}">
       <textarea class="mood-note-input diary-textarea" id="diary-text-input" placeholder="اكتبي يوميتك هنا...">${escapeHtml(existing?.text || '')}</textarea>
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="diary-photo-preview"></div>
       ${photoPickerHtml('diary-photo')}
+      <div class="habit-type-chips" id="diary-photo-mode-chips">
+        <button class="chip" data-mode="thumb_only">مصغرة فقط في القائمة</button>
+        <button class="chip active" data-mode="thumb_and_detail">مصغرة + داخل اليومية</button>
+      </div>
       <div class="modal-actions">
         ${existing ? `<button class="btn btn-danger btn-sm" id="diary-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="diary-cancel-btn">إلغاء</button>
@@ -80,6 +89,16 @@ async function openDiaryModal({ date, onSaved }) {
       </div>
     </div>`;
   document.body.appendChild(overlay);
+
+  overlay.querySelectorAll('#diary-photo-mode-chips .chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      overlay.querySelectorAll('#diary-photo-mode-chips .chip').forEach(c => c.classList.toggle('active', c === chip));
+    });
+  });
+  if (existing) {
+    const mode = existing.photoDisplayMode || 'thumb_and_detail';
+    overlay.querySelectorAll('#diary-photo-mode-chips .chip').forEach(c => c.classList.toggle('active', c.dataset.mode === mode));
+  }
 
   function renderPhotoArea() {
     const el = document.getElementById('diary-photo-preview');
@@ -110,7 +129,10 @@ async function openDiaryModal({ date, onSaved }) {
   document.getElementById('diary-save-btn').addEventListener('click', async () => {
     const text = document.getElementById('diary-text-input').value.trim();
     if (!text && !pendingPhotoBlob && !existingPhotoUrl) { alert('اكتبي شيئاً أو أضيفي صورة'); return; }
-    await setDiaryEntry(date, text, pendingPhotoBlob, removePhotoFlag);
+    const title = document.getElementById('diary-title-input').value.trim();
+    const emoji = document.getElementById('diary-emoji-input').value.trim();
+    const photoDisplayMode = overlay.querySelector('#diary-photo-mode-chips .chip.active')?.dataset.mode || 'thumb_and_detail';
+    await setDiaryEntry(date, { title, text, emoji, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag, photoDisplayMode });
     overlay.remove();
     if (onSaved) onSaved();
   });
@@ -166,16 +188,21 @@ async function renderDiaryPage(params, view) {
         const photoRow = await getDiaryPhoto(e.id);
         const photoUrl = photoRow ? trackDiaryPhotoUrl(photoRow.photoBlob) : null;
         const isLong = e.text.length > 140;
+        const showFullPhoto = photoUrl && (e.photoDisplayMode || 'thumb_and_detail') === 'thumb_and_detail';
         return `
           <div class="card diary-entry-card" data-date="${e.date}">
             <div class="diary-entry-top">
-              <span class="diary-entry-date">${formatDateArabic(e.date, { weekday: true })}</span>
+              ${e.emoji ? `<span class="food-thumb food-thumb-placeholder diary-entry-thumb">${e.emoji}</span>` : (photoUrl ? `<img class="food-thumb diary-entry-thumb" src="${photoUrl}" alt="">` : '')}
+              <div class="diary-entry-top-text">
+                ${e.title ? `<span class="diary-entry-title">${escapeHtml(e.title)}</span>` : ''}
+                <span class="diary-entry-date">${formatDateArabic(e.date, { weekday: true })}</span>
+              </div>
               ${kebabMenuHtml(e.date, [
                 { key: 'edit', label: 'تعديل' },
                 { key: 'delete', label: 'حذف', danger: true }
               ])}
             </div>
-            ${photoUrl ? `<img class="diary-entry-photo" src="${photoUrl}" alt="">` : ''}
+            ${showFullPhoto ? `<img class="diary-entry-photo" src="${photoUrl}" alt="">` : ''}
             <p class="diary-entry-text ${isLong ? 'diary-entry-text-clamped' : ''}">${escapeHtml(e.text)}</p>
             ${isLong ? `<button class="link-btn diary-expand-btn" data-expand="${e.date}">عرض المزيد ↓</button>` : ''}
           </div>`;

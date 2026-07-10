@@ -280,7 +280,7 @@ async function renderSleepSummaryCard(container) {
     container.innerHTML = `
       <div class="section-header">
         <h2 class="card-title">😴 النوم</h2>
-        <a class="see-all-link" href="#/sleep">عرض الكل ←</a>
+        <a class="see-all-link" href="#/sleep">فتح ←</a>
       </div>
       <p class="mini-progress-text">سجّلي أول نومة لتبدأ التتبّع</p>`;
     return;
@@ -289,7 +289,7 @@ async function renderSleepSummaryCard(container) {
   container.innerHTML = `
     <div class="section-header">
       <h2 class="card-title">😴 النوم</h2>
-      <a class="see-all-link" href="#/sleep">عرض الكل ←</a>
+      <a class="see-all-link" href="#/sleep">فتح ←</a>
     </div>
     <p class="mini-progress-text">${last ? `آخر نومة: ${formatSleepDuration(last.durationMinutes)}` : 'سجّلي أول نومة لتبدأ التتبّع'}</p>`;
 }
