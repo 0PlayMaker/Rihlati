@@ -29,11 +29,11 @@ const THEME_MODES = {
   },
   glass: {
     label: '🔮 زجاجي',
-    // Modal bg deliberately more opaque than --surface — the same 50%
-    // white that works fine for cards read as "grayish" for a full
-    // popup, since more of the blurred, colorful backdrop bleeds
-    // through at that opacity over a larger area.
-    vars: { '--bg': '#EDE3F5', '--surface': 'rgba(255,255,255,0.5)', '--ink': '#3A3145', '--ink-soft': '#756B85', '--ink-faint': '#A99FBB', '--track': 'rgba(255,255,255,0.35)', '--card-border': 'rgba(255,255,255,0.6)', '--modal-bg': 'rgba(255,255,255,0.85)' }
+    // More transparent than the first pass at this — closer to the
+    // glass quality the bottom bar already has, while staying light
+    // rather than gray (a plain white surface behind the blur, not the
+    // colorful backdrop showing through unfiltered).
+    vars: { '--bg': '#EDE3F5', '--surface': 'rgba(255,255,255,0.5)', '--ink': '#3A3145', '--ink-soft': '#756B85', '--ink-faint': '#A99FBB', '--track': 'rgba(255,255,255,0.35)', '--card-border': 'rgba(255,255,255,0.6)', '--modal-bg': 'rgba(255,255,255,0.7)' }
   },
   glassDark: {
     label: '🌌 زجاجي داكن',
@@ -86,6 +86,57 @@ function hslToRgb(h, s, l) {
   return { r: hue2rgb(h + 1 / 3) * 255, g: hue2rgb(h) * 255, b: hue2rgb(h - 1 / 3) * 255 };
 }
 
+// ---------- reusable HSL slider picker ----------
+// A native <input type="color"> already allows picking any color, but
+// the wheel/spectrum is hidden behind a tap and not very visible as a
+// concept — explicit H/S/L sliders make "any hue, any saturation, any
+// brightness" directly visible and adjustable in the page itself.
+
+function hslPickerHtml(idPrefix, currentHex) {
+  const rgb = hexToRgb(currentHex);
+  const { h, s, l } = rgbToHsl(rgb.r, rgb.g, rgb.b);
+  return `
+    <div class="hsl-picker" id="${idPrefix}-picker">
+      <div class="hsl-swatch" id="${idPrefix}-swatch" style="background:${currentHex}"></div>
+      <div class="hsl-sliders">
+        <label class="hsl-slider-row"><span>الصبغة</span><input type="range" min="0" max="360" value="${Math.round(h)}" id="${idPrefix}-hue" class="hsl-slider hsl-slider-hue"></label>
+        <label class="hsl-slider-row"><span>التشبّع</span><input type="range" min="0" max="100" value="${Math.round(s)}" id="${idPrefix}-sat" class="hsl-slider"></label>
+        <label class="hsl-slider-row"><span>السطوع</span><input type="range" min="0" max="100" value="${Math.round(l)}" id="${idPrefix}-light" class="hsl-slider"></label>
+      </div>
+      <input type="text" class="text-input theme-hex-input" id="${idPrefix}-hex" value="${currentHex}" maxlength="7">
+    </div>`;
+}
+
+function wireHslPicker(idPrefix, onChange) {
+  const hueInput = document.getElementById(`${idPrefix}-hue`);
+  const satInput = document.getElementById(`${idPrefix}-sat`);
+  const lightInput = document.getElementById(`${idPrefix}-light`);
+  const hexInput = document.getElementById(`${idPrefix}-hex`);
+  const swatch = document.getElementById(`${idPrefix}-swatch`);
+
+  function fromSliders() {
+    const rgb = hslToRgb(Number(hueInput.value), Number(satInput.value), Number(lightInput.value));
+    const hex = rgbToHex(rgb.r, rgb.g, rgb.b);
+    swatch.style.background = hex;
+    hexInput.value = hex;
+    return hex;
+  }
+  [hueInput, satInput, lightInput].forEach(input => {
+    input.addEventListener('input', () => onChange(fromSliders()));
+  });
+  hexInput.addEventListener('change', () => {
+    const val = hexInput.value.trim();
+    if (!/^#[0-9a-fA-F]{6}$/.test(val)) return;
+    const rgb = hexToRgb(val);
+    const { h, s, l } = rgbToHsl(rgb.r, rgb.g, rgb.b);
+    hueInput.value = Math.round(h);
+    satInput.value = Math.round(s);
+    lightInput.value = Math.round(l);
+    swatch.style.background = val;
+    onChange(val);
+  });
+}
+
 // A pastel "light" tint for chip/badge backgrounds, and a saturated
 // "deep" shade for buttons/active text/icons — same two-shade pattern
 // every existing color in the palette already follows.
@@ -108,7 +159,7 @@ function deriveAccentShades(hex) {
 
 // ---------- apply ----------
 
-function applyTheme(mode, accentHex, customBg, customModalBg) {
+function applyTheme(mode, accentHex, opts = {}) {
   const preset = THEME_MODES[mode] || THEME_MODES.light;
   const root = document.documentElement.style;
   Object.entries(preset.vars).forEach(([k, v]) => root.setProperty(k, v));
@@ -123,10 +174,23 @@ function applyTheme(mode, accentHex, customBg, customModalBg) {
 
   // Custom overrides layer on top of whatever the mode set — a plain
   // hex from her own picker, not derived/tinted like the accent, since
-  // background/modal colors don't need light+deep variants the way a
-  // single accent choice does.
-  if (customBg) root.setProperty('--bg', customBg);
-  if (customModalBg) root.setProperty('--modal-bg', customModalBg);
+  // these don't need light+deep variants the way a single accent
+  // choice does.
+  if (opts.bg) root.setProperty('--bg', opts.bg);
+  if (opts.modalBg) root.setProperty('--modal-bg', opts.modalBg);
+  if (opts.textColor) root.setProperty('--ink', opts.textColor);
+  if (opts.subtextColor) root.setProperty('--ink-soft', opts.subtextColor);
+  root.setProperty('--title-color', opts.titleColor || 'var(--ink)');
+
+  // Buttons default to the accent's deep shade (same as before this
+  // was customizable); capsules get their own color, defaulting to
+  // the same, with an rgb triplet for the glow.
+  const btnHex = opts.btnColor || deep;
+  root.setProperty('--btn-color', btnHex);
+  const capsuleHex = opts.capsuleColor || deep;
+  root.setProperty('--capsule-color', capsuleHex);
+  const cr = hexToRgb(capsuleHex);
+  root.setProperty('--capsule-color-rgb', `${cr.r}, ${cr.g}, ${cr.b}`);
 
   document.body.classList.toggle('theme-glass', mode === 'glass' || mode === 'glassDark');
   document.body.classList.toggle('theme-glass-dark', mode === 'glassDark');
@@ -135,13 +199,37 @@ function applyTheme(mode, accentHex, customBg, customModalBg) {
 
 async function applyStoredTheme() {
   const settings = await db.settings.get(1);
-  applyTheme(settings?.themeMode || 'light', settings?.accentColor || DEFAULT_ACCENT, settings?.customBgColor, settings?.customModalBgColor);
+  applyTheme(settings?.themeMode || 'light', settings?.accentColor || DEFAULT_ACCENT, {
+    bg: settings?.customBgColor,
+    modalBg: settings?.customModalBgColor,
+    btnColor: settings?.customBtnColor,
+    capsuleColor: settings?.customCapsuleColor,
+    titleColor: settings?.customTitleColor,
+    textColor: settings?.customTextColor,
+    subtextColor: settings?.customSubtextColor
+  });
 }
+
+// Everything except accent (which has history + derives light/deep
+// shades) follows this same shape: a plain color, defaulting to the
+// mode's own value unless she's overridden it, with a "use default"
+// clear button. Looping over this list is what keeps 7 near-identical
+// color pickers from being 7 copies of the same markup+wiring.
+const CUSTOM_COLOR_FIELDS = [
+  { key: 'bg', settingsKey: 'customBgColor', label: 'لون الخلفية', fallback: () => document.documentElement.style.getPropertyValue('--bg') || '#FFF9F5' },
+  { key: 'modalbg', settingsKey: 'customModalBgColor', label: 'لون النوافذ المنبثقة', fallback: () => document.documentElement.style.getPropertyValue('--modal-bg') || '#FFFFFF' },
+  { key: 'btn', settingsKey: 'customBtnColor', label: 'لون الأزرار', fallback: () => DEFAULT_ACCENT },
+  { key: 'capsule', settingsKey: 'customCapsuleColor', label: 'لون الكبسولات (مثل زر الهدف)', fallback: () => DEFAULT_ACCENT },
+  { key: 'title', settingsKey: 'customTitleColor', label: 'لون العناوين', fallback: () => '#4A4152' },
+  { key: 'text', settingsKey: 'customTextColor', label: 'لون النص', fallback: () => '#4A4152' },
+  { key: 'subtext', settingsKey: 'customSubtextColor', label: 'لون النص الفرعي', fallback: () => '#8B8394' }
+];
 
 // ---------- Settings UI ----------
 
-function renderThemeSection(currentMode, currentAccent, accentHistory, customBg, customModalBg) {
+function renderThemeSection(currentMode, currentAccent, accentHistory, customColors) {
   const history = (accentHistory || []).filter(c => c !== (currentAccent || DEFAULT_ACCENT));
+  const cc = customColors || {};
   return `
     <div class="card settings-card">
       <h2 class="card-title">المظهر</h2>
@@ -155,6 +243,7 @@ function renderThemeSection(currentMode, currentAccent, accentHistory, customBg,
         <div class="theme-preview-card">
           <span class="theme-preview-title">مثال</span>
           <button class="btn btn-primary btn-sm theme-preview-btn">زر رئيسي</button>
+          <button class="capsule-btn theme-preview-capsule">كبسولة</button>
         </div>
       </div>
 
@@ -162,26 +251,17 @@ function renderThemeSection(currentMode, currentAccent, accentHistory, customBg,
         <summary>تخصيص الألوان</summary>
 
         <label class="field-label">لون التمييز</label>
-        <div class="theme-accent-row">
-          <input type="color" id="theme-accent-input" value="${currentAccent || DEFAULT_ACCENT}" class="theme-color-input">
-          <input type="text" id="theme-accent-hex-input" class="text-input theme-hex-input" value="${currentAccent || DEFAULT_ACCENT}" placeholder="#E88FAE" maxlength="7">
-        </div>
+        ${hslPickerHtml('theme-accent', currentAccent || DEFAULT_ACCENT)}
         ${history.length ? `
           <div class="theme-history-row" id="theme-history-row">
             ${history.map(c => `<button class="theme-history-swatch" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join('')}
           </div>` : ''}
 
-        <label class="field-label">لون الخلفية (اختياري)</label>
-        <div class="theme-accent-row">
-          <input type="color" id="theme-bg-input" value="${customBg || '#FFF9F5'}" class="theme-color-input">
-          <button class="btn btn-text btn-sm" id="theme-bg-clear">استخدام لون الوضع الافتراضي</button>
-        </div>
-
-        <label class="field-label">لون النوافذ المنبثقة (اختياري)</label>
-        <div class="theme-accent-row">
-          <input type="color" id="theme-modalbg-input" value="${customModalBg || '#FFFFFF'}" class="theme-color-input">
-          <button class="btn btn-text btn-sm" id="theme-modalbg-clear">استخدام لون الوضع الافتراضي</button>
-        </div>
+        ${CUSTOM_COLOR_FIELDS.map(f => `
+          <label class="field-label">${f.label} (اختياري)</label>
+          ${hslPickerHtml(`theme-${f.key}`, cc[f.settingsKey] || f.fallback())}
+          <button class="btn btn-text btn-sm theme-clear-btn" data-clear="${f.settingsKey}">استخدام اللون الافتراضي</button>
+        `).join('')}
 
         <button class="link-btn" id="theme-restore-default">استعادة المظهر الافتراضي بالكامل</button>
       </details>
@@ -189,10 +269,6 @@ function renderThemeSection(currentMode, currentAccent, accentHistory, customBg,
 }
 
 function wireThemeSection(view) {
-  const accentInput = document.getElementById('theme-accent-input');
-  const hexInput = document.getElementById('theme-accent-hex-input');
-  const bgInput = document.getElementById('theme-bg-input');
-  const modalBgInput = document.getElementById('theme-modalbg-input');
   const modeChips = document.getElementById('theme-mode-chips');
   let selectedMode = modeChips.querySelector('.chip.active')?.dataset.mode || 'light';
 
@@ -204,25 +280,20 @@ function wireThemeSection(view) {
     if (newAccent && newAccent !== prevAccent && !history.includes(prevAccent)) {
       history = [prevAccent, ...history].slice(0, 6);
     }
-    const toSave = {
-      themeMode: selectedMode,
-      accentColor: newAccent || prevAccent,
-      accentColorHistory: history,
-      customBgColor: 'customBgColor' in overrides ? overrides.customBgColor : settings?.customBgColor,
-      customModalBgColor: 'customModalBgColor' in overrides ? overrides.customModalBgColor : settings?.customModalBgColor
-    };
+    const toSave = { themeMode: selectedMode, accentColor: newAccent || prevAccent, accentColorHistory: history };
+    CUSTOM_COLOR_FIELDS.forEach(f => {
+      toSave[f.settingsKey] = f.settingsKey in overrides ? overrides[f.settingsKey] : settings?.[f.settingsKey];
+    });
     await db.settings.update(1, toSave);
-    applyTheme(selectedMode, toSave.accentColor, toSave.customBgColor, toSave.customModalBgColor);
+    applyTheme(selectedMode, toSave.accentColor, {
+      bg: toSave.customBgColor, modalBg: toSave.customModalBgColor, btnColor: toSave.customBtnColor,
+      capsuleColor: toSave.customCapsuleColor, titleColor: toSave.customTitleColor,
+      textColor: toSave.customTextColor, subtextColor: toSave.customSubtextColor
+    });
     if (newAccent) renderSettingsPage([], view); // refresh so the history row reflects the new state
   }
 
-  accentInput.addEventListener('change', () => { hexInput.value = accentInput.value; saveAndApply({ accentColor: accentInput.value }); });
-  hexInput.addEventListener('change', () => {
-    const val = hexInput.value.trim();
-    if (!/^#[0-9a-fA-F]{6}$/.test(val)) { hexInput.value = accentInput.value; return; }
-    accentInput.value = val;
-    saveAndApply({ accentColor: val });
-  });
+  wireHslPicker('theme-accent', (hex) => saveAndApply({ accentColor: hex }));
   const historyRow = document.getElementById('theme-history-row');
   if (historyRow) historyRow.querySelectorAll('.theme-history-swatch').forEach(sw => {
     sw.addEventListener('click', () => saveAndApply({ accentColor: sw.dataset.color }));
@@ -234,16 +305,21 @@ function wireThemeSection(view) {
       saveAndApply();
     });
   });
-  bgInput.addEventListener('change', () => saveAndApply({ customBgColor: bgInput.value }));
-  document.getElementById('theme-bg-clear').addEventListener('click', () => saveAndApply({ customBgColor: null }));
-  modalBgInput.addEventListener('change', () => saveAndApply({ customModalBgColor: modalBgInput.value }));
-  document.getElementById('theme-modalbg-clear').addEventListener('click', () => saveAndApply({ customModalBgColor: null }));
+
+  CUSTOM_COLOR_FIELDS.forEach(f => {
+    wireHslPicker(`theme-${f.key}`, (hex) => saveAndApply({ [f.settingsKey]: hex }));
+  });
+  document.querySelectorAll('.theme-clear-btn').forEach(btn => {
+    btn.addEventListener('click', () => saveAndApply({ [btn.dataset.clear]: null }));
+  });
 
   document.getElementById('theme-restore-default').addEventListener('click', async () => {
     if (!confirm('استعادة المظهر الافتراضي (فاتح، اللون الوردي الأصلي، بلا ألوان مخصصة)؟')) return;
     selectedMode = 'light';
-    await db.settings.update(1, { themeMode: 'light', accentColor: DEFAULT_ACCENT, customBgColor: null, customModalBgColor: null });
-    applyTheme('light', DEFAULT_ACCENT, null, null);
+    const reset = { themeMode: 'light', accentColor: DEFAULT_ACCENT };
+    CUSTOM_COLOR_FIELDS.forEach(f => { reset[f.settingsKey] = null; });
+    await db.settings.update(1, reset);
+    applyTheme('light', DEFAULT_ACCENT, {});
     renderSettingsPage([], view);
   });
 }

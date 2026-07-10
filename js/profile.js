@@ -310,7 +310,7 @@ async function renderSettingsPage(params, view) {
       <h1>الإعدادات</h1>
     </div>
 
-    ${renderThemeSection(settings?.themeMode, settings?.accentColor, settings?.accentColorHistory, settings?.customBgColor, settings?.customModalBgColor)}
+    ${renderThemeSection(settings?.themeMode, settings?.accentColor, settings?.accentColorHistory, settings)}
 
     <div class="card settings-card">
       <div class="pfp-preview pfp-small" id="settings-pfp">${profile.pictureBlob ? `<img src="${pictureUrl(profile.pictureBlob)}" alt="">` : '🌸'}</div>

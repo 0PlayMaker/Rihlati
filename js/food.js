@@ -80,7 +80,7 @@ async function renderWaterCard(container) {
   container.innerHTML = `
     <div class="section-header">
       <h2 class="card-title">💧 الماء</h2>
-      <button class="chip active" id="water-edit-target">الهدف: ${target}ل</button>
+      <button class="capsule-btn" id="water-edit-target">الهدف: ${target}ل</button>
     </div>
     <div class="mini-progress-track"><div class="mini-progress-fill water-fill" style="width:${frac * 100}%"></div></div>
     <p class="period-status-sub">${liters.toFixed(2)} من ${target} لتر</p>
@@ -310,7 +310,7 @@ async function renderFoodPage(params, view) {
     <div class="card">
       <div class="section-header">
         <p class="ring-label">وجباتك اليوم</p>
-        <button class="chip active" id="food-goals-btn">🎯 الأهداف</button>
+        <button class="capsule-btn" id="food-goals-btn">🎯 الهدف</button>
       </div>
       <div id="food-summary-card"></div>
     </div>
