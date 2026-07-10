@@ -124,18 +124,20 @@ function getFertilityPrediction(predictedNextPeriodStart) {
   const fertileEnd = ovulationDate;
   return { ovulationDate, fertileStart, fertileEnd };
 }
-// Coarse, descriptive categories rather than invented precision — day-
-// by-day pregnancy-chance percentages vary noticeably between sources,
-// so this sticks to the shape everyone agrees on (rises toward
-// ovulation, peaks around 1-2 days before/on ovulation, drops sharply
-// after) instead of citing a specific number.
+// Levels reflect the corrected Wilcox/Dunson day-specific data: the
+// single highest conception probability is the 1-2 days BEFORE
+// ovulation (not ovulation day itself, which is meaningfully lower),
+// and probability drops to near-zero the day AFTER ovulation because
+// the egg only survives ~12-24h. So: peak = 1-2 days pre-ovulation,
+// high = ovulation day + day 3-before, medium = the window's outer
+// edge (4-5 days before).
 function fertilityLevelForDate(dateStr, fertility) {
   if (!fertility) return null;
   const { ovulationDate, fertileStart, fertileEnd } = fertility;
   if (dateStr < fertileStart || dateStr > fertileEnd) return null;
-  const daysFromOvulation = daysBetween(dateStr, ovulationDate);
-  if (dateStr === ovulationDate || daysFromOvulation === 1) return 'peak';
-  if (daysFromOvulation <= 3) return 'high';
+  const daysBeforeOvulation = daysBetween(dateStr, ovulationDate); // 0 on ovulation day, positive before it
+  if (daysBeforeOvulation === 1 || daysBeforeOvulation === 2) return 'peak';
+  if (daysBeforeOvulation === 0 || daysBeforeOvulation === 3) return 'high';
   return 'medium';
 }
 
@@ -416,11 +418,18 @@ async function renderPeriodHistoryList(container, onChange) {
     container.innerHTML = `<div class="empty-state"><p>ما في دورات مسجلة بعد.</p></div>`;
     return;
   }
-  container.innerHTML = periods.map(p => `
+  const rows = await Promise.all(periods.map(async p => {
+    const painScore = await getPeriodScore(p, 'pain');
+    return `
     <button class="period-history-row" data-period-id="${p.id}">
       <span class="period-history-range">${formatDateArabic(p.startDate, { weekday: false })}${p.endDate ? ' → ' + formatDateArabic(p.endDate, { weekday: false }) : ' (مستمرة)'}</span>
-      ${p.endDate ? `<span class="period-history-length">${daysBetween(p.startDate, p.endDate) + 1} أيام</span>` : ''}
-    </button>`).join('');
+      <span class="period-history-meta">
+        ${p.endDate ? `<span class="period-history-length">${daysBetween(p.startDate, p.endDate) + 1} أيام</span>` : ''}
+        ${painScore != null ? `<span class="period-pain-score">😣 ${toArabicNumeral(painScore)}/١٠٠</span>` : ''}
+      </span>
+    </button>`;
+  }));
+  container.innerHTML = rows.join('');
   container.querySelectorAll('.period-history-row').forEach(row => {
     row.addEventListener('click', () => {
       const period = periods.find(p => p.id === Number(row.dataset.periodId));
@@ -438,7 +447,10 @@ async function renderPeriodPage(params, view) {
       <h1>الدورة الشهرية</h1>
     </div>
     <div class="card" id="period-status-card"></div>
+    <div class="card" id="period-pain-predict-card" style="display:none;"></div>
     <div class="card" id="period-action-card"></div>
+    <div class="card" id="period-reading-card"></div>
+    <div class="card" id="period-scatter-card" style="display:none;"></div>
     <div class="card"><div id="period-calendar"></div></div>
     <div class="card">
       <h2 class="card-title">سجل الدورات</h2>
@@ -463,6 +475,13 @@ async function renderPeriodPage(params, view) {
     `;
 
     const ongoing = await getOngoingPeriod();
+
+    // Pain prediction — only rendered when a period is ongoing or due
+    // within 2 days; the helper hides the card otherwise.
+    const predictCard = document.getElementById('period-pain-predict-card');
+    const shown = await renderPainPredictionInto(predictCard, { status, ongoing });
+    predictCard.style.display = shown ? '' : 'none';
+
     const actionCard = document.getElementById('period-action-card');
     if (ongoing) {
       actionCard.innerHTML = `<button class="btn btn-primary btn-block" id="period-primary-btn">إنهاء الدورة</button>`;
@@ -474,6 +493,15 @@ async function renderPeriodPage(params, view) {
       document.getElementById('period-primary-btn').addEventListener('click', () => openStartPeriodModal(refreshAll));
       document.getElementById('period-add-past-btn').addEventListener('click', () => openAddPastPeriodModal(refreshAll));
     }
+
+    // Reading logger — always available (cramps can precede the period);
+    // links readings to the ongoing period when there is one.
+    await renderReadingLoggerCard(document.getElementById('period-reading-card'), ongoing ? ongoing.id : null, refreshAll);
+
+    // Intra-day scatter for today.
+    const scatterCard = document.getElementById('period-scatter-card');
+    await renderIntradayScatter(scatterCard, todayStr());
+    scatterCard.style.display = scatterCard.innerHTML.trim() ? '' : 'none';
 
     await calendarHandle.refresh();
     await renderPeriodHistoryList(document.getElementById('period-history-list'), refreshAll);
@@ -507,12 +535,43 @@ async function periodYearlyProvider(year) {
   const stats = await getPeriodStats(); // overall, not year-scoped — useful context regardless of year viewed
   const today = todayStr();
   const totalDays = yearPeriods.reduce((s, p) => s + (daysBetween(p.startDate, p.endDate || today) + 1), 0);
+
+  // Whole-period pain/blood scores (computed, never stored). Only
+  // periods with readings contribute. The detailed list is collapsed
+  // behind a native <details> so the yearly view stays compact — the
+  // person taps to reveal, taps again to hide.
+  const scored = [];
+  for (const p of yearPeriods) {
+    const painScore = await getPeriodScore(p, 'pain');
+    const bloodScore = await getPeriodScore(p, 'blood');
+    const crampScore = await getPeriodScore(p, 'cramp');
+    if (painScore != null || bloodScore != null || crampScore != null) {
+      scored.push({ p, painScore, bloodScore, crampScore });
+    }
+  }
+  let painBlock = '';
+  if (scored.length) {
+    const avgPain = Math.round(scored.filter(s => s.painScore != null).reduce((s, x) => s + x.painScore, 0) / scored.filter(s => s.painScore != null).length);
+    const detailRows = scored.map(s => `
+      <div class="yearly-row">
+        <span>${formatDateArabic(s.p.startDate, { weekday: false })}</span>
+        <span>${s.painScore != null ? '😣' + toArabicNumeral(s.painScore) : ''} ${s.bloodScore != null ? '🩸' + toArabicNumeral(s.bloodScore) : ''} ${s.crampScore != null ? '🔥' + toArabicNumeral(s.crampScore) : ''}</span>
+      </div>`).join('');
+    painBlock = `
+      <div class="yearly-row"><span>متوسط شدّة الألم (٠–١٠٠)</span><span>😣 ${toArabicNumeral(avgPain)}</span></div>
+      <details class="yearly-pain-details">
+        <summary>عرض كل قراءات الألم (${toArabicNumeral(scored.length)})</summary>
+        ${detailRows}
+      </details>`;
+  }
+
   const html = `
     <div class="yearly-row"><span>عدد الدورات</span><span>${yearPeriods.length}</span></div>
     <div class="yearly-row"><span>إجمالي أيام الدورة</span><span>${totalDays} يوم</span></div>
     <div class="yearly-row"><span>متوسط طول الدورة نفسها</span><span>${stats.periodSamples > 0 ? Math.round(stats.avgPeriodLength) + ' يوم' : 'غير كافٍ بعد'}</span></div>
     <div class="yearly-row"><span>متوسط الفترة بين الدورات</span><span>${stats.cycleSamples > 0 ? Math.round(stats.avgCycleLength) + ' يوم' : 'غير كافٍ بعد (تحتاج دورتين مسجّلتين على الأقل)'}</span></div>
     ${stats.confidence !== 'none' ? `<div class="yearly-row"><span>موثوقية التوقع</span><span>${confidenceLabel(stats.confidence)}</span></div>` : ''}
+    ${painBlock}
   `;
   return { title: 'الدورة الشهرية', html, count: yearPeriods.length };
 }

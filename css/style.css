@@ -69,6 +69,7 @@
   --track: #F1E7EC;
   --card-border: transparent;
   --modal-bg: #FFFFFF;
+  --glass-blur: 20px;
   --title-color: var(--ink);
   --btn-color: var(--pink-deep);
   --capsule-color: var(--pink-deep);
@@ -596,7 +597,7 @@ a { color: var(--pink-deep); text-decoration: none; }
   position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
   width: 100%; max-width: 480px;
   display: flex; justify-content: flex-start; overflow-x: auto; scroll-snap-type: x proximity;
-  background: var(--surface); box-shadow: var(--shadow-soft);
+  background: var(--bottom-bar-color, var(--surface)); box-shadow: var(--shadow-soft);
   padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
   z-index: 50;
 }
@@ -838,13 +839,13 @@ body.theme-glass .quick-action-card,
 body.theme-glass .glance-card,
 body.theme-glass .goal-row,
 body.theme-glass .material-card {
-  backdrop-filter: blur(20px) saturate(1.6);
-  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.6);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.6);
   border: 1px solid rgba(255,255,255,0.5);
 }
 /* 5% more transparent than the surface it otherwise inherits, same hue */
-body.theme-glass #bottom-bar { background: rgba(255,255,255,0.45); }
-body.theme-glass-dark #bottom-bar { background: rgba(255,255,255,0.03); }
+body.theme-glass #bottom-bar { background: var(--bottom-bar-color, rgba(255,255,255,0.45)); }
+body.theme-glass-dark #bottom-bar { background: var(--bottom-bar-color, rgba(255,255,255,0.03)); }
 body.theme-glass .icon-btn,
 body.theme-glass .chip,
 body.theme-glass .kebab-btn,
@@ -913,8 +914,8 @@ body.theme-glass-dark .kebab-dropdown {
    they weren't blurring anything real, unlike bottom-bar. */
 body.theme-glass .modal-overlay,
 body.theme-glass-dark .modal-overlay {
-  backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.4);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.4);
 }
 body.theme-glass-dark .modal-overlay {
   background: rgba(10, 8, 15, 0.55);
@@ -952,5 +953,50 @@ body.theme-dark-ish .food-photo-placeholder {
 }
 .theme-preview-title { color: var(--ink); font-weight: 500; }
 .theme-preview-btn { pointer-events: none; }
+.theme-field-sep { height: 1px; background: var(--track); margin: var(--space-3) 0; }
+.theme-presets-list { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
+.theme-preset-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-2) 0; border-bottom: 1px solid var(--track); }
+.theme-preset-row:last-child { border-bottom: none; }
+.theme-preset-actions { display: flex; gap: var(--space-3); }
 .yearly-section-card { margin-bottom: var(--space-3); }
 .yearly-section-card:last-child { margin-bottom: 0; }
+
+/* ---------- period pain tracking (Phase 18) ---------- */
+.pain-slider-row { margin: var(--space-3) 0; }
+.pain-slider-row label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; color: var(--ink); }
+.pain-slider-val { color: var(--pink-deep); font-weight: 800; }
+.pain-slider { width: 100%; direction: ltr; accent-color: var(--pink-deep); }
+.pain-avg-row { display: flex; gap: var(--space-2); margin: var(--space-2) 0; }
+.pain-avg-chip { background: var(--pink); color: var(--ink); border-radius: var(--radius-round); padding: 4px 12px; font-size: 14px; font-weight: 700; }
+.readings-list { margin-top: var(--space-2); }
+.reading-row { display: flex; align-items: center; gap: var(--space-2); padding: 8px 0; border-bottom: 1px solid var(--track); }
+.reading-row:last-child { border-bottom: none; }
+.reading-time { font-size: 12px; color: var(--ink-soft); min-width: 64px; }
+.reading-vals { flex: 1; font-size: 13px; font-weight: 600; }
+.reading-delete { background: none; border: none; color: var(--ink-faint); font-size: 14px; cursor: pointer; padding: 4px 8px; }
+.reading-delete:active { color: var(--pink-deep); }
+
+.pain-conf-chip { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: var(--radius-round); }
+.pain-conf-high { background: #D4EDDA; color: #1E7E34; }
+.pain-conf-medium { background: #FFF3CD; color: #856404; }
+.pain-conf-low { background: var(--track); color: var(--ink-soft); }
+.pain-predict-today { display: flex; align-items: baseline; gap: var(--space-3); margin: var(--space-2) 0; }
+.pain-predict-big { font-size: 34px; font-weight: 800; color: var(--pink-deep); }
+.pain-predict-max { font-size: 16px; color: var(--ink-faint); font-weight: 600; }
+.pain-predict-range { font-size: 13px; color: var(--ink-soft); }
+.pain-predict-peak, .pain-predict-early { font-size: 13px; color: var(--ink); margin: 4px 0; }
+.pain-predict-reason { font-size: 13px; color: var(--ink-soft); margin-top: var(--space-2); line-height: 1.6; background: var(--track); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); }
+.pain-curve-label { font-size: 12px; color: var(--ink-soft); margin: var(--space-3) 0 4px; text-align: center; }
+.pain-curve-svg { width: 100%; height: 120px; display: block; direction: ltr; }
+.pain-band { fill: rgba(var(--pink-deep-rgb), 0.12); }
+.pain-line { stroke: var(--pink-deep); stroke-width: 2; }
+.pain-dot { fill: var(--pink-deep); }
+.pain-dot-today { fill: var(--pink-deep); stroke: #fff; stroke-width: 2; }
+.pain-axis-label { font-size: 9px; fill: var(--ink-faint); }
+.scatter-pain { fill: var(--pink-deep); opacity: 0.75; }
+.scatter-cramp { fill: #E8833E; opacity: 0.75; }
+
+.period-history-meta { display: flex; align-items: center; gap: var(--space-2); }
+.period-pain-score { font-size: 12px; font-weight: 700; color: var(--pink-deep); }
+.yearly-pain-details { margin-top: var(--space-2); }
+.yearly-pain-details summary { cursor: pointer; font-size: 13px; color: var(--pink-deep); font-weight: 600; padding: 4px 0; }

@@ -92,33 +92,51 @@ function hslToRgb(h, s, l) {
 // concept — explicit H/S/L sliders make "any hue, any saturation, any
 // brightness" directly visible and adjustable in the page itself.
 
-function hslPickerHtml(idPrefix, currentHex) {
-  const rgb = hexToRgb(currentHex);
-  const { h, s, l } = rgbToHsl(rgb.r, rgb.g, rgb.b);
+// Accepts either a plain hex (#RRGGBB) or an rgba(...) string, always
+// returns {r,g,b,a} with a as 0-100 for slider convenience.
+function parseColorToRgba(str) {
+  if (!str) return { r: 232, g: 143, b: 174, a: 100 };
+  const rgbaMatch = str.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\)/);
+  if (rgbaMatch) {
+    return { r: Number(rgbaMatch[1]), g: Number(rgbaMatch[2]), b: Number(rgbaMatch[3]), a: rgbaMatch[4] != null ? Math.round(Number(rgbaMatch[4]) * 100) : 100 };
+  }
+  const { r, g, b } = hexToRgb(str);
+  return { r, g, b, a: 100 };
+}
+function rgbaToOutputString(r, g, b, a) {
+  r = Math.round(r); g = Math.round(g); b = Math.round(b);
+  return a >= 100 ? rgbToHex(r, g, b) : `rgba(${r}, ${g}, ${b}, ${(a / 100).toFixed(2)})`;
+}
+
+function hslPickerHtml(idPrefix, currentColor, { withAlpha } = {}) {
+  const { r, g, b, a } = parseColorToRgba(currentColor);
+  const { h, s, l } = rgbToHsl(r, g, b);
   return `
     <div class="hsl-picker" id="${idPrefix}-picker">
-      <div class="hsl-swatch" id="${idPrefix}-swatch" style="background:${currentHex}"></div>
+      <div class="hsl-swatch" id="${idPrefix}-swatch" style="background:${currentColor}"></div>
       <div class="hsl-sliders">
         <div class="hsl-slider-row"><label for="${idPrefix}-hue">الصبغة</label><input type="range" min="0" max="360" value="${Math.round(h)}" id="${idPrefix}-hue" class="hsl-slider hsl-slider-hue"></div>
         <div class="hsl-slider-row"><label for="${idPrefix}-sat">التشبّع</label><input type="range" min="0" max="100" value="${Math.round(s)}" id="${idPrefix}-sat" class="hsl-slider"></div>
         <div class="hsl-slider-row"><label for="${idPrefix}-light">السطوع</label><input type="range" min="0" max="100" value="${Math.round(l)}" id="${idPrefix}-light" class="hsl-slider"></div>
+        ${withAlpha ? `<div class="hsl-slider-row"><label for="${idPrefix}-alpha">الشفافية</label><input type="range" min="0" max="100" value="${Math.round(a)}" id="${idPrefix}-alpha" class="hsl-slider"></div>` : ''}
       </div>
-      <input type="text" class="text-input theme-hex-input" id="${idPrefix}-hex" value="${currentHex}" maxlength="7">
+      <input type="text" class="text-input theme-hex-input" id="${idPrefix}-hex" value="${currentColor}" maxlength="30">
     </div>`;
 }
 
-function wireHslPicker(idPrefix, onChange) {
+function wireHslPicker(idPrefix, onChange, { withAlpha } = {}) {
   const hueInput = document.getElementById(`${idPrefix}-hue`);
   const satInput = document.getElementById(`${idPrefix}-sat`);
   const lightInput = document.getElementById(`${idPrefix}-light`);
+  const alphaInput = withAlpha ? document.getElementById(`${idPrefix}-alpha`) : null;
   const hexInput = document.getElementById(`${idPrefix}-hex`);
   const swatch = document.getElementById(`${idPrefix}-swatch`);
 
-  // Belt-and-suspenders: sliders live inside a collapsible <details>,
-  // and dragging them was somehow toggling it closed — stop every
-  // interaction from bubbling at all, regardless of the exact browser
-  // mechanism responsible.
-  [hueInput, satInput, lightInput].forEach(input => {
+  // Belt-and-suspenders: even on the new dedicated page, stop every
+  // slider interaction from bubbling at all — no ambiguity left to
+  // chance regardless of surrounding structure.
+  const allInputs = [hueInput, satInput, lightInput, alphaInput].filter(Boolean);
+  allInputs.forEach(input => {
     ['click', 'pointerdown', 'touchstart', 'mousedown'].forEach(evt => {
       input.addEventListener(evt, (e) => e.stopPropagation());
     });
@@ -126,22 +144,24 @@ function wireHslPicker(idPrefix, onChange) {
 
   function fromSliders() {
     const rgb = hslToRgb(Number(hueInput.value), Number(satInput.value), Number(lightInput.value));
-    const hex = rgbToHex(rgb.r, rgb.g, rgb.b);
-    swatch.style.background = hex;
-    hexInput.value = hex;
-    return hex;
+    const alpha = alphaInput ? Number(alphaInput.value) : 100;
+    const out = rgbaToOutputString(rgb.r, rgb.g, rgb.b, alpha);
+    swatch.style.background = out;
+    hexInput.value = out;
+    return out;
   }
-  [hueInput, satInput, lightInput].forEach(input => {
+  allInputs.forEach(input => {
     input.addEventListener('input', () => onChange(fromSliders()));
   });
   hexInput.addEventListener('change', () => {
     const val = hexInput.value.trim();
-    if (!/^#[0-9a-fA-F]{6}$/.test(val)) return;
-    const rgb = hexToRgb(val);
-    const { h, s, l } = rgbToHsl(rgb.r, rgb.g, rgb.b);
+    if (!/^#[0-9a-fA-F]{6}$/.test(val) && !/^rgba?\(/.test(val)) return;
+    const { r, g, b, a } = parseColorToRgba(val);
+    const { h, s, l } = rgbToHsl(r, g, b);
     hueInput.value = Math.round(h);
     satInput.value = Math.round(s);
     lightInput.value = Math.round(l);
+    if (alphaInput) alphaInput.value = Math.round(a);
     swatch.style.background = val;
     onChange(val);
   });
@@ -182,25 +202,33 @@ function applyTheme(mode, accentHex, opts = {}) {
   root.setProperty('--shadow-soft', `0 6px 20px rgba(${r}, ${g}, ${b}, 0.16)`);
   root.setProperty('--shadow-tap', `0 2px 8px rgba(${r}, ${g}, ${b}, 0.14)`);
 
-  // Custom overrides layer on top of whatever the mode set — a plain
-  // hex from her own picker, not derived/tinted like the accent, since
-  // these don't need light+deep variants the way a single accent
-  // choice does.
+  // Custom overrides layer on top of whatever the mode set — her own
+  // picked value (hex or rgba), not derived/tinted like the accent,
+  // since these don't need light+deep variants the way a single
+  // accent choice does.
   if (opts.bg) root.setProperty('--bg', opts.bg);
   if (opts.modalBg) root.setProperty('--modal-bg', opts.modalBg);
   if (opts.textColor) root.setProperty('--ink', opts.textColor);
   if (opts.subtextColor) root.setProperty('--ink-soft', opts.subtextColor);
   root.setProperty('--title-color', opts.titleColor || 'var(--ink)');
+  if (opts.bottomBarColor) root.setProperty('--bottom-bar-color', opts.bottomBarColor);
+  else root.removeProperty('--bottom-bar-color');
 
   // Buttons default to the accent's deep shade (same as before this
   // was customizable); capsules get their own color, defaulting to
-  // the same, with an rgb triplet for the glow.
+  // the same, with an rgb triplet for the glow. parseColorToRgba
+  // (rather than hexToRgb) since either can now be an rgba() string
+  // from the transparency slider.
   const btnHex = opts.btnColor || deep;
   root.setProperty('--btn-color', btnHex);
   const capsuleHex = opts.capsuleColor || deep;
   root.setProperty('--capsule-color', capsuleHex);
-  const cr = hexToRgb(capsuleHex);
+  const cr = parseColorToRgba(capsuleHex);
   root.setProperty('--capsule-color-rgb', `${cr.r}, ${cr.g}, ${cr.b}`);
+
+  // Glass blur amount — customizable, defaults to the original 20px.
+  const blurPx = opts.blurAmount != null ? opts.blurAmount : 20;
+  root.setProperty('--glass-blur', `${blurPx}px`);
 
   document.body.classList.toggle('theme-glass', mode === 'glass' || mode === 'glassDark');
   document.body.classList.toggle('theme-glass-dark', mode === 'glassDark');
@@ -216,7 +244,9 @@ async function applyStoredTheme() {
     capsuleColor: settings?.customCapsuleColor,
     titleColor: settings?.customTitleColor,
     textColor: settings?.customTextColor,
-    subtextColor: settings?.customSubtextColor
+    subtextColor: settings?.customSubtextColor,
+    bottomBarColor: settings?.customBottomBarColor,
+    blurAmount: settings?.customBlurAmount
   });
 }
 
@@ -226,20 +256,20 @@ async function applyStoredTheme() {
 // clear button. Looping over this list is what keeps 7 near-identical
 // color pickers from being 7 copies of the same markup+wiring.
 const CUSTOM_COLOR_FIELDS = [
-  { key: 'bg', settingsKey: 'customBgColor', label: 'لون الخلفية', fallback: () => document.documentElement.style.getPropertyValue('--bg') || '#FFF9F5' },
-  { key: 'modalbg', settingsKey: 'customModalBgColor', label: 'لون النوافذ المنبثقة', fallback: () => document.documentElement.style.getPropertyValue('--modal-bg') || '#FFFFFF' },
-  { key: 'btn', settingsKey: 'customBtnColor', label: 'لون الأزرار', fallback: () => DEFAULT_ACCENT },
-  { key: 'capsule', settingsKey: 'customCapsuleColor', label: 'لون الكبسولات (مثل زر الهدف)', fallback: () => DEFAULT_ACCENT },
-  { key: 'title', settingsKey: 'customTitleColor', label: 'لون العناوين', fallback: () => '#4A4152' },
-  { key: 'text', settingsKey: 'customTextColor', label: 'لون النص', fallback: () => '#4A4152' },
-  { key: 'subtext', settingsKey: 'customSubtextColor', label: 'لون النص الفرعي', fallback: () => '#8B8394' }
+  { key: 'bg', settingsKey: 'customBgColor', label: 'الخلفية', group: 'أساسي', withAlpha: true, fallback: () => document.documentElement.style.getPropertyValue('--bg') || '#FFF9F5' },
+  { key: 'btn', settingsKey: 'customBtnColor', label: 'الأزرار', group: 'عناصر تفاعلية', withAlpha: true, fallback: () => DEFAULT_ACCENT },
+  { key: 'capsule', settingsKey: 'customCapsuleColor', label: 'الكبسولات (مثل زر الهدف)', group: 'عناصر تفاعلية', withAlpha: true, fallback: () => DEFAULT_ACCENT },
+  { key: 'modalbg', settingsKey: 'customModalBgColor', label: 'النوافذ المنبثقة', group: 'أسطح', withAlpha: true, fallback: () => document.documentElement.style.getPropertyValue('--modal-bg') || '#FFFFFF' },
+  { key: 'bottombar', settingsKey: 'customBottomBarColor', label: 'الشريط السفلي', group: 'أسطح', withAlpha: true, fallback: () => document.documentElement.style.getPropertyValue('--surface') || '#FFFFFF' },
+  { key: 'title', settingsKey: 'customTitleColor', label: 'العناوين', group: 'نصوص', withAlpha: false, fallback: () => '#4A4152' },
+  { key: 'text', settingsKey: 'customTextColor', label: 'النص', group: 'نصوص', withAlpha: false, fallback: () => '#4A4152' },
+  { key: 'subtext', settingsKey: 'customSubtextColor', label: 'النص الفرعي', group: 'نصوص', withAlpha: false, fallback: () => '#8B8394' }
 ];
+const THEME_SETTINGS_KEYS = ['themeMode', 'accentColor', ...CUSTOM_COLOR_FIELDS.map(f => f.settingsKey), 'customBlurAmount'];
 
-// ---------- Settings UI ----------
+// ---------- Settings page: minimal — mode + presets + link to editor ----------
 
-function renderThemeSection(currentMode, currentAccent, accentHistory, customColors) {
-  const history = (accentHistory || []).filter(c => c !== (currentAccent || DEFAULT_ACCENT));
-  const cc = customColors || {};
+function renderThemeSection(currentMode, currentAccent, presets) {
   return `
     <div class="card settings-card">
       <h2 class="card-title">المظهر</h2>
@@ -248,7 +278,101 @@ function renderThemeSection(currentMode, currentAccent, accentHistory, customCol
         ${Object.entries(THEME_MODES).map(([key, m]) => `
           <button class="chip theme-mode-chip ${key === (currentMode || 'light') ? 'active' : ''}" data-mode="${key}">${m.label}</button>
         `).join('')}
+        ${(presets || []).map(p => `<button class="chip theme-preset-chip" data-preset-id="${p.id}">🎨 ${escapeHtml(p.name)}</button>`).join('')}
       </div>
+      <a class="link-btn" href="#/theme-editor">🎨 تخصيص المظهر بالكامل ←</a>
+    </div>`;
+}
+
+function wireThemeSection(view) {
+  const modeChips = document.getElementById('theme-mode-chips');
+  modeChips.querySelectorAll('.theme-mode-chip').forEach(chip => {
+    chip.addEventListener('click', async () => {
+      const mode = chip.dataset.mode;
+      modeChips.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c === chip));
+      await db.settings.update(1, { themeMode: mode });
+      await applyStoredTheme();
+    });
+  });
+  modeChips.querySelectorAll('.theme-preset-chip').forEach(chip => {
+    chip.addEventListener('click', async () => {
+      modeChips.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c === chip));
+      await applyCustomPreset(Number(chip.dataset.presetId));
+    });
+  });
+}
+
+// ---------- custom presets ----------
+
+async function saveCustomPreset(name) {
+  const settings = await db.settings.get(1);
+  const presets = settings.customThemePresets || [];
+  if (presets.length >= 3) return false;
+  const preset = { id: Date.now(), name };
+  THEME_SETTINGS_KEYS.forEach(k => { preset[k] = settings[k]; });
+  await db.settings.update(1, { customThemePresets: [...presets, preset] });
+  return true;
+}
+async function applyCustomPreset(presetId) {
+  const settings = await db.settings.get(1);
+  const preset = (settings.customThemePresets || []).find(p => p.id === presetId);
+  if (!preset) return;
+  const toApply = {};
+  THEME_SETTINGS_KEYS.forEach(k => { toApply[k] = preset[k] ?? null; });
+  await db.settings.update(1, toApply);
+  await applyStoredTheme();
+}
+async function updateCustomPresetToCurrent(presetId) {
+  const settings = await db.settings.get(1);
+  const presets = (settings.customThemePresets || []).map(p => {
+    if (p.id !== presetId) return p;
+    const updated = { id: p.id, name: p.name };
+    THEME_SETTINGS_KEYS.forEach(k => { updated[k] = settings[k]; });
+    return updated;
+  });
+  await db.settings.update(1, { customThemePresets: presets });
+}
+async function deleteCustomPreset(presetId) {
+  const settings = await db.settings.get(1);
+  const presets = (settings.customThemePresets || []).filter(p => p.id !== presetId);
+  await db.settings.update(1, { customThemePresets: presets });
+}
+
+// ---------- dedicated theme editor page ----------
+// Nothing here ever re-renders the page itself on a slider change —
+// only apply the theme live and save. That's the actual fix for the
+// "sliders close the panel" bug: it wasn't the slider or the details
+// element, it was the accent picker's onChange rebuilding the whole
+// page to refresh its history row, which created a brand-new (closed)
+// details element in place of the one she had open.
+
+function themeGroupSectionHtml(groupName, fields, cc) {
+  return `
+    <div class="card settings-card">
+      <h2 class="card-title">${groupName}</h2>
+      ${fields.map(f => `
+        <label class="field-label">${f.label}</label>
+        ${hslPickerHtml(`theme-${f.key}`, cc[f.settingsKey] || f.fallback(), { withAlpha: f.withAlpha })}
+        <button class="btn btn-text btn-sm theme-clear-btn" data-clear="${f.settingsKey}">استخدام الافتراضي</button>
+      `).join('<div class="theme-field-sep"></div>')}
+    </div>`;
+}
+
+async function renderThemeEditorPage(params, view) {
+  const settings = await db.settings.get(1);
+  const currentAccent = settings?.accentColor || DEFAULT_ACCENT;
+  const accentHistory = (settings?.accentColorHistory || []).filter(c => c !== currentAccent);
+  const cc = settings || {};
+  const groups = ['أساسي', 'عناصر تفاعلية', 'أسطح', 'نصوص'];
+  const presets = settings?.customThemePresets || [];
+
+  view.innerHTML = `
+    <div class="page-header">
+      <button class="icon-btn" id="theme-editor-back">→</button>
+      <h1>تخصيص المظهر</h1>
+    </div>
+
+    <div class="card">
       <div class="theme-preview" id="theme-preview">
         <div class="theme-preview-card">
           <span class="theme-preview-title">مثال</span>
@@ -256,80 +380,140 @@ function renderThemeSection(currentMode, currentAccent, accentHistory, customCol
           <button class="capsule-btn theme-preview-capsule">كبسولة</button>
         </div>
       </div>
+    </div>
 
-      <details class="weight-history-details">
-        <summary>تخصيص الألوان</summary>
+    <div class="card settings-card">
+      <h2 class="card-title">لون التمييز</h2>
+      ${hslPickerHtml('theme-accent', currentAccent)}
+      <div class="theme-history-row" id="theme-history-row">
+        ${accentHistory.map(c => `<button class="theme-history-swatch" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join('')}
+      </div>
+    </div>
 
-        <label class="field-label">لون التمييز</label>
-        ${hslPickerHtml('theme-accent', currentAccent || DEFAULT_ACCENT)}
-        ${history.length ? `
-          <div class="theme-history-row" id="theme-history-row">
-            ${history.map(c => `<button class="theme-history-swatch" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join('')}
-          </div>` : ''}
+    ${groups.map(g => themeGroupSectionHtml(g, CUSTOM_COLOR_FIELDS.filter(f => f.group === g), cc)).join('')}
 
-        ${CUSTOM_COLOR_FIELDS.map(f => `
-          <label class="field-label">${f.label} (اختياري)</label>
-          ${hslPickerHtml(`theme-${f.key}`, cc[f.settingsKey] || f.fallback())}
-          <button class="btn btn-text btn-sm theme-clear-btn" data-clear="${f.settingsKey}">استخدام اللون الافتراضي</button>
-        `).join('')}
+    <div class="card settings-card">
+      <h2 class="card-title">التمويه الزجاجي</h2>
+      <p class="settings-note">يؤثر فقط في الأوضاع الزجاجية.</p>
+      <div class="hsl-slider-row"><label for="theme-blur-input">مقدار التمويه</label><input type="range" min="0" max="40" value="${cc.customBlurAmount ?? 20}" id="theme-blur-input" class="hsl-slider"></div>
+    </div>
 
-        <button class="link-btn" id="theme-restore-default">استعادة المظهر الافتراضي بالكامل</button>
-      </details>
-    </div>`;
-}
+    <div class="card settings-card">
+      <h2 class="card-title">حفظ كمظهر مخصص</h2>
+      ${presets.length >= 3 ? `<p class="settings-note">وصلتِ للحد الأقصى (٣ مظاهر مخصصة). احذفي واحداً من الإعدادات لإضافة آخر.</p>` : `
+        <div class="theme-accent-row">
+          <input class="text-input" id="theme-preset-name-input" placeholder="اسم المظهر" maxlength="20">
+          <button class="btn btn-secondary btn-sm" id="theme-save-preset-btn">حفظ</button>
+        </div>`}
+      ${presets.length ? `
+        <div class="theme-presets-list" id="theme-presets-list">
+          ${presets.map(p => `
+            <div class="theme-preset-row" data-preset-id="${p.id}">
+              <span>🎨 ${escapeHtml(p.name)}</span>
+              <div class="theme-preset-actions">
+                <button class="link-btn theme-preset-apply" data-id="${p.id}">تطبيق</button>
+                <button class="link-btn theme-preset-update" data-id="${p.id}">تحديث</button>
+                <button class="link-btn theme-preset-delete" data-id="${p.id}">حذف</button>
+              </div>
+            </div>`).join('')}
+        </div>` : ''}
+    </div>
 
-function wireThemeSection(view) {
-  const modeChips = document.getElementById('theme-mode-chips');
-  let selectedMode = modeChips.querySelector('.chip.active')?.dataset.mode || 'light';
+    <div class="card settings-card">
+      <button class="link-btn" id="theme-restore-default">استعادة المظهر الافتراضي بالكامل</button>
+    </div>
+  `;
+  document.getElementById('theme-editor-back').addEventListener('click', () => window.history.back());
 
-  async function saveAndApply(overrides = {}) {
-    const settings = await db.settings.get(1);
-    const prevAccent = settings?.accentColor || DEFAULT_ACCENT;
-    const newAccent = overrides.accentColor;
-    let history = settings?.accentColorHistory || [];
-    if (newAccent && newAccent !== prevAccent && !history.includes(prevAccent)) {
-      history = [prevAccent, ...history].slice(0, 6);
-    }
-    const toSave = { themeMode: selectedMode, accentColor: newAccent || prevAccent, accentColorHistory: history };
-    CUSTOM_COLOR_FIELDS.forEach(f => {
-      toSave[f.settingsKey] = f.settingsKey in overrides ? overrides[f.settingsKey] : settings?.[f.settingsKey];
-    });
-    await db.settings.update(1, toSave);
-    applyTheme(selectedMode, toSave.accentColor, {
-      bg: toSave.customBgColor, modalBg: toSave.customModalBgColor, btnColor: toSave.customBtnColor,
-      capsuleColor: toSave.customCapsuleColor, titleColor: toSave.customTitleColor,
-      textColor: toSave.customTextColor, subtextColor: toSave.customSubtextColor
-    });
-    if (newAccent) renderSettingsPage([], view); // refresh so the history row reflects the new state
+  // Every interaction below applies live + saves, and updates AT MOST
+  // the one small piece of DOM that actually needs it (the accent
+  // history row) — never the page itself.
+  async function saveField(key, value) {
+    await db.settings.update(1, { [key]: value });
+  }
+  async function liveApply() {
+    const s = await db.settings.get(1);
+    const opts = {};
+    CUSTOM_COLOR_FIELDS.forEach(f => { opts[camelFromKey(f)] = s[f.settingsKey]; });
+    opts.bottomBarColor = s.customBottomBarColor;
+    opts.blurAmount = s.customBlurAmount;
+    applyTheme(s.themeMode || 'light', s.accentColor, opts);
+  }
+  function camelFromKey(f) {
+    // maps settingsKey -> the applyTheme opts key it corresponds to
+    const map = { customBgColor: 'bg', customModalBgColor: 'modalBg', customBtnColor: 'btnColor', customCapsuleColor: 'capsuleColor', customTitleColor: 'titleColor', customTextColor: 'textColor', customSubtextColor: 'subtextColor', customBottomBarColor: 'bottomBarColor' };
+    return map[f.settingsKey] || f.settingsKey;
   }
 
-  wireHslPicker('theme-accent', (hex) => saveAndApply({ accentColor: hex }));
-  const historyRow = document.getElementById('theme-history-row');
-  if (historyRow) historyRow.querySelectorAll('.theme-history-swatch').forEach(sw => {
-    sw.addEventListener('click', () => saveAndApply({ accentColor: sw.dataset.color }));
-  });
-  modeChips.querySelectorAll('.chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      selectedMode = chip.dataset.mode;
-      modeChips.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c === chip));
-      saveAndApply();
+  async function refreshAccentHistoryRow() {
+    const s = await db.settings.get(1);
+    const acc = s?.accentColor || DEFAULT_ACCENT;
+    const hist = (s?.accentColorHistory || []).filter(c => c !== acc);
+    document.getElementById('theme-history-row').innerHTML = hist.map(c => `<button class="theme-history-swatch" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join('');
+    wireHistorySwatches();
+  }
+  function wireHistorySwatches() {
+    document.querySelectorAll('.theme-history-swatch').forEach(sw => {
+      sw.addEventListener('click', async () => {
+        await applyAccentChange(sw.dataset.color);
+      });
     });
-  });
+  }
+  async function applyAccentChange(hex) {
+    const s = await db.settings.get(1);
+    const prevAccent = s?.accentColor || DEFAULT_ACCENT;
+    let hist = s?.accentColorHistory || [];
+    if (hex !== prevAccent && !hist.includes(prevAccent)) hist = [prevAccent, ...hist].slice(0, 6);
+    await db.settings.update(1, { accentColor: hex, accentColorHistory: hist });
+    await liveApply();
+    await refreshAccentHistoryRow();
+  }
+
+  wireHslPicker('theme-accent', (hex) => applyAccentChange(hex));
+  wireHistorySwatches();
 
   CUSTOM_COLOR_FIELDS.forEach(f => {
-    wireHslPicker(`theme-${f.key}`, (hex) => saveAndApply({ [f.settingsKey]: hex }));
+    wireHslPicker(`theme-${f.key}`, async (val) => { await saveField(f.settingsKey, val); await liveApply(); }, { withAlpha: f.withAlpha });
   });
   document.querySelectorAll('.theme-clear-btn').forEach(btn => {
-    btn.addEventListener('click', () => saveAndApply({ [btn.dataset.clear]: null }));
+    btn.addEventListener('click', async () => { await saveField(btn.dataset.clear, null); await liveApply(); toast('أُعيد للون الافتراضي'); });
+  });
+
+  const blurInput = document.getElementById('theme-blur-input');
+  blurInput.addEventListener('click', (e) => e.stopPropagation());
+  blurInput.addEventListener('input', async () => { await saveField('customBlurAmount', Number(blurInput.value)); await liveApply(); });
+
+  const saveBtn = document.getElementById('theme-save-preset-btn');
+  if (saveBtn) saveBtn.addEventListener('click', async () => {
+    const name = document.getElementById('theme-preset-name-input').value.trim();
+    if (!name) return;
+    const ok = await saveCustomPreset(name);
+    if (ok) { toast('🎨 تم حفظ المظهر'); renderThemeEditorPage(params, view); }
+  });
+  document.querySelectorAll('.theme-preset-apply').forEach(btn => {
+    btn.addEventListener('click', async () => { await applyCustomPreset(Number(btn.dataset.id)); renderThemeEditorPage(params, view); });
+  });
+  document.querySelectorAll('.theme-preset-update').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('تحديث هذا المظهر المحفوظ ليطابق الإعدادات الحالية؟')) return;
+      await updateCustomPresetToCurrent(Number(btn.dataset.id));
+      toast('تم التحديث');
+    });
+  });
+  document.querySelectorAll('.theme-preset-delete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('حذف هذا المظهر المحفوظ؟')) return;
+      await deleteCustomPreset(Number(btn.dataset.id));
+      renderThemeEditorPage(params, view);
+    });
   });
 
   document.getElementById('theme-restore-default').addEventListener('click', async () => {
     if (!confirm('استعادة المظهر الافتراضي (فاتح، اللون الوردي الأصلي، بلا ألوان مخصصة)؟')) return;
-    selectedMode = 'light';
-    const reset = { themeMode: 'light', accentColor: DEFAULT_ACCENT };
+    const reset = { themeMode: 'light', accentColor: DEFAULT_ACCENT, customBlurAmount: null };
     CUSTOM_COLOR_FIELDS.forEach(f => { reset[f.settingsKey] = null; });
     await db.settings.update(1, reset);
-    applyTheme('light', DEFAULT_ACCENT, {});
-    renderSettingsPage([], view);
+    await applyStoredTheme();
+    renderThemeEditorPage(params, view);
   });
 }

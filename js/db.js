@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v41 · ٩ يوليو ٢٠٢٦';
+const APP_VERSION = 'v43 · ١٠ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -286,6 +286,19 @@ db.version(17).stores({
   dailyCareRoutines: '++id, kind',
   dailyCareRoutinePhotos: 'routineId',
   dailyCareLogs: '++id, &[routineId+date], routineId'
+});
+
+// ---------- Phase 18 — period symptom readings ----------
+// Individual timestamped readings (blood/pain/cramp each 0-10), NOT
+// daily aggregates — so pain can be plotted point-by-point across a
+// day to reveal time-of-day patterns, and daily averages / whole-
+// period scores are always COMPUTED from these on the fly, never
+// stored. `dateStr` for day grouping, `timestamp` for intra-day
+// ordering and the scatter plot. periodId links a reading to the
+// specific period it belongs to (nullable — a reading can be logged
+// outside a tracked period, e.g. premenstrual cramps).
+db.version(18).stores({
+  periodReadings: '++id, dateStr, periodId'
 });
 
 // ---------- date helpers (used everywhere) ----------

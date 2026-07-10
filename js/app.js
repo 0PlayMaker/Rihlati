@@ -407,6 +407,7 @@ function startApp(profile, settings) {
   route('/sleep', renderSleepPage);
   route('/yearly', renderYearlyOverviewPage);
   route('/settings', renderSettingsPage);
+  route('/theme-editor', renderThemeEditorPage);
 
   document.getElementById('app-root').innerHTML = '<div id="view"></div><nav id="bottom-bar"></nav>';
   renderRoute();
