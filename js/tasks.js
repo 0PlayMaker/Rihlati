@@ -289,9 +289,7 @@ async function renderTasksPage(params, view) {
   document.getElementById('tasks-back').addEventListener('click', () => history.back());
 
   async function rescheduleReminders() {
-    const tasks = await getActiveFixedTasks();
-    const doneSet = await getFixedTasksDoneSet(tasks, todayStr());
-    scheduleTodayReminders(tasks, (id) => doneSet.has(id));
+    await scheduleAllTodayReminders();
   }
 
   const fixedListEl = document.getElementById('fixed-tasks-list');

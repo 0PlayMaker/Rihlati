@@ -55,6 +55,9 @@ async function setHabitStatus(habitId, date, status) {
 }
 async function clearHabitStatus(habitId, date) {
   await deleteLog(db.habitLogs, 'habitId', habitId, date);
+  if (date === todayStr()) {
+    await db.habits.update(habitId, { lastMishapAt: null });
+  }
 }
 async function getHabitDoneDates(habitId) {
   const logs = await db.habitLogs.where('habitId').equals(habitId).toArray();

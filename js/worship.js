@@ -523,6 +523,252 @@ async function wirdYearlyProvider(year) {
   return { title: 'ورد القرآن', html, count: yearLogs.length };
 }
 
+// ===================== القضاء (makeup prayers + fasting) =====================
+// Standing counters that only ever count DOWN as she catches up — the
+// opposite of custom adhkar's count-up. No "logs" table needed since
+// there's nothing date-specific here, just a remaining count that
+// persists until it hits zero.
+
+async function createQadaPrayer(prayerName, count) {
+  await db.qadaPrayers.add({ prayerName, remaining: Math.max(0, count), createdAt: Date.now() });
+}
+async function updateQadaPrayer(id, { prayerName, remaining }) {
+  await db.qadaPrayers.update(id, { prayerName, remaining: Math.max(0, remaining) });
+}
+async function decrementQadaPrayer(id) {
+  const item = await db.qadaPrayers.get(id);
+  if (!item || item.remaining <= 0) return;
+  await db.qadaPrayers.update(id, { remaining: item.remaining - 1 });
+}
+async function deleteQadaPrayer(id) {
+  await db.qadaPrayers.delete(id);
+}
+async function getQadaPrayers() {
+  const all = await db.qadaPrayers.toArray();
+  return all.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+async function createQadaFasting(label, count) {
+  await db.qadaFasting.add({ label: label || '', remaining: Math.max(0, count), createdAt: Date.now() });
+}
+async function updateQadaFasting(id, { label, remaining }) {
+  await db.qadaFasting.update(id, { label: label || '', remaining: Math.max(0, remaining) });
+}
+async function decrementQadaFastingDay(id) {
+  const item = await db.qadaFasting.get(id);
+  if (!item || item.remaining <= 0) return;
+  await db.qadaFasting.update(id, { remaining: item.remaining - 1 });
+}
+async function deleteQadaFasting(id) {
+  await db.qadaFasting.delete(id);
+}
+async function getQadaFasting() {
+  const all = await db.qadaFasting.toArray();
+  return all.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function qadaPrayerRowHtml(item) {
+  const done = item.remaining === 0;
+  return `
+    <div class="adhkar-counter-row" data-qada-id="${item.id}">
+      <div class="adhkar-name-block">
+        <span class="adhkar-name">${PRAYER_LABELS[item.prayerName]}</span>
+        ${done ? `<span class="tsr-streak">✅ تم القضاء بالكامل</span>` : ''}
+      </div>
+      <div class="adhkar-counter-controls">
+        <button class="adhkar-count-btn" disabled>${item.remaining}</button>
+        <button class="adhkar-plus qada-minus-btn" data-action="dec" ${done ? 'disabled' : ''}>−</button>
+        ${kebabMenuHtml('qp-' + item.id, [
+          { key: 'edit', label: 'تعديل' },
+          { key: 'remove', label: 'حذف', danger: true }
+        ])}
+      </div>
+    </div>`;
+}
+
+async function renderQadaPrayersList(container) {
+  const items = await getQadaPrayers();
+  if (items.length === 0) {
+    container.innerHTML = `<p class="empty-state-sub">ما في صلوات قضاء مسجّلة.</p>`;
+    return;
+  }
+  container.innerHTML = items.map(qadaPrayerRowHtml).join('');
+  container.querySelectorAll('.qada-minus-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('[data-qada-id]');
+      await decrementQadaPrayer(Number(row.dataset.qadaId));
+      await renderQadaPrayersList(container);
+    });
+  });
+  wireKebabMenus(container, async (rowId, action) => {
+    const id = Number(rowId.replace('qp-', ''));
+    if (action === 'edit') {
+      openQadaPrayerModal({ existingId: id, onSaved: () => renderQadaPrayersList(container) });
+    } else if (action === 'remove') {
+      if (!confirm('حذف هذا القضاء؟')) return;
+      await deleteQadaPrayer(id);
+      await renderQadaPrayersList(container);
+    }
+  });
+}
+
+function openQadaPrayerModal({ existingId, onSaved } = {}) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2 class="modal-title" id="qada-prayer-modal-title">قضاء صلاة</h2>
+      <label class="field-label">الصلاة</label>
+      <div class="habit-type-chips" id="qada-prayer-chips">
+        ${PRAYER_NAMES.map((p, i) => `<button class="chip ${i === 0 ? 'active' : ''}" data-prayer="${p}">${PRAYER_LABELS[p]}</button>`).join('')}
+      </div>
+      <label class="field-label">عدد الصلوات المتبقية</label>
+      <input class="text-input" type="number" min="0" id="qada-prayer-count-input" placeholder="مثلاً: 10">
+      <div class="modal-actions">
+        ${existingId ? `<button class="btn btn-danger btn-sm" id="qada-prayer-delete-btn">حذف</button>` : ''}
+        <button class="btn btn-text" id="qada-prayer-cancel-btn">إلغاء</button>
+        <button class="btn btn-primary" id="qada-prayer-save-btn">حفظ</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.querySelectorAll('#qada-prayer-chips .chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      overlay.querySelectorAll('#qada-prayer-chips .chip').forEach(c => c.classList.toggle('active', c === chip));
+    });
+  });
+
+  (async () => {
+    if (!existingId) return;
+    const existing = await db.qadaPrayers.get(existingId);
+    if (!existing) return;
+    document.getElementById('qada-prayer-modal-title').textContent = 'تعديل قضاء الصلاة';
+    document.getElementById('qada-prayer-count-input').value = existing.remaining;
+    overlay.querySelectorAll('#qada-prayer-chips .chip').forEach(c => c.classList.toggle('active', c.dataset.prayer === existing.prayerName));
+  })();
+
+  document.getElementById('qada-prayer-cancel-btn').addEventListener('click', () => overlay.remove());
+  const deleteBtn = document.getElementById('qada-prayer-delete-btn');
+  if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+    if (!confirm('حذف هذا القضاء؟')) return;
+    await deleteQadaPrayer(existingId);
+    overlay.remove();
+    if (onSaved) onSaved();
+  });
+  document.getElementById('qada-prayer-save-btn').addEventListener('click', async () => {
+    const count = parseInt(document.getElementById('qada-prayer-count-input').value, 10);
+    if (Number.isNaN(count) || count < 0) return;
+    const prayerName = overlay.querySelector('#qada-prayer-chips .chip.active')?.dataset.prayer || PRAYER_NAMES[0];
+    if (existingId) await updateQadaPrayer(existingId, { prayerName, remaining: count });
+    else await createQadaPrayer(prayerName, count);
+    overlay.remove();
+    if (onSaved) onSaved();
+  });
+}
+
+function qadaFastingRowHtml(item) {
+  const done = item.remaining === 0;
+  return `
+    <div class="adhkar-counter-row" data-qada-fast-id="${item.id}">
+      <div class="adhkar-name-block">
+        <span class="adhkar-name">${item.label ? escapeHtml(item.label) : 'أيام صيام'}</span>
+        ${done ? `<span class="tsr-streak">✅ تم القضاء بالكامل</span>` : ''}
+      </div>
+      <div class="adhkar-counter-controls">
+        <button class="adhkar-count-btn" disabled>${item.remaining}</button>
+        <button class="adhkar-plus qada-fast-minus-btn" data-action="dec" ${done ? 'disabled' : ''}>−</button>
+        ${kebabMenuHtml('qf-' + item.id, [
+          { key: 'edit', label: 'تعديل' },
+          { key: 'remove', label: 'حذف', danger: true }
+        ])}
+      </div>
+    </div>`;
+}
+
+async function renderQadaFastingList(container) {
+  const items = await getQadaFasting();
+  if (items.length === 0) {
+    container.innerHTML = `<p class="empty-state-sub">ما في صيام قضاء مسجّل.</p>`;
+    return;
+  }
+  container.innerHTML = items.map(qadaFastingRowHtml).join('');
+  container.querySelectorAll('.qada-fast-minus-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('[data-qada-fast-id]');
+      await decrementQadaFastingDay(Number(row.dataset.qadaFastId));
+      await renderQadaFastingList(container);
+    });
+  });
+  wireKebabMenus(container, async (rowId, action) => {
+    const id = Number(rowId.replace('qf-', ''));
+    if (action === 'edit') {
+      openQadaFastingModal({ existingId: id, onSaved: () => renderQadaFastingList(container) });
+    } else if (action === 'remove') {
+      if (!confirm('حذف هذا القضاء؟')) return;
+      await deleteQadaFasting(id);
+      await renderQadaFastingList(container);
+    }
+  });
+}
+
+function openQadaFastingModal({ existingId, onSaved } = {}) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2 class="modal-title" id="qada-fasting-modal-title">قضاء صيام</h2>
+      <label class="field-label">وصف (اختياري)</label>
+      <input class="text-input" id="qada-fasting-label-input" placeholder="مثلاً: قضاء رمضان">
+      <label class="field-label">عدد الأيام المتبقية</label>
+      <input class="text-input" type="number" min="0" id="qada-fasting-count-input" placeholder="مثلاً: 5">
+      <div class="modal-actions">
+        ${existingId ? `<button class="btn btn-danger btn-sm" id="qada-fasting-delete-btn">حذف</button>` : ''}
+        <button class="btn btn-text" id="qada-fasting-cancel-btn">إلغاء</button>
+        <button class="btn btn-primary" id="qada-fasting-save-btn">حفظ</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  (async () => {
+    if (!existingId) return;
+    const existing = await db.qadaFasting.get(existingId);
+    if (!existing) return;
+    document.getElementById('qada-fasting-modal-title').textContent = 'تعديل قضاء الصيام';
+    document.getElementById('qada-fasting-label-input').value = existing.label || '';
+    document.getElementById('qada-fasting-count-input').value = existing.remaining;
+  })();
+
+  document.getElementById('qada-fasting-cancel-btn').addEventListener('click', () => overlay.remove());
+  const deleteBtn = document.getElementById('qada-fasting-delete-btn');
+  if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+    if (!confirm('حذف هذا القضاء؟')) return;
+    await deleteQadaFasting(existingId);
+    overlay.remove();
+    if (onSaved) onSaved();
+  });
+  document.getElementById('qada-fasting-save-btn').addEventListener('click', async () => {
+    const count = parseInt(document.getElementById('qada-fasting-count-input').value, 10);
+    if (Number.isNaN(count) || count < 0) return;
+    const label = document.getElementById('qada-fasting-label-input').value.trim();
+    if (existingId) await updateQadaFasting(existingId, { label, remaining: count });
+    else await createQadaFasting(label, count);
+    overlay.remove();
+    if (onSaved) onSaved();
+  });
+}
+
+async function qadaYearlyProvider() {
+  const [prayers, fasting] = await Promise.all([getQadaPrayers(), getQadaFasting()]);
+  const outstandingPrayers = prayers.filter(p => p.remaining > 0);
+  const outstandingFastingDays = fasting.reduce((s, f) => s + f.remaining, 0);
+  if (outstandingPrayers.length === 0 && outstandingFastingDays === 0) return null;
+  const html = `
+    ${outstandingPrayers.map(p => `<div class="yearly-row"><span>${PRAYER_LABELS[p.prayerName]}</span><span>${p.remaining} متبقّية</span></div>`).join('')}
+    ${outstandingFastingDays > 0 ? `<div class="yearly-row"><span>أيام صيام متبقّية</span><span>${outstandingFastingDays}</span></div>` : ''}
+  `;
+  return { title: 'القضاء (الحالة الحالية)', html, count: null };
+}
+
 // ===================== Custom adhkar (name + daily count) =====================
 
 async function createCustomAdhkar(name) {
@@ -671,6 +917,20 @@ async function renderWorshipPage(params, view) {
     </div>
 
     <div class="card">
+      <h2 class="card-title">🕋 القضاء</h2>
+      <div class="section-header">
+        <h3 class="material-type-label">صلوات فائتة</h3>
+        <button class="link-btn" id="add-qada-prayer-btn">+ إضافة</button>
+      </div>
+      <div id="qada-prayers-list"></div>
+      <div class="section-header" style="margin-top: var(--space-3);">
+        <h3 class="material-type-label">صيام فائت</h3>
+        <button class="link-btn" id="add-qada-fasting-btn">+ إضافة</button>
+      </div>
+      <div id="qada-fasting-list"></div>
+    </div>
+
+    <div class="card">
       <h2 class="card-title">السنن والأذكار بعد الصلاة</h2>
       <div class="worship-section-stats" id="extras-stats"></div>
       <div id="extras-list"></div>
@@ -685,7 +945,6 @@ async function renderWorshipPage(params, view) {
 
     <div class="card">
       <h2 class="card-title">أذكار الصباح والمساء</h2>
-      <div class="worship-section-stats" id="daily-adhkar-stats"></div>
       <div id="daily-adhkar"></div>
     </div>
 
@@ -726,17 +985,27 @@ async function renderWorshipPage(params, view) {
     await refreshRingAndPause();
   });
 
-  const [sunnahStats, adhkarAfterStats, dailyStats] = await Promise.all([getSunnahStats(), getAdhkarAfterStats(), getDailyAdhkarStats()]);
+  const [sunnahStats, adhkarAfterStats] = await Promise.all([getSunnahStats(), getAdhkarAfterStats()]);
   document.getElementById('extras-stats').innerHTML = `
     <p class="worship-stat-line">سنن: ${statsLine(sunnahStats) || '—'}</p>
     <p class="worship-stat-line">أذكار بعد الصلاة: ${statsLine(adhkarAfterStats) || '—'}</p>
   `;
-  document.getElementById('daily-adhkar-stats').innerHTML = `<p class="worship-stat-line">${statsLine(dailyStats) || '—'}</p>`;
 
   await renderExtrasList(document.getElementById('extras-list'), today);
   await renderDailyAdhkar(document.getElementById('daily-adhkar'), today);
   await renderStandaloneSunnah(document.getElementById('standalone-sunnah'), today, { showStreak: true });
   await renderWirdCard(document.getElementById('wird-card'));
+
+  const qadaPrayersEl = document.getElementById('qada-prayers-list');
+  await renderQadaPrayersList(qadaPrayersEl);
+  document.getElementById('add-qada-prayer-btn').addEventListener('click', () => {
+    openQadaPrayerModal({ onSaved: () => renderQadaPrayersList(qadaPrayersEl) });
+  });
+  const qadaFastingEl = document.getElementById('qada-fasting-list');
+  await renderQadaFastingList(qadaFastingEl);
+  document.getElementById('add-qada-fasting-btn').addEventListener('click', () => {
+    openQadaFastingModal({ onSaved: () => renderQadaFastingList(qadaFastingEl) });
+  });
 
   const adhkarListEl = document.getElementById('custom-adhkar-list');
   await renderCustomAdhkarList(adhkarListEl, today, { editable: true, showStreak: true });

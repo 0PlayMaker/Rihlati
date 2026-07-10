@@ -1,4 +1,7 @@
-// reminders.js — best-effort local reminders for Fixed Tasks.
+// reminders.js — best-effort local reminders, covering multiple
+// features via a shared provider registry (same pattern as Day
+// Detail/Yearly Overview) rather than being hard-coded to just Fixed
+// Tasks the way this started out.
 //
 // Being upfront about a real platform limit: a static, server-free PWA
 // can only reliably fire a notification while the browser/app process is
@@ -15,6 +18,15 @@
 //      of silently vanishing.
 
 let scheduledTimers = [];
+let reminderProviders = [];
+
+// A provider is async (settings) => [{ time: 'HH:MM', title, body }].
+// Each one decides for itself whether it has anything to say today
+// (e.g. skip if already done, or if she's disabled that category) —
+// this file doesn't need to know what any of them mean.
+function registerReminderProvider(fn) {
+  reminderProviders.push(fn);
+}
 
 async function requestNotificationPermission() {
   if (!('Notification' in window)) return 'unsupported';
@@ -47,22 +59,34 @@ function clearScheduledReminders() {
   scheduledTimers = [];
 }
 
-// Schedules whatever is left of today's fixed-task reminders as in-page
-// timers. Safe to call repeatedly (e.g. on every Home render) — it clears
-// old timers first so nothing double-fires.
-function scheduleTodayReminders(fixedTasks, isDoneToday) {
+async function collectTodayReminders() {
+  const settings = await db.settings.get(1);
+  let all = [];
+  for (const provider of reminderProviders) {
+    try {
+      const items = await provider(settings);
+      if (items && items.length) all = all.concat(items);
+    } catch (e) { console.error('Reminder provider failed:', e); }
+  }
+  return all;
+}
+
+// Schedules whatever is left of today's reminders (across every
+// registered provider) as in-page timers. Safe to call repeatedly
+// (e.g. on every Home render) — it clears old timers first so nothing
+// double-fires.
+async function scheduleAllTodayReminders() {
   clearScheduledReminders();
   if (notificationStatus() !== 'granted') return;
+  const items = await collectTodayReminders();
   const now = new Date();
-  for (const task of fixedTasks) {
-    if (!task.reminderTime || task.archived) continue;
-    if (isDoneToday(task.id)) continue;
-    const [h, m] = task.reminderTime.split(':').map(Number);
+  for (const item of items) {
+    const [h, m] = item.time.split(':').map(Number);
     const when = new Date();
     when.setHours(h, m, 0, 0);
     const delay = when - now;
     if (delay > 0 && delay < 24 * 60 * 60 * 1000) {
-      const t = setTimeout(() => fireNotification('رحلتي 🌸', `تذكير: ${task.title}`), delay);
+      const t = setTimeout(() => fireNotification(item.title, item.body), delay);
       scheduledTimers.push(t);
     }
   }
@@ -71,21 +95,20 @@ function scheduleTodayReminders(fixedTasks, isDoneToday) {
 // Called on load and on visibility change: catches reminders whose time
 // passed while the app was closed, so opening the app surfaces them
 // instead of losing them silently.
-async function checkMissedReminders(fixedTasks, isDoneToday) {
+async function checkAllMissedReminders() {
   if (notificationStatus() !== 'granted') return;
   const now = new Date();
   const lastCheckKey = 'rahlati_last_reminder_check';
   const lastCheckRaw = localStorage.getItem(lastCheckKey);
   const lastCheck = lastCheckRaw ? new Date(lastCheckRaw) : new Date(now.getTime() - 60 * 60 * 1000);
 
-  for (const task of fixedTasks) {
-    if (!task.reminderTime || task.archived) continue;
-    if (isDoneToday(task.id)) continue;
-    const [h, m] = task.reminderTime.split(':').map(Number);
+  const items = await collectTodayReminders();
+  for (const item of items) {
+    const [h, m] = item.time.split(':').map(Number);
     const when = new Date();
     when.setHours(h, m, 0, 0);
     if (when <= now && when > lastCheck) {
-      fireNotification('رحلتي 🌸', `تذكير لم يفتك بعد: ${task.title}`);
+      fireNotification(item.title, item.body);
     }
   }
   localStorage.setItem(lastCheckKey, now.toISOString());

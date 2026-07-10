@@ -104,14 +104,20 @@ function openSleepModal({ existingId, onSaved } = {}) {
   overlay.innerHTML = `
     <div class="modal modal-lg">
       <h2 class="modal-title" id="sleep-modal-title">تسجيل نوم</h2>
-      <label class="checkbox-row"><input type="checkbox" id="sleep-nap-input"><span>هذه قيلولة</span></label>
+      <label class="field-label">النوع</label>
+      <div class="habit-type-chips" id="sleep-type-chips">
+        <button class="chip active" data-nap="0">🌙 نوم ليلة</button>
+        <button class="chip" data-nap="1">💤 قيلولة</button>
+      </div>
       <label class="field-label">التاريخ (ليلة النوم)</label>
       <input class="text-input" type="date" id="sleep-date-input" value="${todayStr()}">
-      <label class="field-label">وقت النوم</label>
-      <input class="text-input" type="time" id="sleep-sleeptime-input" value="23:00">
+      <label class="field-label">وقت النوم والاستيقاظ</label>
+      <div class="timer-duration-row">
+        <input class="text-input" type="time" id="sleep-sleeptime-input" value="23:00">
+        <span>←</span>
+        <input class="text-input" type="time" id="sleep-waketime-input" value="07:00">
+      </div>
       <p class="settings-note" id="sleep-sleeptime-label"></p>
-      <label class="field-label">وقت الاستيقاظ</label>
-      <input class="text-input" type="time" id="sleep-waketime-input" value="07:00">
       <p class="settings-note" id="sleep-waketime-label"></p>
       <p class="mini-progress-text" id="sleep-duration-preview"></p>
       <label class="field-label">ماذا حلمتِ؟ (اختياري)</label>
@@ -142,6 +148,12 @@ function openSleepModal({ existingId, onSaved } = {}) {
   [sleepTimeInput, wakeTimeInput, dateInput].forEach(el => el.addEventListener('input', refreshPreview));
   refreshPreview();
 
+  overlay.querySelectorAll('#sleep-type-chips .chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      overlay.querySelectorAll('#sleep-type-chips .chip').forEach(c => c.classList.toggle('active', c === chip));
+    });
+  });
+
   function renderPhotoArea() {
     const el = document.getElementById('sleep-photo-preview');
     if (pendingPhotoBlob) el.innerHTML = `<img src="${trackSleepPhotoUrl(pendingPhotoBlob)}" alt="">`;
@@ -164,7 +176,7 @@ function openSleepModal({ existingId, onSaved } = {}) {
     const existing = await db.sleepLogs.get(existingId);
     if (!existing) return;
     document.getElementById('sleep-modal-title').textContent = 'تعديل تسجيل النوم';
-    document.getElementById('sleep-nap-input').checked = existing.isNap;
+    overlay.querySelectorAll('#sleep-type-chips .chip').forEach(c => c.classList.toggle('active', (c.dataset.nap === '1') === existing.isNap));
     dateInput.value = existing.date;
     sleepTimeInput.value = existing.sleepTime;
     wakeTimeInput.value = existing.wakeTime;
@@ -187,7 +199,7 @@ function openSleepModal({ existingId, onSaved } = {}) {
     const sleepTime = sleepTimeInput.value;
     const wakeTime = wakeTimeInput.value;
     if (!date || !sleepTime || !wakeTime) return;
-    const isNap = document.getElementById('sleep-nap-input').checked;
+    const isNap = overlay.querySelector('#sleep-type-chips .chip.active')?.dataset.nap === '1';
     const dreamText = document.getElementById('sleep-dream-input').value.trim();
     if (existingId) await updateSleepLog(existingId, { date, sleepTime, wakeTime, isNap, dreamText, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
     else await addSleepLog({ date, sleepTime, wakeTime, isNap, dreamText, photoBlob: pendingPhotoBlob });

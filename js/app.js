@@ -7,8 +7,51 @@ async function rescheduleHomeReminders() {
   const tasks = await getActiveFixedTasks();
   const doneSet = await getFixedTasksDoneSet(tasks, todayStr());
   const isDoneToday = (id) => doneSet.has(id);
-  scheduleTodayReminders(tasks, isDoneToday);
+  await scheduleAllTodayReminders();
   return isDoneToday;
+}
+
+async function renderHomeRingSection(container) {
+  const ringData = await getHabitsRingData();
+  const fixedTasks = await getActiveFixedTasks();
+  const doneSet = await getFixedTasksDoneSet(fixedTasks, todayStr());
+  const doneTaskCount = doneSet.size;
+  const worshipStats = await getWorshipTodayStats();
+  const last7DaysMood = await getLast7DaysMood();
+  const [goodStreak, badStreak] = await Promise.all([getTopHabitStreak('good'), getTopHabitStreak('bad')]);
+  const habitDoneFrac = ringData.total ? ringData.done / ringData.total : 0;
+  const habitMissedFrac = ringData.total ? ringData.missed / ringData.total : 0;
+  const ringSvg = renderRing({
+    segments: [
+      { frac: habitDoneFrac, color: 'var(--mint-deep)' },
+      { frac: habitMissedFrac, color: 'var(--rose-deep)' }
+    ]
+  });
+  container.innerHTML = `
+    <div class="rings-row">
+      <div class="ring-wrap">
+        ${ringSvg}
+        <div class="ring-center-text">${ringData.total ? `${ringData.done}/${ringData.total}` : '—'}</div>
+      </div>
+      <div class="ring-label-block">
+        <p class="ring-label">عاداتك اليوم</p>
+        ${fixedTasks.length ? `
+          <div class="mini-progress">
+            <div class="mini-progress-track"><div class="mini-progress-fill" style="width:${doneTaskCount / fixedTasks.length * 100}%"></div></div>
+            <span class="mini-progress-text">مهامك: ${doneTaskCount}/${fixedTasks.length}</span>
+          </div>` : `<span class="mini-progress-text">أضيفي مهمة ثابتة من قسم المهام 👇</span>`}
+      </div>
+    </div>
+    <div class="mood-strip-row">
+      ${last7DaysMood.map(d => `<span class="mood-strip-emoji" title="${formatDateArabic(d.date, { weekday: false })}">${d.emoji || '·'}</span>`).join('')}
+    </div>
+    ${(goodStreak || badStreak || worshipStats.streak > 0) ? `
+      <div class="streaks-strip-row">
+        ${goodStreak ? `<span class="streak-chip">${goodStreak.emoji} ${escapeHtml(goodStreak.name)} 🔥${goodStreak.streak}</span>` : ''}
+        ${badStreak ? `<span class="streak-chip">🚫 ${escapeHtml(badStreak.name)} 🔥${badStreak.streak}</span>` : ''}
+        ${worshipStats.streak > 0 ? `<span class="streak-chip">🕌 صلوات 🔥${worshipStats.streak}</span>` : ''}
+      </div>` : ''}
+  `;
 }
 
 async function renderHome(params, view, renderToken) {
@@ -56,31 +99,7 @@ async function renderHome(params, view, renderToken) {
       <button class="icon-btn" id="header-settings" aria-label="الإعدادات">⚙️</button>
     </header>
 
-    <section class="card rings-card">
-      <div class="rings-row">
-        <div class="ring-wrap">
-          ${ringSvg}
-          <div class="ring-center-text">${ringData.total ? `${ringData.done}/${ringData.total}` : '—'}</div>
-        </div>
-        <div class="ring-label-block">
-          <p class="ring-label">عاداتك اليوم</p>
-          ${fixedTasks.length ? `
-            <div class="mini-progress">
-              <div class="mini-progress-track"><div class="mini-progress-fill" style="width:${doneTaskCount / fixedTasks.length * 100}%"></div></div>
-              <span class="mini-progress-text">مهامك: ${doneTaskCount}/${fixedTasks.length}</span>
-            </div>` : `<span class="mini-progress-text">أضيفي مهمة ثابتة من قسم المهام 👇</span>`}
-        </div>
-      </div>
-      <div class="mood-strip-row">
-        ${last7DaysMood.map(d => `<span class="mood-strip-emoji" title="${formatDateArabic(d.date, { weekday: false })}">${d.emoji || '·'}</span>`).join('')}
-      </div>
-      ${(goodStreak || badStreak || worshipStats.streak > 0) ? `
-        <div class="streaks-strip-row">
-          ${goodStreak ? `<span class="streak-chip">${goodStreak.emoji} ${escapeHtml(goodStreak.name)} 🔥${goodStreak.streak}</span>` : ''}
-          ${badStreak ? `<span class="streak-chip">🚫 ${escapeHtml(badStreak.name)} 🔥${badStreak.streak}</span>` : ''}
-          ${worshipStats.streak > 0 ? `<span class="streak-chip">🕌 صلوات 🔥${worshipStats.streak}</span>` : ''}
-        </div>` : ''}
-    </section>
+    <section class="card rings-card" id="home-ring-section"></section>
 
     <section class="quick-actions-row quick-actions-row-3">
       <button class="quick-action-card" id="food-action">
@@ -167,6 +186,7 @@ async function renderHome(params, view, renderToken) {
   `;
 
   document.getElementById('header-settings').addEventListener('click', () => goTo('/settings'));
+  await renderHomeRingSection(document.getElementById('home-ring-section'));
   document.getElementById('header-pfp').addEventListener('click', () => goTo('/settings'));
   document.getElementById('food-action').addEventListener('click', () => goTo('/food'));
   document.getElementById('worship-action').addEventListener('click', () => goTo('/worship'));
@@ -183,19 +203,70 @@ async function renderHome(params, view, renderToken) {
 
   const goodHabits = (await getActiveHabitsByType('good')).slice(0, 3);
   const badHabits = (await getActiveHabitsByType('bad')).slice(0, 3);
-  await renderHabitCards(document.getElementById('home-good-habits'), goodHabits, { onChange: () => renderRoute(), emptyText: 'ما في عادات جيدة بعد.' });
-  await renderHabitCards(document.getElementById('home-bad-habits'), badHabits, { onChange: () => renderRoute(), emptyText: 'ما في عادات للإقلاع عنها بعد.' });
+  const refreshHomeRing = () => renderHomeRingSection(document.getElementById('home-ring-section'));
+  await renderHabitCards(document.getElementById('home-good-habits'), goodHabits, { onChange: refreshHomeRing, emptyText: 'ما في عادات جيدة بعد.' });
+  await renderHabitCards(document.getElementById('home-bad-habits'), badHabits, { onChange: refreshHomeRing, emptyText: 'ما في عادات للإقلاع عنها بعد.' });
 
   await renderFixedTaskList(document.getElementById('home-fixed-tasks'), today, { editable: true, limit: 3, showManage: true, onChange: rescheduleHomeReminders });
   await renderTodoList(document.getElementById('home-custom-todos'), { limit: 3, onlyOpen: true, showManage: true });
 
   await renderGoalsList(document.getElementById('home-goals-preview'), { limit: 2 });
 
-  const isDoneToday = await rescheduleHomeReminders();
-  checkMissedReminders(fixedTasks, isDoneToday);
+  await rescheduleHomeReminders();
+  checkAllMissedReminders();
 }
 
 // ---------- boot ----------
+
+function registerAllReminderProviders() {
+  // Fixed tasks — each task opts in individually via its own
+  // reminderTime, same as before; this is just the same logic
+  // expressed as a provider instead of being hard-coded into
+  // reminders.js itself.
+  registerReminderProvider(async (settings) => {
+    if (settings?.remindersEnabled?.tasks === false) return [];
+    const tasks = await getActiveFixedTasks();
+    const doneSet = await getFixedTasksDoneSet(tasks, todayStr());
+    return tasks
+      .filter(t => t.reminderTime && !doneSet.has(t.id))
+      .map(t => ({ time: t.reminderTime, title: 'رحلتي 🌸', body: `تذكير: ${t.title}` }));
+  });
+
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.water) return [];
+    const [liters, target] = await Promise.all([getWaterForDate(todayStr()), getWaterTarget()]);
+    if (liters >= target) return [];
+    const time = settings.reminderTimes?.water || '15:00';
+    return [{ time, title: 'رحلتي 🌸', body: 'حان وقت شرب الماء 💧' }];
+  });
+
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled) return [];
+    const items = [];
+    const today = todayStr();
+    if (settings.remindersEnabled.adhkarMorning && !(await isDailyAdhkarDone('morning', today))) {
+      items.push({ time: settings.reminderTimes?.adhkarMorning || '06:00', title: 'رحلتي 🌸', body: 'حان وقت أذكار الصباح 🌅' });
+    }
+    if (settings.remindersEnabled.adhkarEvening && !(await isDailyAdhkarDone('evening', today))) {
+      items.push({ time: settings.reminderTimes?.adhkarEvening || '18:00', title: 'رحلتي 🌸', body: 'حان وقت أذكار المساء 🌙' });
+    }
+    return items;
+  });
+
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.wird) return [];
+    const plan = await getWirdPlan();
+    if (!plan || await isWirdLoggedToday()) return [];
+    const time = settings.reminderTimes?.wird || '20:00';
+    return [{ time, title: 'رحلتي 🌸', body: 'لا تنسي وردك اليوم 📖' }];
+  });
+
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.sleep) return [];
+    const time = settings.reminderTimes?.sleep || '22:30';
+    return [{ time, title: 'رحلتي 🌸', body: 'قرّب وقت النوم — جهّزي نفسك 😴' }];
+  });
+}
 
 function registerAllDayProviders() {
   registerDayProvider(habitsDayProvider);
@@ -271,6 +342,7 @@ function registerAllYearlyStatsProviders() {
   registerYearlyStatsProvider(wirdYearlyProvider);
   registerYearlyStatsProvider(studyYearlyProvider);
   registerYearlyStatsProvider(sleepYearlyProvider);
+  registerYearlyStatsProvider(qadaYearlyProvider);
 }
 
 async function renderBottomBar() {
@@ -306,6 +378,7 @@ function startApp(profile, settings) {
   registerAllDayProviders();
   registerAllActivityProviders();
   registerAllYearlyStatsProviders();
+  registerAllReminderProviders();
   route('/home', renderHome);
   route('/habits', renderHabitsPage);
   route('/tasks', renderTasksPage);
@@ -339,9 +412,7 @@ function startApp(profile, settings) {
 
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible') {
-      const tasks = await getActiveFixedTasks();
-      const doneSet = await getFixedTasksDoneSet(tasks, todayStr());
-      checkMissedReminders(tasks, (id) => doneSet.has(id));
+      checkAllMissedReminders();
       if (currentPath() === '/home') renderRoute();
     }
   });

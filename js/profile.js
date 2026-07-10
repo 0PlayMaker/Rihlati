@@ -276,6 +276,29 @@ function renderForgotPin(profile, onUnlock) {
 
 // ---------- Settings page (registered as a route in app.js) ----------
 
+const REMINDER_CATEGORIES = [
+  { key: 'tasks', label: 'المهام الثابتة', hasTime: false, note: 'كل مهمة تحدّد وقتها بنفسها' },
+  { key: 'water', label: '💧 الماء', hasTime: true, defaultTime: '15:00' },
+  { key: 'adhkarMorning', label: '🌅 أذكار الصباح', hasTime: true, defaultTime: '06:00' },
+  { key: 'adhkarEvening', label: '🌙 أذكار المساء', hasTime: true, defaultTime: '18:00' },
+  { key: 'wird', label: '📖 ورد القرآن', hasTime: true, defaultTime: '20:00' },
+  { key: 'sleep', label: '😴 تذكير النوم', hasTime: true, defaultTime: '22:30' }
+];
+
+function renderReminderCategoriesHtml(settings) {
+  const enabled = settings?.remindersEnabled || {};
+  const times = settings?.reminderTimes || {};
+  return `
+    <div class="reminder-categories">
+      ${REMINDER_CATEGORIES.map(cat => `
+        <div class="reminder-category-row">
+          <label class="switch"><input type="checkbox" class="reminder-cat-toggle" data-cat="${cat.key}" ${(cat.key === 'tasks' ? enabled.tasks !== false : !!enabled[cat.key]) ? 'checked' : ''}><span class="switch-track"></span></label>
+          <span class="reminder-cat-label">${cat.label}</span>
+          ${cat.hasTime ? `<input type="time" class="text-input reminder-cat-time" data-cat-time="${cat.key}" value="${times[cat.key] || cat.defaultTime}">` : `<span class="settings-note">${cat.note}</span>`}
+        </div>`).join('')}
+    </div>`;
+}
+
 async function renderSettingsPage(params, view) {
   const profile = await db.profile.get(1);
   const settings = await db.settings.get(1);
@@ -321,11 +344,14 @@ async function renderSettingsPage(params, view) {
     <div class="card settings-card">
       <h2 class="card-title">عبارات الترحيب</h2>
       <p class="settings-note">تظهر عشوائياً في الصفحة الرئيسية.</p>
-      <div id="welcome-phrases-list"></div>
-      <div class="food-photo-actions">
-        <input class="text-input" id="new-phrase-input" placeholder="أضيفي عبارة جديدة">
-        <button class="btn btn-secondary btn-sm" id="add-phrase-btn">+ إضافة</button>
-      </div>
+      <details class="weight-history-details">
+        <summary>عرض وإدارة العبارات</summary>
+        <div id="welcome-phrases-list"></div>
+        <div class="food-photo-actions">
+          <input class="text-input" id="new-phrase-input" placeholder="أضيفي عبارة جديدة">
+          <button class="btn btn-secondary btn-sm" id="add-phrase-btn">+ إضافة</button>
+        </div>
+      </details>
     </div>
 
     <div class="card settings-card">
@@ -345,6 +371,7 @@ async function renderSettingsPage(params, view) {
       </div>
       ${notifStatus !== 'granted' && notifStatus !== 'unsupported' ? `<button class="btn btn-secondary btn-sm" id="settings-enable-notif">تفعيل الإشعارات</button>` : ''}
       <p class="settings-note">ملاحظة: التطبيق محلي بالكامل بدون سيرفر، فالتذكيرات تعمل بشكل موثوق أثناء تشغيل التطبيق، وتظهر التذكيرات الفائتة عند فتحه من جديد.</p>
+      ${notifStatus === 'granted' ? renderReminderCategoriesHtml(settings) : ''}
     </div>
 
     <div class="card settings-card">
@@ -475,6 +502,23 @@ async function renderSettingsPage(params, view) {
     const result = await requestNotificationPermission();
     await db.settings.update(1, { notificationsEnabled: result === 'granted' });
     renderRoute();
+  });
+
+  document.querySelectorAll('.reminder-cat-toggle').forEach(toggle => {
+    toggle.addEventListener('change', async () => {
+      const s = await db.settings.get(1);
+      const remindersEnabled = { ...(s?.remindersEnabled || {}), [toggle.dataset.cat]: toggle.checked };
+      await db.settings.update(1, { remindersEnabled });
+      await scheduleAllTodayReminders();
+    });
+  });
+  document.querySelectorAll('.reminder-cat-time').forEach(input => {
+    input.addEventListener('change', async () => {
+      const s = await db.settings.get(1);
+      const reminderTimes = { ...(s?.reminderTimes || {}), [input.dataset.catTime]: input.value };
+      await db.settings.update(1, { reminderTimes });
+      await scheduleAllTodayReminders();
+    });
   });
 
   document.getElementById('settings-export').addEventListener('click', async () => {

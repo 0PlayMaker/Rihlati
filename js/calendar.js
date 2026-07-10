@@ -164,10 +164,24 @@ async function renderYearlyOverviewPage(params, view) {
     sectionsEl.innerHTML = `<div class="empty-state"><p>ما في بيانات مسجلة لهذه السنة.</p></div>`;
     return;
   }
+  // Grouped by category so related sections land next to each other,
+  // rather than in whatever order their providers happened to register.
+  const YEARLY_CATEGORY_ORDER = [
+    'الوزن', 'النوم', 'التمارين', 'الطعام والماء', 'المزاج', 'الدورة الشهرية',
+    'العبادة', 'ورد القرآن', 'القضاء (الحالة الحالية)',
+    'العادات', 'المهام اليومية', 'قائمة المهام', 'الأهداف (الحالة الحالية)', 'التعلم',
+    'يومياتي', 'الاقتصاد'
+  ];
+  sections.sort((a, b) => {
+    const rankA = YEARLY_CATEGORY_ORDER.indexOf(a.title);
+    const rankB = YEARLY_CATEGORY_ORDER.indexOf(b.title);
+    return (rankA === -1 ? YEARLY_CATEGORY_ORDER.length : rankA) - (rankB === -1 ? YEARLY_CATEGORY_ORDER.length : rankB);
+  });
+
   sectionsEl.innerHTML = '';
   sections.forEach(({ title, html }) => {
     const card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card yearly-section-card';
     card.innerHTML = `<h2 class="card-title">${title}</h2>${html}`;
     sectionsEl.appendChild(card);
   });

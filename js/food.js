@@ -85,8 +85,8 @@ async function renderWaterCard(container) {
     <div class="mini-progress-track"><div class="mini-progress-fill water-fill" style="width:${frac * 100}%"></div></div>
     <p class="period-status-sub">${liters.toFixed(2)} من ${target} لتر</p>
     <div class="water-actions">
-      <button class="btn btn-secondary btn-sm" id="water-add-cup">+ كوب (٠.٢٥ل)</button>
-      <button class="btn btn-text btn-sm" id="water-edit-exact">تعديل يدوي</button>
+      <button class="btn btn-secondary btn-sm" id="water-add-cup">+ كوب ٢٥٠ ملي (ربع لتر)</button>
+      <button class="btn btn-secondary btn-sm" id="water-edit-exact">تعديل يدوي</button>
     </div>
   `;
   document.getElementById('water-add-cup').addEventListener('click', async () => {

@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v27 · ٩ يوليو ٢٠٢٦';
+const APP_VERSION = 'v32 · ٩ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -251,6 +251,16 @@ db.version(13).stores({
 db.version(14).stores({
   sleepLogs: '++id, date',
   sleepDreamPhotos: 'sleepLogId'
+});
+
+// ---------- Phase 15 — القضاء (makeup prayers + fasting) ----------
+// Standing counters, not daily logs — a "remaining" count that only
+// ever decreases as she catches up, the opposite direction from custom
+// adhkar's count-up. No date indexing needed since these aren't
+// attached to any specific day.
+db.version(15).stores({
+  qadaPrayers: '++id',
+  qadaFasting: '++id'
 });
 
 // ---------- date helpers (used everywhere) ----------

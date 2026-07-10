@@ -275,6 +275,7 @@ async function renderBodyPage(params, view) {
       <button class="icon-btn" id="body-back">→</button>
       <h1>الصحة</h1>
     </div>
+    <div class="card" id="body-sleep-summary"></div>
     <div class="card" id="weight-glance-card"></div>
     <div class="card">
       <h2 class="card-title">الرسم البياني</h2>
@@ -317,7 +318,6 @@ async function renderBodyPage(params, view) {
       </div>
       <p class="settings-note">تمارينك اليومية، بعداد مجموعات، تكرار، ومؤقّت.</p>
     </div>
-    <div class="card" id="body-sleep-summary"></div>
   `;
   document.getElementById('body-back').addEventListener('click', () => history.back());
 

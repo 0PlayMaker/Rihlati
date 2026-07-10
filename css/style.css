@@ -283,7 +283,7 @@ a { color: var(--pink-deep); text-decoration: none; }
 .tsr-actions.disabled { opacity: 0.45; }
 .tsr-btn {
   width: 36px; height: 36px; border-radius: var(--radius-round); border: none;
-  background: var(--track); font-size: 15px; cursor: pointer; opacity: 0.55;
+  background: var(--track); font-size: 15px; cursor: pointer; opacity: 0.72;
   transition: transform 0.1s ease, opacity 0.1s ease;
 }
 .tsr-btn:active { transform: scale(0.9); }
@@ -516,7 +516,7 @@ a { color: var(--pink-deep); text-decoration: none; }
    Day Detail and the Yearly Overview
    ============================================================ */
 
-.habit-type-chips { display: flex; gap: 6px; margin-bottom: var(--space-2); }
+.habit-type-chips { display: flex; gap: 6px; margin-top: var(--space-3); margin-bottom: var(--space-2); flex-wrap: wrap; }
 .day-detail-subsection-title, .yearly-subsection-title {
   font-size: 13px; font-weight: 700; color: var(--ink-soft);
   margin: var(--space-3) 0 var(--space-1);
@@ -543,7 +543,7 @@ a { color: var(--pink-deep); text-decoration: none; }
    Water
    ============================================================ */
 
-.water-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+.water-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
 .water-fill { background: var(--blue-deep); }
 
 /* ============================================================
@@ -592,7 +592,7 @@ a { color: var(--pink-deep); text-decoration: none; }
    Kebab (⋮) menu — replaces the old paired edit/delete icons
    ============================================================ */
 
-.kebab-menu { position: relative; flex-shrink: 0; }
+.kebab-menu { position: relative; flex-shrink: 0; z-index: 5; }
 .kebab-btn {
   width: 32px; height: 32px; border-radius: var(--radius-round); border: none;
   background: var(--track); color: var(--ink-soft); font-size: 16px; font-weight: 700;
@@ -600,7 +600,7 @@ a { color: var(--pink-deep); text-decoration: none; }
 }
 .kebab-btn:active { transform: scale(0.92); }
 .kebab-dropdown {
-  position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 60;
   background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-soft);
   display: flex; flex-direction: column; min-width: 120px; overflow: hidden;
 }
@@ -670,6 +670,11 @@ body.theme-glass-dark .kebab-item {
 .diary-entry-text-clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .diary-expand-btn { margin-top: var(--space-2); }
 .adhkar-item-text { flex: 1; margin: 0; }
+.reminder-categories { margin-top: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+.reminder-category-row { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--track); }
+.reminder-category-row:last-child { border-bottom: none; }
+.reminder-cat-label { flex: 1; font-size: 14px; font-weight: 500; }
+.reminder-cat-time { max-width: 110px; }
 
 /* ============================================================
    Credit / dedication screen (first launch only)
@@ -721,6 +726,7 @@ body.theme-glass-dark .kebab-item {
 .timer-display.timer-done { color: var(--mint-deep); }
 .timer-duration-row { display: flex; align-items: center; gap: var(--space-2); justify-content: center; }
 .timer-duration-row .text-input { max-width: 100px; text-align: center; }
+.timer-duration-row input[type="time"] { max-width: 130px; }
 .timer-controls { justify-content: center; }
 
 /* ============================================================
@@ -836,6 +842,19 @@ body.theme-glass-dark .kebab-dropdown {
   border-color: rgba(255,255,255,0.14);
 }
 
+/* The overlay behind every modal (add a meal/exercise/course, etc.) had
+   a flat, theme-independent 2px blur that was never enhanced for glass
+   mode — this is what actually made the "add entry" popups feel like
+   they weren't blurring anything real, unlike bottom-bar. */
+body.theme-glass .modal-overlay,
+body.theme-glass-dark .modal-overlay {
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+}
+body.theme-glass-dark .modal-overlay {
+  background: rgba(10, 8, 15, 0.55);
+}
+
 /* AMOLED and dark: photos/icons on pure-white placeholder backgrounds
    would look like glaring white boxes against a near-black page. */
 body.theme-dark-ish .food-thumb-placeholder,
@@ -861,3 +880,5 @@ body.theme-dark-ish .food-photo-placeholder {
 }
 .theme-preview-title { color: var(--ink); font-weight: 500; }
 .theme-preview-btn { pointer-events: none; }
+.yearly-section-card { margin-bottom: var(--space-3); }
+.yearly-section-card:last-child { margin-bottom: 0; }

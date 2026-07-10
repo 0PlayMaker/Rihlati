@@ -165,8 +165,8 @@ function computeImplicitStats(loggedDates, pauses = []) {
 }
 
 function statsLine(stats) {
-  if (!stats || (stats.streak === 0 && stats.succeeded === 0 && stats.failed === 0)) return '';
-  return `🔥${stats.streak} · ✅${stats.succeeded} · 💔${stats.failed}`;
+  const s = stats || { streak: 0, succeeded: 0, failed: 0 };
+  return `🔥${s.streak}&nbsp;&nbsp;·&nbsp;&nbsp;✅${s.succeeded}&nbsp;&nbsp;·&nbsp;&nbsp;💔${s.failed}`;
 }
 
 // ---------- kebab (⋮) menu ----------
