@@ -85,10 +85,11 @@ async function getPeriodStats() {
   const cycleSpread = medianAbsoluteDeviation(recentCycleLengths);
 
   let confidence = 'none';
-  if (recentCycleLengths.length >= 2) {
+  if (recentCycleLengths.length >= 1) {
     if (recentCycleLengths.length >= 5 && cycleSpread <= 2) confidence = 'high';
     else if (recentCycleLengths.length >= 3 && cycleSpread <= 5) confidence = 'medium';
-    else confidence = 'low';
+    else if (recentCycleLengths.length >= 2) confidence = 'low';
+    else confidence = 'very_low';
   }
 
   return {
@@ -102,7 +103,40 @@ async function getPeriodStats() {
 }
 
 function confidenceLabel(level) {
-  return { high: 'ثقة عالية', medium: 'ثقة متوسطة', low: 'ثقة منخفضة', none: '' }[level] || '';
+  return { high: 'ثقة عالية', medium: 'ثقة متوسطة', low: 'ثقة منخفضة', very_low: 'ثقة منخفضة جداً — دورة واحدة فقط', none: '' }[level] || '';
+}
+
+// Ovulation is predicted by counting BACKWARD from the next period,
+// not forward from the last one — the luteal phase (post-ovulation to
+// next period) is hormonally regulated and stays close to 14 days for
+// most people, while the follicular phase (period to ovulation) is the
+// part that actually varies cycle to cycle. Counting forward with a
+// fixed "day 14" assumption is a common mistake; only ~14% of women
+// with a 28-day cycle actually ovulate on day 14 specifically.
+// Fertile window = the 5 days before ovulation + ovulation day itself
+// (6 days total) — sperm can survive ~5 days, the egg is viable only
+// ~12-24h after release, so this is the biological window where
+// intercourse could result in pregnancy.
+const LUTEAL_PHASE_DAYS = 14;
+function getFertilityPrediction(predictedNextPeriodStart) {
+  const ovulationDate = addDays(predictedNextPeriodStart, -LUTEAL_PHASE_DAYS);
+  const fertileStart = addDays(ovulationDate, -5);
+  const fertileEnd = ovulationDate;
+  return { ovulationDate, fertileStart, fertileEnd };
+}
+// Coarse, descriptive categories rather than invented precision — day-
+// by-day pregnancy-chance percentages vary noticeably between sources,
+// so this sticks to the shape everyone agrees on (rises toward
+// ovulation, peaks around 1-2 days before/on ovulation, drops sharply
+// after) instead of citing a specific number.
+function fertilityLevelForDate(dateStr, fertility) {
+  if (!fertility) return null;
+  const { ovulationDate, fertileStart, fertileEnd } = fertility;
+  if (dateStr < fertileStart || dateStr > fertileEnd) return null;
+  const daysFromOvulation = daysBetween(dateStr, ovulationDate);
+  if (dateStr === ovulationDate || daysFromOvulation === 1) return 'peak';
+  if (daysFromOvulation <= 3) return 'high';
+  return 'medium';
 }
 
 async function getPeriodStatus() {
@@ -126,14 +160,15 @@ async function getPeriodStatus() {
   const center = addDays(periods[0].startDate, Math.round(stats.avgCycleLength));
   const rangeStart = addDays(center, -halfWidth);
   const rangeEnd = addDays(center, halfWidth);
+  const fertility = getFertilityPrediction(center);
 
   if (today < rangeStart) {
-    return { state: 'upcoming', daysUntil: daysBetween(today, rangeStart), rangeStart, rangeEnd, stats };
+    return { state: 'upcoming', daysUntil: daysBetween(today, rangeStart), rangeStart, rangeEnd, stats, fertility };
   }
   if (today <= rangeEnd) {
-    return { state: 'due', rangeStart, rangeEnd, stats };
+    return { state: 'due', rangeStart, rangeEnd, stats, fertility };
   }
-  return { state: 'late', daysLate: daysBetween(rangeEnd, today), rangeStart, rangeEnd, stats };
+  return { state: 'late', daysLate: daysBetween(rangeEnd, today), rangeStart, rangeEnd, stats, fertility };
 }
 
 function periodStatusText(status) {
@@ -150,7 +185,7 @@ function periodStatusText(status) {
     case 'late':
       return status.daysLate === 1 ? `الدورة متأخرة يوم واحد عن نافذة التوقع ⏳${conf}` : `الدورة متأخرة ${status.daysLate} أيام عن نافذة التوقع ⏳${conf}`;
     case 'unknown':
-      return 'سجلي دورة أخرى على الأقل ليصبح التوقع ممكناً 🌸';
+      return 'سجلي دورة أخرى ليصبح التوقع ممكناً (تقديري في البداية) 🌸';
     default:
       return 'سجلي أول دورة لتبدأ التوقعات 🌸';
   }
@@ -167,7 +202,52 @@ function periodGlanceText(status) {
   }
 }
 
+function fertilityStatusText(status) {
+  if (!status.fertility) return '';
+  const { ovulationDate, fertileStart, fertileEnd } = status.fertility;
+  const today = todayStr();
+  if (today >= fertileStart && today <= fertileEnd) {
+    const level = fertilityLevelForDate(today, status.fertility);
+    const label = level === 'peak' ? 'ذروة الخصوبة 🌟' : level === 'high' ? 'خصوبة عالية' : 'خصوبة متوسطة';
+    return `اليوم ضمن نافذة الخصوبة المتوقعة — ${label}`;
+  }
+  if (today < fertileStart) {
+    return `الإباضة المتوقعة: ${formatDateArabic(ovulationDate, { weekday: false })} · نافذة الخصوبة: ${formatDateArabic(fertileStart, { weekday: false })} – ${formatDateArabic(fertileEnd, { weekday: false })}`;
+  }
+  return '';
+}
+
 // ---------- modals ----------
+
+function openAddPastPeriodModal(onDone) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2 class="modal-title">إضافة دورة سابقة</h2>
+      <p class="settings-note">لتحسين دقّة التوقعات، أضيفي أكبر عدد ممكن من الدورات السابقة إن تذكّرتِ تواريخها.</p>
+      <label class="field-label">تاريخ البداية</label>
+      <input class="text-input" type="date" id="past-period-start-input" value="${todayStr()}">
+      <label class="field-label">تاريخ النهاية (اختياري)</label>
+      <input class="text-input" type="date" id="past-period-end-input">
+      <div class="modal-actions">
+        <button class="btn btn-text" id="past-period-cancel">إلغاء</button>
+        <button class="btn btn-primary" id="past-period-save">إضافة</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('past-period-cancel').addEventListener('click', () => overlay.remove());
+  document.getElementById('past-period-save').addEventListener('click', async () => {
+    const start = document.getElementById('past-period-start-input').value;
+    const end = document.getElementById('past-period-end-input').value || null;
+    if (!start) return;
+    if (end && end < start) { alert('تاريخ النهاية قبل البداية'); return; }
+    await db.periodLogs.add({ startDate: start, endDate: end, createdAt: Date.now() });
+    overlay.remove();
+    toast('🌸 تمت إضافة الدورة');
+    if (onDone) onDone();
+  });
+}
 
 function openStartPeriodModal(onDone) {
   const overlay = document.createElement('div');
@@ -275,14 +355,27 @@ function initPeriodCalendar(container, onChange) {
     const cellDates = monthGridDates(viewYear, viewMonth);
     const periods = await getAllPeriods();
     const periodForDate = (d) => periods.find(p => d >= p.startDate && (p.endDate === null ? d <= today : d <= p.endDate));
+    const status = await getPeriodStatus();
+    const predictedRange = (status.state === 'upcoming' || status.state === 'due' || status.state === 'late') ? status : null;
 
     const cells = cellDates.map(dateStr => {
       if (!dateStr) return `<div class="cal-cell cal-cell-empty"></div>`;
       const day = Number(dateStr.split('-')[2]);
       const isToday = dateStr === today;
       const inPeriod = !!periodForDate(dateStr);
-      return `<button class="cal-cell ${isToday ? 'cal-today' : ''} ${inPeriod ? 'cal-period-day' : ''}" data-date="${dateStr}">
-        <span class="cal-day-num">${day}</span>
+      const inPredictedRange = predictedRange && dateStr >= predictedRange.rangeStart && dateStr <= predictedRange.rangeEnd && !inPeriod;
+      const isOvulation = status.fertility && dateStr === status.fertility.ovulationDate;
+      const fertilityLevel = status.fertility ? fertilityLevelForDate(dateStr, status.fertility) : null;
+      const classes = [
+        isToday ? 'cal-today' : '',
+        inPeriod ? 'cal-period-day' : '',
+        inPredictedRange ? 'cal-predicted-period-day' : '',
+        isOvulation ? 'cal-ovulation-day' : '',
+        (fertilityLevel && !isOvulation) ? 'cal-fertile-day' : ''
+      ].filter(Boolean).join(' ');
+      const marker = isOvulation ? '🥚' : (fertilityLevel ? '🌼' : '');
+      return `<button class="cal-cell ${classes}" data-date="${dateStr}">
+        <span class="cal-day-num">${day}</span>${marker ? `<span class="cal-day-marker">${marker}</span>` : ''}
       </button>`;
     }).join('');
 
@@ -294,6 +387,12 @@ function initPeriodCalendar(container, onChange) {
       </div>
       <div class="cal-weekdays">${ARABIC_WEEKDAYS_SHORT.map(w => `<span>${w}</span>`).join('')}</div>
       <div class="cal-grid">${cells}</div>
+      <div class="cal-legend">
+        <span><i class="cal-legend-dot cal-period-day"></i> دورة مسجّلة</span>
+        <span><i class="cal-legend-dot cal-predicted-period-day"></i> دورة متوقعة</span>
+        <span><i class="cal-legend-dot cal-fertile-day"></i> نافذة خصوبة</span>
+        <span><i class="cal-legend-dot cal-ovulation-day"></i> إباضة متوقعة</span>
+      </div>
     `;
 
     document.getElementById('pcal-prev').addEventListener('click', () => { viewMonth -= 1; if (viewMonth < 0) { viewMonth = 11; viewYear -= 1; } render(); });
@@ -360,6 +459,7 @@ async function renderPeriodPage(params, view) {
     document.getElementById('period-status-card').innerHTML = `
       <p class="period-status-text">${periodStatusText(status)}</p>
       ${status.stats.cycleSamples > 0 ? `<p class="period-status-sub">استناداً إلى ${status.stats.cycleSamples} ${status.stats.cycleSamples === 1 ? 'دورة سابقة' : 'دورات سابقة'}</p>` : ''}
+      ${fertilityStatusText(status) ? `<p class="period-status-sub period-fertility-text">🌼 ${fertilityStatusText(status)}</p>` : ''}
     `;
 
     const ongoing = await getOngoingPeriod();
@@ -368,8 +468,11 @@ async function renderPeriodPage(params, view) {
       actionCard.innerHTML = `<button class="btn btn-primary btn-block" id="period-primary-btn">إنهاء الدورة</button>`;
       document.getElementById('period-primary-btn').addEventListener('click', () => openEndPeriodModal(ongoing, refreshAll));
     } else {
-      actionCard.innerHTML = `<button class="btn btn-primary btn-block" id="period-primary-btn">🌸 بدء دورة جديدة</button>`;
+      actionCard.innerHTML = `
+        <button class="btn btn-primary btn-block" id="period-primary-btn">🌸 بدء دورة جديدة</button>
+        <button class="btn btn-secondary btn-block" id="period-add-past-btn" style="margin-top: var(--space-2);">📅 إضافة دورة سابقة</button>`;
       document.getElementById('period-primary-btn').addEventListener('click', () => openStartPeriodModal(refreshAll));
+      document.getElementById('period-add-past-btn').addEventListener('click', () => openAddPastPeriodModal(refreshAll));
     }
 
     await calendarHandle.refresh();
@@ -408,7 +511,7 @@ async function periodYearlyProvider(year) {
     <div class="yearly-row"><span>عدد الدورات</span><span>${yearPeriods.length}</span></div>
     <div class="yearly-row"><span>إجمالي أيام الدورة</span><span>${totalDays} يوم</span></div>
     <div class="yearly-row"><span>متوسط طول الدورة نفسها</span><span>${stats.periodSamples > 0 ? Math.round(stats.avgPeriodLength) + ' يوم' : 'غير كافٍ بعد'}</span></div>
-    <div class="yearly-row"><span>متوسط الفترة بين الدورات</span><span>${stats.cycleSamples > 0 ? Math.round(stats.avgCycleLength) + ' يوم' : 'غير كافٍ بعد (تحتاج دورتين على الأقل)'}</span></div>
+    <div class="yearly-row"><span>متوسط الفترة بين الدورات</span><span>${stats.cycleSamples > 0 ? Math.round(stats.avgCycleLength) + ' يوم' : 'غير كافٍ بعد (تحتاج دورتين مسجّلتين على الأقل)'}</span></div>
     ${stats.confidence !== 'none' ? `<div class="yearly-row"><span>موثوقية التوقع</span><span>${confidenceLabel(stats.confidence)}</span></div>` : ''}
   `;
   return { title: 'الدورة الشهرية', html, count: yearPeriods.length };

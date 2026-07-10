@@ -496,6 +496,16 @@ a { color: var(--pink-deep); text-decoration: none; }
 .period-status-sub { font-size: 12px; color: var(--ink-faint); text-align: center; margin-top: var(--space-1); }
 .cal-period-day { background: var(--pink); border-radius: var(--radius-sm); }
 .cal-period-day .cal-day-num { font-weight: 700; }
+.cal-predicted-period-day { background: transparent; border: 1.5px dashed var(--pink-deep); border-radius: var(--radius-sm); }
+.cal-fertile-day { background: rgba(107, 191, 130, 0.18); border-radius: var(--radius-sm); }
+.cal-ovulation-day { background: rgba(107, 191, 130, 0.35); border: 1.5px solid #6BBF82; border-radius: var(--radius-sm); }
+.cal-day-marker { position: absolute; bottom: 2px; font-size: 9px; }
+.cal-legend { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); font-size: 11px; color: var(--ink-soft); }
+.cal-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-inline-end: 4px; vertical-align: middle; }
+.cal-legend .cal-period-day { background: var(--pink); }
+.cal-legend .cal-predicted-period-day { border: 1.5px dashed var(--pink-deep); }
+.cal-legend .cal-fertile-day { background: rgba(107, 191, 130, 0.35); }
+.cal-legend .cal-ovulation-day { background: #6BBF82; border: none; }
 .period-history-row { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: var(--space-3) 0; border-bottom: 1px solid var(--track); background: none; border-left: none; border-right: none; border-top: none; cursor: pointer; text-align: right; }
 .period-history-row:last-child { border-bottom: none; }
 .period-history-range { font-size: 14px; }
@@ -927,7 +937,7 @@ body.theme-dark-ish .food-photo-placeholder {
 .hsl-swatch { width: 100%; height: 36px; border-radius: var(--radius-md); border: 1px solid var(--track); margin-bottom: var(--space-2); }
 .hsl-sliders { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-2); }
 .hsl-slider-row { display: flex; align-items: center; gap: var(--space-2); font-size: 12px; color: var(--ink-soft); }
-.hsl-slider-row span { flex-shrink: 0; width: 48px; }
+.hsl-slider-row label { flex-shrink: 0; width: 48px; }
 .hsl-slider { flex: 1; }
 .theme-preview-capsule { margin-inline-start: var(--space-2); }
 .theme-history-row { display: flex; gap: 8px; margin-top: var(--space-2); flex-wrap: wrap; }

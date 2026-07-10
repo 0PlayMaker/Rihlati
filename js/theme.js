@@ -99,9 +99,9 @@ function hslPickerHtml(idPrefix, currentHex) {
     <div class="hsl-picker" id="${idPrefix}-picker">
       <div class="hsl-swatch" id="${idPrefix}-swatch" style="background:${currentHex}"></div>
       <div class="hsl-sliders">
-        <label class="hsl-slider-row"><span>الصبغة</span><input type="range" min="0" max="360" value="${Math.round(h)}" id="${idPrefix}-hue" class="hsl-slider hsl-slider-hue"></label>
-        <label class="hsl-slider-row"><span>التشبّع</span><input type="range" min="0" max="100" value="${Math.round(s)}" id="${idPrefix}-sat" class="hsl-slider"></label>
-        <label class="hsl-slider-row"><span>السطوع</span><input type="range" min="0" max="100" value="${Math.round(l)}" id="${idPrefix}-light" class="hsl-slider"></label>
+        <div class="hsl-slider-row"><label for="${idPrefix}-hue">الصبغة</label><input type="range" min="0" max="360" value="${Math.round(h)}" id="${idPrefix}-hue" class="hsl-slider hsl-slider-hue"></div>
+        <div class="hsl-slider-row"><label for="${idPrefix}-sat">التشبّع</label><input type="range" min="0" max="100" value="${Math.round(s)}" id="${idPrefix}-sat" class="hsl-slider"></div>
+        <div class="hsl-slider-row"><label for="${idPrefix}-light">السطوع</label><input type="range" min="0" max="100" value="${Math.round(l)}" id="${idPrefix}-light" class="hsl-slider"></div>
       </div>
       <input type="text" class="text-input theme-hex-input" id="${idPrefix}-hex" value="${currentHex}" maxlength="7">
     </div>`;
@@ -113,6 +113,16 @@ function wireHslPicker(idPrefix, onChange) {
   const lightInput = document.getElementById(`${idPrefix}-light`);
   const hexInput = document.getElementById(`${idPrefix}-hex`);
   const swatch = document.getElementById(`${idPrefix}-swatch`);
+
+  // Belt-and-suspenders: sliders live inside a collapsible <details>,
+  // and dragging them was somehow toggling it closed — stop every
+  // interaction from bubbling at all, regardless of the exact browser
+  // mechanism responsible.
+  [hueInput, satInput, lightInput].forEach(input => {
+    ['click', 'pointerdown', 'touchstart', 'mousedown'].forEach(evt => {
+      input.addEventListener(evt, (e) => e.stopPropagation());
+    });
+  });
 
   function fromSliders() {
     const rgb = hslToRgb(Number(hueInput.value), Number(satInput.value), Number(lightInput.value));
