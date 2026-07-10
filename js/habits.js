@@ -69,10 +69,11 @@ async function getHabitMissedDates(habitId) {
 }
 // Every day since creation counts as a success automatically — she no
 // longer has to tap "done" daily for it to count. Only an explicit
-// mishap breaks the streak. Kept as the SAME function name/shape as
-// before (still {streak, succeeded, failed}) so every existing caller
-// (yearly overview, Home's top-streak) picks up the new model with no
-// changes needed on their end.
+// mishap breaks the streak. The streak here is derived from the EXACT
+// SAME reference point the live clock uses (getHabitClockReferenceMs),
+// including manual resets — these two numbers showing different things
+// (clock at 0, streak still at the old value after a manual reset) is
+// what read as "the timer doesn't reset properly."
 async function getHabitStats(habitId) {
   const habit = await db.habits.get(habitId);
   const missedDates = await getHabitMissedDates(habitId);
@@ -81,14 +82,36 @@ async function getHabitStats(habitId) {
   const totalDays = daysBetween(created, today) + 1;
   const failed = missedDates.length;
   const succeeded = Math.max(0, totalDays - failed);
-  let streak;
-  if (missedDates.length === 0) {
-    streak = totalDays;
-  } else {
-    const mostRecent = [...missedDates].sort().reverse()[0];
-    streak = mostRecent < today ? daysBetween(mostRecent, today) : 0;
-  }
+  const refMs = await getHabitClockReferenceMs(habit);
+  const streak = Math.floor((Date.now() - refMs) / 86400000);
   return { streak, succeeded, failed };
+}
+
+// Habit-specific stats line — no ✅ segment, since "succeeded" is
+// redundant with the automatic timer now (every day counts unless
+// explicitly broken). Labeled explicitly rather than a bare 🔥 number.
+function habitStatsLine(stats) {
+  return `🔥 أيام على التوالي: ${stats.streak}&nbsp;&nbsp;·&nbsp;&nbsp;💔${stats.failed}`;
+}
+
+async function getHabitLongestStreakMs(habit) {
+  const missedDates = [...(await getHabitMissedDates(habit.id))].sort();
+  const created = new Date(habit.createdAt).toISOString().slice(0, 10);
+  let maxMs = 0;
+  let segmentStart = created;
+  for (const missed of missedDates) {
+    const segmentMs = daysBetween(segmentStart, missed) * 24 * 60 * 60 * 1000;
+    if (segmentMs > maxMs) maxMs = segmentMs;
+    segmentStart = addDays(missed, 1);
+  }
+  // The final, still-ongoing segment reuses the live clock's precise
+  // reference (including any manual reset) — history only gives
+  // whole-day precision for past, completed segments, but the current
+  // one can be exact.
+  const liveRefMs = await getHabitClockReferenceMs(habit);
+  const ongoingMs = Date.now() - liveRefMs;
+  if (ongoingMs > maxMs) maxMs = ongoingMs;
+  return maxMs;
 }
 
 // ---------- live clock: time since creation or last mishap ----------
@@ -250,7 +273,7 @@ function habitCardHtml(habit, todayStatus, stats, refMs) {
         <span class="habit-clock-icon">⏱️</span>
         <span class="habit-clock" data-ref-ms="${refMs}">${formatHabitClock(Date.now() - refMs)}</span>
       </div>
-      <p class="habit-card-stats">${statsLine(stats)}</p>
+      <p class="habit-card-stats">${habitStatsLine(stats)}</p>
       ${missedToday
         ? `<button class="btn btn-text btn-block" data-habit-undo="${habit.id}">↩️ تراجع عن زلة اليوم</button>`
         : `<button class="btn btn-secondary btn-block habit-mishap-btn" data-habit-mishap="${habit.id}">${mishapLabel}</button>`}
@@ -481,9 +504,24 @@ async function habitsYearlyProvider(year) {
   const bad = await summarize(await getActiveHabitsByType('bad'));
   if (!good.html && !bad.html) return null;
 
+  async function longestStreakLine(list) {
+    let maxMs = 0;
+    for (const h of list) {
+      const ms = await getHabitLongestStreakMs(h);
+      if (ms > maxMs) maxMs = ms;
+    }
+    return maxMs > 0 ? formatHabitClock(maxMs) : null;
+  }
+  const goodHabitsList = await getActiveHabitsByType('good');
+  const badHabitsList = await getActiveHabitsByType('bad');
+  const goodLongest = await longestStreakLine(goodHabitsList);
+  const badLongest = await longestStreakLine(badHabitsList);
+
   const html = `
     ${good.html ? `<h4 class="yearly-subsection-title">🌱 عادات جيدة</h4>${good.html}` : ''}
+    ${goodLongest ? `<div class="yearly-row"><span>أطول تسلسل (جيدة)</span><span>${goodLongest}</span></div>` : ''}
     ${bad.html ? `<h4 class="yearly-subsection-title">🚫 عادات أقلع عنها</h4>${bad.html}` : ''}
+    ${badLongest ? `<div class="yearly-row"><span>أطول تسلسل (أقلع عنها)</span><span>${badLongest}</span></div>` : ''}
   `;
   return { title: 'العادات', html, count: good.total + bad.total };
 }

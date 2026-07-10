@@ -6,12 +6,12 @@
 
 // ===================== Courses =====================
 
-async function createCourse(title, description, endDate) {
+async function createCourse(title, description, endDate, emoji) {
   const all = await db.courses.toArray();
-  return db.courses.add({ title, description: description || '', endDate: endDate || null, archived: false, order: all.length, createdAt: Date.now() });
+  return db.courses.add({ title, description: description || '', endDate: endDate || null, emoji: emoji || '', archived: false, order: all.length, createdAt: Date.now() });
 }
-async function updateCourse(id, { title, description, endDate }) {
-  await db.courses.update(id, { title, description: description || '', endDate: endDate || null });
+async function updateCourse(id, { title, description, endDate, emoji }) {
+  await db.courses.update(id, { title, description: description || '', endDate: endDate || null, emoji: emoji || '' });
 }
 async function archiveCourse(id) {
   await db.courses.update(id, { archived: true });
@@ -34,6 +34,8 @@ function openCourseModal({ existingId, onSaved } = {}) {
       <h2 class="modal-title" id="course-modal-title">دورة جديدة</h2>
       <label class="field-label">اسم الدورة</label>
       <input class="text-input" id="course-title-input" placeholder="مثلاً: تعلم React" autofocus>
+      <label class="field-label">رمز الدورة (اختياري)</label>
+      <input class="text-input emoji-input" id="course-emoji-input" placeholder="🎓" maxlength="2">
       <label class="field-label">وصف (اختياري)</label>
       <textarea class="mood-note-input" id="course-desc-input"></textarea>
       <label class="field-label">تاريخ الانتهاء المتوقع (اختياري)</label>
@@ -52,6 +54,7 @@ function openCourseModal({ existingId, onSaved } = {}) {
     if (!existing) return;
     document.getElementById('course-modal-title').textContent = 'تعديل الدورة';
     document.getElementById('course-title-input').value = existing.title;
+    document.getElementById('course-emoji-input').value = existing.emoji || '';
     document.getElementById('course-desc-input').value = existing.description || '';
     document.getElementById('course-enddate-input').value = existing.endDate || '';
   })();
@@ -67,10 +70,11 @@ function openCourseModal({ existingId, onSaved } = {}) {
   document.getElementById('course-save-btn').addEventListener('click', async () => {
     const title = document.getElementById('course-title-input').value.trim();
     if (!title) return;
+    const emoji = document.getElementById('course-emoji-input').value.trim();
     const description = document.getElementById('course-desc-input').value.trim();
     const endDate = document.getElementById('course-enddate-input').value || null;
-    if (existingId) await updateCourse(existingId, { title, description, endDate });
-    else await createCourse(title, description, endDate);
+    if (existingId) await updateCourse(existingId, { title, description, endDate, emoji });
+    else await createCourse(title, description, endDate, emoji);
     overlay.remove();
     if (onSaved) onSaved();
   });
@@ -516,7 +520,7 @@ async function renderStudyPage(params, view) {
       const progress = await getCourseTodoProgress(c.id);
       return `
         <button class="food-row course-row" data-course-id="${c.id}">
-          <span class="food-thumb food-thumb-placeholder">🎓</span>
+          <span class="food-thumb food-thumb-placeholder">${c.emoji || '🎓'}</span>
           <div class="food-row-info">
             <span class="food-row-title">${escapeHtml(c.title)}</span>
             ${progress.total > 0 ? `<span class="food-row-notes">${progress.done}/${progress.total} مهمة</span>` : ''}

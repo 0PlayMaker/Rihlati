@@ -68,6 +68,7 @@
 
   --track: #F1E7EC;
   --card-border: transparent;
+  --modal-bg: #FFFFFF;
 
   --radius-sm: 10px;
   --radius-md: 14px;
@@ -209,6 +210,9 @@ a { color: var(--pink-deep); text-decoration: none; }
 .rings-card { padding: var(--space-4) var(--space-5); }
 .rings-row { display: flex; align-items: center; gap: var(--space-5); }
 .ring-wrap { position: relative; flex-shrink: 0; }
+.food-goals-visual { display: flex; align-items: center; gap: var(--space-4); }
+.food-goals-side { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.food-meal-dots { font-size: 16px; letter-spacing: 2px; }
 .ring-svg circle { transition: stroke-dasharray 0.4s ease; }
 .ring-center-text {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -327,7 +331,7 @@ a { color: var(--pink-deep); text-decoration: none; }
   z-index: 100; backdrop-filter: blur(2px);
 }
 .modal {
-  background: var(--surface); border-radius: var(--radius-lg); padding: var(--space-5);
+  background: var(--modal-bg, var(--surface)); border-radius: var(--radius-lg); padding: var(--space-5);
   width: 100%; max-width: 380px; box-shadow: var(--shadow-soft); border: 1px solid var(--card-border);
 }
 .modal-lg { max-width: 420px; max-height: 85vh; overflow-y: auto; }
@@ -805,6 +809,9 @@ body.theme-glass .material-card {
   -webkit-backdrop-filter: blur(20px) saturate(1.6);
   border: 1px solid rgba(255,255,255,0.5);
 }
+/* 5% more transparent than the surface it otherwise inherits, same hue */
+body.theme-glass #bottom-bar { background: rgba(255,255,255,0.45); }
+body.theme-glass-dark #bottom-bar { background: rgba(255,255,255,0.03); }
 body.theme-glass .icon-btn,
 body.theme-glass .chip,
 body.theme-glass .kebab-btn,
@@ -815,6 +822,31 @@ body.theme-glass .kebab-dropdown {
   backdrop-filter: blur(14px) saturate(1.5);
   -webkit-backdrop-filter: blur(14px) saturate(1.5);
   border: 1px solid rgba(255,255,255,0.5);
+}
+/* .chip's own glass background above has higher specificity than
+   .chip.active (the body selector adds weight), so it was winning and
+   leaving white active-state text on a light translucent background —
+   this restores the accent-colored active state in glass mode too. */
+/* Light glass specifically: keep the glass aesthetic (a light,
+   translucent surface) even when active, rather than switching to a
+   solid accent fill — paired with a fixed dark color for contrast,
+   since white text on a light surface was the actual problem. */
+body.theme-glass .chip.active,
+body.theme-glass .chip-lg.active {
+  background: var(--pink);
+  color: var(--ink-on-pastel);
+  border-color: var(--pink-deep);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+/* Dark glass: a light accent fill against the dark surroundings reads
+   fine with light text, so this keeps the solid accent treatment. */
+body.theme-glass-dark .chip.active,
+body.theme-glass-dark .chip-lg.active {
+  background: var(--pink-deep);
+  color: #fff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 body.theme-glass .btn-primary,
 body.theme-glass .btn-danger {

@@ -6,16 +6,16 @@
 // as its own field — same "don't store what you can compute" rule as
 // everywhere else.
 
-async function addFoodLog({ date, mealType, time, notes, calories, photoBlob }) {
+async function addFoodLog({ date, mealType, mealName, time, notes, calories, photoBlob }) {
   const id = await db.foodLogs.add({
-    date, mealType, time: time || null, notes: notes || '',
+    date, mealType, mealName: mealName || '', time: time || null, notes: notes || '',
     calories: calories ?? null, createdAt: Date.now()
   });
   if (photoBlob) await db.foodPhotos.put({ foodLogId: id, photoBlob });
   return id;
 }
-async function updateFoodLog(id, { mealType, time, notes, calories, photoBlob, removePhoto }) {
-  await db.foodLogs.update(id, { mealType, time: time || null, notes: notes || '', calories: calories ?? null });
+async function updateFoodLog(id, { mealType, mealName, time, notes, calories, photoBlob, removePhoto }) {
+  await db.foodLogs.update(id, { mealType, mealName: mealName || '', time: time || null, notes: notes || '', calories: calories ?? null });
   if (photoBlob) await db.foodPhotos.put({ foodLogId: id, photoBlob });
   else if (removePhoto) await db.foodPhotos.delete(id);
 }
@@ -80,7 +80,7 @@ async function renderWaterCard(container) {
   container.innerHTML = `
     <div class="section-header">
       <h2 class="card-title">💧 الماء</h2>
-      <button class="btn btn-text btn-sm" id="water-edit-target">الهدف: ${target}ل</button>
+      <button class="chip active" id="water-edit-target">الهدف: ${target}ل</button>
     </div>
     <div class="mini-progress-track"><div class="mini-progress-fill water-fill" style="width:${frac * 100}%"></div></div>
     <p class="period-status-sub">${liters.toFixed(2)} من ${target} لتر</p>
@@ -150,6 +150,9 @@ async function openFoodModal({ date, existingId, onSaved }) {
         ${MEAL_TYPES.map(m => `<button class="chip ${selectedMealType === m.key ? 'active' : ''}" data-meal="${m.key}">${m.icon} ${m.label}</button>`).join('')}
       </div>
 
+      <label class="field-label">اسم الوجبة (اختياري)</label>
+      <input class="text-input" id="food-name-input" placeholder="مثلاً: بيض مخفوق" value="${escapeHtml(existing?.mealName || '')}">
+
       <label class="field-label">صورة (اختياري)</label>
       <div class="food-photo-picker" id="food-photo-preview"></div>
       ${photoPickerHtml('food-photo')}
@@ -214,11 +217,12 @@ async function openFoodModal({ date, existingId, onSaved }) {
       if (!Number.isNaN(n)) calories = Math.max(0, n);
     }
     const notes = document.getElementById('food-notes-input').value.trim();
+    const mealName = document.getElementById('food-name-input').value.trim();
 
     if (existing) {
-      await updateFoodLog(existing.id, { mealType: selectedMealType, time, notes, calories, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
+      await updateFoodLog(existing.id, { mealType: selectedMealType, mealName, time, notes, calories, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
     } else {
-      await addFoodLog({ date, mealType: selectedMealType, time, notes, calories, photoBlob: pendingPhotoBlob });
+      await addFoodLog({ date, mealType: selectedMealType, mealName, time, notes, calories, photoBlob: pendingPhotoBlob });
     }
     overlay.remove();
     if (onSaved) onSaved();
@@ -241,7 +245,7 @@ async function renderFoodList(container, date, { onChange } = {}) {
       <button class="food-row" data-food-id="${l.id}">
         ${photoUrl ? `<img class="food-thumb" src="${photoUrl}" alt="">` : `<span class="food-thumb food-thumb-placeholder">${mealTypeIcon(l.mealType)}</span>`}
         <div class="food-row-info">
-          <span class="food-row-title">${mealTypeIcon(l.mealType)} ${mealTypeLabel(l.mealType)}${l.time ? ' · ' + l.time : ''}</span>
+          <span class="food-row-title">${mealTypeIcon(l.mealType)} ${mealTypeLabel(l.mealType)}${l.mealName ? ' — ' + escapeHtml(l.mealName) : ''}${l.time ? ' · ' + l.time : ''}</span>
           ${l.notes ? `<span class="food-row-notes">${escapeHtml(l.notes)}</span>` : ''}
         </div>
         ${l.calories != null ? `<span class="food-row-calories">${l.calories} سعرة</span>` : ''}
@@ -257,6 +261,45 @@ async function renderFoodList(container, date, { onChange } = {}) {
 
 // ---------- full Food page ----------
 
+async function getFoodGoals() {
+  const settings = await db.settings.get(1);
+  return { mealsGoal: settings?.dailyMealsGoal ?? null, caloriesGoal: settings?.dailyCaloriesGoal ?? null };
+}
+async function saveFoodGoals(mealsGoal, caloriesGoal) {
+  await db.settings.update(1, { dailyMealsGoal: mealsGoal, dailyCaloriesGoal: caloriesGoal });
+}
+
+function openFoodGoalsModal(onSaved) {
+  (async () => {
+    const { mealsGoal, caloriesGoal } = await getFoodGoals();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal">
+        <h2 class="modal-title">أهداف الطعام اليومية</h2>
+        <label class="field-label">عدد الوجبات المستهدف</label>
+        <input class="text-input" type="number" min="1" id="meals-goal-input" value="${mealsGoal ?? ''}" placeholder="مثلاً: 4">
+        <label class="field-label">السعرات المستهدفة</label>
+        <input class="text-input" type="number" min="1" id="calories-goal-input" value="${caloriesGoal ?? ''}" placeholder="مثلاً: 2000">
+        <div class="modal-actions">
+          <button class="btn btn-text" id="food-goals-cancel">إلغاء</button>
+          <button class="btn btn-primary" id="food-goals-save">حفظ</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('food-goals-cancel').addEventListener('click', () => overlay.remove());
+    document.getElementById('food-goals-save').addEventListener('click', async () => {
+      const mealsRaw = document.getElementById('meals-goal-input').value;
+      const calRaw = document.getElementById('calories-goal-input').value;
+      const meals = mealsRaw === '' ? null : Math.max(1, parseInt(mealsRaw, 10) || 1);
+      const cal = calRaw === '' ? null : Math.max(1, parseInt(calRaw, 10) || 1);
+      await saveFoodGoals(meals, cal);
+      overlay.remove();
+      if (onSaved) onSaved();
+    });
+  })();
+}
+
 async function renderFoodPage(params, view) {
   const today = todayStr();
   view.innerHTML = `
@@ -264,7 +307,13 @@ async function renderFoodPage(params, view) {
       <button class="icon-btn" id="food-back">→</button>
       <h1>الطعام</h1>
     </div>
-    <div class="card" id="food-summary-card"></div>
+    <div class="card">
+      <div class="section-header">
+        <p class="ring-label">وجباتك اليوم</p>
+        <button class="chip active" id="food-goals-btn">🎯 الأهداف</button>
+      </div>
+      <div id="food-summary-card"></div>
+    </div>
     <div class="card" id="water-card"></div>
     <div class="card">
       <button class="btn btn-primary btn-block" id="food-add-btn">+ تسجيل وجبة</button>
@@ -282,13 +331,40 @@ async function renderFoodPage(params, view) {
 
   async function refresh() {
     const stats = await getFoodTodayStats();
-    document.getElementById('food-summary-card').innerHTML = `
-      <p class="ring-label">وجباتك اليوم</p>
-      <p class="period-status-text">${foodGlanceText(stats)}</p>
-    `;
+    const { mealsGoal, caloriesGoal } = await getFoodGoals();
+    const summaryEl = document.getElementById('food-summary-card');
+
+    if (!mealsGoal && !caloriesGoal) {
+      summaryEl.innerHTML = `<p class="period-status-text">${foodGlanceText(stats)}</p>`;
+    } else {
+      const calFrac = caloriesGoal ? Math.min(1, stats.totalCal / caloriesGoal) : 0;
+      const calRemaining = caloriesGoal ? Math.max(0, caloriesGoal - (stats.totalCal || 0)) : null;
+      const ringSvg = caloriesGoal ? renderRing({
+        size: 110, strokeWidth: 12,
+        segments: [{ frac: calFrac, color: calFrac >= 1 ? 'var(--rose-deep)' : 'var(--mint-deep)' }]
+      }) : '';
+      const mealsRemaining = mealsGoal ? Math.max(0, mealsGoal - stats.count) : null;
+      const mealDots = mealsGoal ? Array.from({ length: mealsGoal }, (_, i) => i < stats.count ? '🟢' : '⚪').join(' ') : '';
+
+      summaryEl.innerHTML = `
+        <div class="food-goals-visual">
+          ${caloriesGoal ? `
+            <div class="ring-wrap">
+              ${ringSvg}
+              <div class="ring-center-text">${stats.totalCal || 0}/${caloriesGoal}</div>
+            </div>` : ''}
+          <div class="food-goals-side">
+            ${caloriesGoal ? `<p class="mini-progress-text">متبقّي ${calRemaining} سعرة</p>` : `<p class="mini-progress-text">${stats.count} ${stats.count === 1 ? 'وجبة' : 'وجبات'}${stats.totalCal != null ? ` · ${stats.totalCal} سعرة` : ''}</p>`}
+            ${mealsGoal ? `
+              <p class="food-meal-dots">${mealDots}</p>
+              <p class="mini-progress-text">${mealsRemaining > 0 ? `متبقّي ${mealsRemaining} ${mealsRemaining === 1 ? 'وجبة' : 'وجبات'}` : 'أكملتِ وجباتك اليوم ✨'}</p>` : ''}
+          </div>
+        </div>`;
+    }
     await renderFoodList(document.getElementById('food-list'), today, { onChange: refresh });
   }
 
+  document.getElementById('food-goals-btn').addEventListener('click', () => openFoodGoalsModal(refresh));
   await renderWaterCard(document.getElementById('water-card'));
 
   document.getElementById('food-add-btn').addEventListener('click', () => {

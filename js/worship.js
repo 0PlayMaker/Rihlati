@@ -917,6 +917,30 @@ async function renderWorshipPage(params, view) {
     </div>
 
     <div class="card">
+      <h2 class="card-title">السنن والأذكار بعد الصلاة</h2>
+      <div class="worship-section-stats" id="extras-stats"></div>
+      <div id="extras-list"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">نوافل</h2>
+      <div id="standalone-sunnah"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">أذكار الصباح والمساء</h2>
+      <div id="daily-adhkar"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">أذكار مخصصة</h2>
+      <div id="custom-adhkar-list"></div>
+      <button class="btn btn-secondary btn-block" id="add-adhkar-btn">+ ذكر جديد</button>
+    </div>
+
+    <div class="card" id="wird-card"></div>
+
+    <div class="card">
       <h2 class="card-title">🕋 القضاء</h2>
       <div class="section-header">
         <h3 class="material-type-label">صلوات فائتة</h3>
@@ -928,30 +952,6 @@ async function renderWorshipPage(params, view) {
         <button class="link-btn" id="add-qada-fasting-btn">+ إضافة</button>
       </div>
       <div id="qada-fasting-list"></div>
-    </div>
-
-    <div class="card">
-      <h2 class="card-title">السنن والأذكار بعد الصلاة</h2>
-      <div class="worship-section-stats" id="extras-stats"></div>
-      <div id="extras-list"></div>
-    </div>
-
-    <div class="card">
-      <h2 class="card-title">نوافل</h2>
-      <div id="standalone-sunnah"></div>
-    </div>
-
-    <div class="card" id="wird-card"></div>
-
-    <div class="card">
-      <h2 class="card-title">أذكار الصباح والمساء</h2>
-      <div id="daily-adhkar"></div>
-    </div>
-
-    <div class="card">
-      <h2 class="card-title">أذكار مخصصة</h2>
-      <div id="custom-adhkar-list"></div>
-      <button class="btn btn-secondary btn-block" id="add-adhkar-btn">+ ذكر جديد</button>
     </div>
   `;
 

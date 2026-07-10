@@ -17,23 +17,27 @@
 const THEME_MODES = {
   light: {
     label: '☀️ فاتح',
-    vars: { '--bg': '#FFF9F5', '--surface': '#FFFFFF', '--ink': '#4A4152', '--ink-soft': '#8B8394', '--ink-faint': '#C3BAC6', '--track': '#F1E7EC', '--card-border': 'transparent' }
+    vars: { '--bg': '#FFF9F5', '--surface': '#FFFFFF', '--ink': '#4A4152', '--ink-soft': '#8B8394', '--ink-faint': '#C3BAC6', '--track': '#F1E7EC', '--card-border': 'transparent', '--modal-bg': '#FFFFFF' }
   },
   dark: {
     label: '🌙 داكن',
-    vars: { '--bg': '#17141C', '--surface': '#2E2838', '--ink': '#F5F1F7', '--ink-soft': '#BCB2C7', '--ink-faint': '#7A7186', '--track': '#3E3749', '--card-border': 'rgba(255,255,255,0.09)' }
+    vars: { '--bg': '#17141C', '--surface': '#2E2838', '--ink': '#F5F1F7', '--ink-soft': '#BCB2C7', '--ink-faint': '#7A7186', '--track': '#3E3749', '--card-border': 'rgba(255,255,255,0.09)', '--modal-bg': '#2E2838' }
   },
   amoled: {
     label: '⚫ أسود عميق',
-    vars: { '--bg': '#000000', '--surface': '#161616', '--ink': '#F5F1F7', '--ink-soft': '#B8AFC2', '--ink-faint': '#6B6373', '--track': '#242424', '--card-border': 'rgba(255,255,255,0.10)' }
+    vars: { '--bg': '#000000', '--surface': '#161616', '--ink': '#F5F1F7', '--ink-soft': '#B8AFC2', '--ink-faint': '#6B6373', '--track': '#242424', '--card-border': 'rgba(255,255,255,0.10)', '--modal-bg': '#161616' }
   },
   glass: {
     label: '🔮 زجاجي',
-    vars: { '--bg': '#EDE3F5', '--surface': 'rgba(255,255,255,0.5)', '--ink': '#3A3145', '--ink-soft': '#756B85', '--ink-faint': '#A99FBB', '--track': 'rgba(255,255,255,0.35)', '--card-border': 'rgba(255,255,255,0.6)' }
+    // Modal bg deliberately more opaque than --surface — the same 50%
+    // white that works fine for cards read as "grayish" for a full
+    // popup, since more of the blurred, colorful backdrop bleeds
+    // through at that opacity over a larger area.
+    vars: { '--bg': '#EDE3F5', '--surface': 'rgba(255,255,255,0.5)', '--ink': '#3A3145', '--ink-soft': '#756B85', '--ink-faint': '#A99FBB', '--track': 'rgba(255,255,255,0.35)', '--card-border': 'rgba(255,255,255,0.6)', '--modal-bg': 'rgba(255,255,255,0.85)' }
   },
   glassDark: {
     label: '🌌 زجاجي داكن',
-    vars: { '--bg': '#15121C', '--surface': 'rgba(255,255,255,0.08)', '--ink': '#F5F1F7', '--ink-soft': '#C4BBD0', '--ink-faint': '#8A8095', '--track': 'rgba(255,255,255,0.14)', '--card-border': 'rgba(255,255,255,0.16)' }
+    vars: { '--bg': '#15121C', '--surface': 'rgba(255,255,255,0.08)', '--ink': '#F5F1F7', '--ink-soft': '#C4BBD0', '--ink-faint': '#8A8095', '--track': 'rgba(255,255,255,0.14)', '--card-border': 'rgba(255,255,255,0.16)', '--modal-bg': 'rgba(20,16,28,0.9)' }
   }
 };
 const DEFAULT_ACCENT = '#E88FAE'; // the original --pink-deep
@@ -104,7 +108,7 @@ function deriveAccentShades(hex) {
 
 // ---------- apply ----------
 
-function applyTheme(mode, accentHex) {
+function applyTheme(mode, accentHex, customBg, customModalBg) {
   const preset = THEME_MODES[mode] || THEME_MODES.light;
   const root = document.documentElement.style;
   Object.entries(preset.vars).forEach(([k, v]) => root.setProperty(k, v));
@@ -117,6 +121,13 @@ function applyTheme(mode, accentHex) {
   root.setProperty('--shadow-soft', `0 6px 20px rgba(${r}, ${g}, ${b}, 0.16)`);
   root.setProperty('--shadow-tap', `0 2px 8px rgba(${r}, ${g}, ${b}, 0.14)`);
 
+  // Custom overrides layer on top of whatever the mode set — a plain
+  // hex from her own picker, not derived/tinted like the accent, since
+  // background/modal colors don't need light+deep variants the way a
+  // single accent choice does.
+  if (customBg) root.setProperty('--bg', customBg);
+  if (customModalBg) root.setProperty('--modal-bg', customModalBg);
+
   document.body.classList.toggle('theme-glass', mode === 'glass' || mode === 'glassDark');
   document.body.classList.toggle('theme-glass-dark', mode === 'glassDark');
   document.body.classList.toggle('theme-dark-ish', mode === 'dark' || mode === 'amoled' || mode === 'glassDark');
@@ -124,25 +135,16 @@ function applyTheme(mode, accentHex) {
 
 async function applyStoredTheme() {
   const settings = await db.settings.get(1);
-  applyTheme(settings?.themeMode || 'light', settings?.accentColor || DEFAULT_ACCENT);
+  applyTheme(settings?.themeMode || 'light', settings?.accentColor || DEFAULT_ACCENT, settings?.customBgColor, settings?.customModalBgColor);
 }
 
 // ---------- Settings UI ----------
 
-function renderThemeSection(currentMode, currentAccent, accentHistory) {
+function renderThemeSection(currentMode, currentAccent, accentHistory, customBg, customModalBg) {
   const history = (accentHistory || []).filter(c => c !== (currentAccent || DEFAULT_ACCENT));
   return `
     <div class="card settings-card">
       <h2 class="card-title">المظهر</h2>
-      <label class="field-label">لون التمييز</label>
-      <div class="theme-accent-row">
-        <input type="color" id="theme-accent-input" value="${currentAccent || DEFAULT_ACCENT}" class="theme-color-input">
-        <input type="text" id="theme-accent-hex-input" class="text-input theme-hex-input" value="${currentAccent || DEFAULT_ACCENT}" placeholder="#E88FAE" maxlength="7">
-      </div>
-      ${history.length ? `
-        <div class="theme-history-row" id="theme-history-row">
-          ${history.map(c => `<button class="theme-history-swatch" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join('')}
-        </div>` : ''}
       <label class="field-label">الوضع</label>
       <div class="habit-type-chips theme-mode-chips" id="theme-mode-chips">
         ${Object.entries(THEME_MODES).map(([key, m]) => `
@@ -155,40 +157,75 @@ function renderThemeSection(currentMode, currentAccent, accentHistory) {
           <button class="btn btn-primary btn-sm theme-preview-btn">زر رئيسي</button>
         </div>
       </div>
-      <button class="link-btn" id="theme-restore-default">استعادة المظهر الافتراضي</button>
+
+      <details class="weight-history-details">
+        <summary>تخصيص الألوان</summary>
+
+        <label class="field-label">لون التمييز</label>
+        <div class="theme-accent-row">
+          <input type="color" id="theme-accent-input" value="${currentAccent || DEFAULT_ACCENT}" class="theme-color-input">
+          <input type="text" id="theme-accent-hex-input" class="text-input theme-hex-input" value="${currentAccent || DEFAULT_ACCENT}" placeholder="#E88FAE" maxlength="7">
+        </div>
+        ${history.length ? `
+          <div class="theme-history-row" id="theme-history-row">
+            ${history.map(c => `<button class="theme-history-swatch" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join('')}
+          </div>` : ''}
+
+        <label class="field-label">لون الخلفية (اختياري)</label>
+        <div class="theme-accent-row">
+          <input type="color" id="theme-bg-input" value="${customBg || '#FFF9F5'}" class="theme-color-input">
+          <button class="btn btn-text btn-sm" id="theme-bg-clear">استخدام لون الوضع الافتراضي</button>
+        </div>
+
+        <label class="field-label">لون النوافذ المنبثقة (اختياري)</label>
+        <div class="theme-accent-row">
+          <input type="color" id="theme-modalbg-input" value="${customModalBg || '#FFFFFF'}" class="theme-color-input">
+          <button class="btn btn-text btn-sm" id="theme-modalbg-clear">استخدام لون الوضع الافتراضي</button>
+        </div>
+
+        <button class="link-btn" id="theme-restore-default">استعادة المظهر الافتراضي بالكامل</button>
+      </details>
     </div>`;
 }
 
 function wireThemeSection(view) {
   const accentInput = document.getElementById('theme-accent-input');
   const hexInput = document.getElementById('theme-accent-hex-input');
+  const bgInput = document.getElementById('theme-bg-input');
+  const modalBgInput = document.getElementById('theme-modalbg-input');
   const modeChips = document.getElementById('theme-mode-chips');
   let selectedMode = modeChips.querySelector('.chip.active')?.dataset.mode || 'light';
 
-  async function saveAndApply(newAccent) {
+  async function saveAndApply(overrides = {}) {
     const settings = await db.settings.get(1);
     const prevAccent = settings?.accentColor || DEFAULT_ACCENT;
+    const newAccent = overrides.accentColor;
     let history = settings?.accentColorHistory || [];
-    // Keep the color she's moving AWAY from, so switching never loses
-    // it — capped at 6 so the row doesn't grow forever.
     if (newAccent && newAccent !== prevAccent && !history.includes(prevAccent)) {
       history = [prevAccent, ...history].slice(0, 6);
     }
-    await db.settings.update(1, { themeMode: selectedMode, accentColor: newAccent || prevAccent, accentColorHistory: history });
-    applyTheme(selectedMode, newAccent || prevAccent);
+    const toSave = {
+      themeMode: selectedMode,
+      accentColor: newAccent || prevAccent,
+      accentColorHistory: history,
+      customBgColor: 'customBgColor' in overrides ? overrides.customBgColor : settings?.customBgColor,
+      customModalBgColor: 'customModalBgColor' in overrides ? overrides.customModalBgColor : settings?.customModalBgColor
+    };
+    await db.settings.update(1, toSave);
+    applyTheme(selectedMode, toSave.accentColor, toSave.customBgColor, toSave.customModalBgColor);
     if (newAccent) renderSettingsPage([], view); // refresh so the history row reflects the new state
   }
 
-  accentInput.addEventListener('change', () => { hexInput.value = accentInput.value; saveAndApply(accentInput.value); });
+  accentInput.addEventListener('change', () => { hexInput.value = accentInput.value; saveAndApply({ accentColor: accentInput.value }); });
   hexInput.addEventListener('change', () => {
     const val = hexInput.value.trim();
     if (!/^#[0-9a-fA-F]{6}$/.test(val)) { hexInput.value = accentInput.value; return; }
     accentInput.value = val;
-    saveAndApply(val);
+    saveAndApply({ accentColor: val });
   });
   const historyRow = document.getElementById('theme-history-row');
   if (historyRow) historyRow.querySelectorAll('.theme-history-swatch').forEach(sw => {
-    sw.addEventListener('click', () => saveAndApply(sw.dataset.color));
+    sw.addEventListener('click', () => saveAndApply({ accentColor: sw.dataset.color }));
   });
   modeChips.querySelectorAll('.chip').forEach(chip => {
     chip.addEventListener('click', () => {
@@ -197,11 +234,16 @@ function wireThemeSection(view) {
       saveAndApply();
     });
   });
+  bgInput.addEventListener('change', () => saveAndApply({ customBgColor: bgInput.value }));
+  document.getElementById('theme-bg-clear').addEventListener('click', () => saveAndApply({ customBgColor: null }));
+  modalBgInput.addEventListener('change', () => saveAndApply({ customModalBgColor: modalBgInput.value }));
+  document.getElementById('theme-modalbg-clear').addEventListener('click', () => saveAndApply({ customModalBgColor: null }));
+
   document.getElementById('theme-restore-default').addEventListener('click', async () => {
-    if (!confirm('استعادة المظهر الافتراضي (فاتح، اللون الوردي الأصلي)؟')) return;
+    if (!confirm('استعادة المظهر الافتراضي (فاتح، اللون الوردي الأصلي، بلا ألوان مخصصة)؟')) return;
     selectedMode = 'light';
-    await db.settings.update(1, { themeMode: 'light', accentColor: DEFAULT_ACCENT });
-    applyTheme('light', DEFAULT_ACCENT);
+    await db.settings.update(1, { themeMode: 'light', accentColor: DEFAULT_ACCENT, customBgColor: null, customModalBgColor: null });
+    applyTheme('light', DEFAULT_ACCENT, null, null);
     renderSettingsPage([], view);
   });
 }

@@ -276,6 +276,13 @@ async function renderBodyPage(params, view) {
       <h1>الصحة</h1>
     </div>
     <div class="card" id="body-sleep-summary"></div>
+    <div class="card">
+      <div class="section-header">
+        <h2 class="card-title">💪 التمارين</h2>
+        <a class="see-all-link" href="#/training">فتح ←</a>
+      </div>
+      <p class="settings-note">تمارينك اليومية، بعداد مجموعات، تكرار، ومؤقّت.</p>
+    </div>
     <div class="card" id="weight-glance-card"></div>
     <div class="card">
       <h2 class="card-title">الرسم البياني</h2>
@@ -310,13 +317,6 @@ async function renderBodyPage(params, view) {
       <h2 class="card-title">مزاج اليوم</h2>
       <div id="body-mood-widget"></div>
       <a class="see-all-link" href="#/mood-history">سجل المزاج ←</a>
-    </div>
-    <div class="card">
-      <div class="section-header">
-        <h2 class="card-title">💪 التمارين</h2>
-        <a class="see-all-link" href="#/training">فتح ←</a>
-      </div>
-      <p class="settings-note">تمارينك اليومية، بعداد مجموعات، تكرار، ومؤقّت.</p>
     </div>
   `;
   document.getElementById('body-back').addEventListener('click', () => history.back());
