@@ -179,7 +179,7 @@ function openRecipeDetail(recipe, photoUrl, onChanged) {
 async function renderRecipesPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="recipes-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="recipes-back">→</button>
       <h1>وصفاتي</h1>
     </div>
     <div class="card">

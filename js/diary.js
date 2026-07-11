@@ -143,7 +143,7 @@ async function openDiaryModal({ date, onSaved }) {
 async function renderDiaryPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="diary-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="diary-back">→</button>
       <h1>يومياتي</h1>
     </div>
     <div class="card" id="diary-streak-card"></div>

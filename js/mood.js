@@ -101,7 +101,7 @@ async function moodDayProvider(dateStr) {
 async function renderMoodHistoryPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="mood-history-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="mood-history-back">→</button>
       <h1>سجل المزاج</h1>
     </div>
     <div class="card">

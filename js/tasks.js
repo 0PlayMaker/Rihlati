@@ -272,7 +272,7 @@ function openTodoModal({ existingId, onSaved } = {}) {
 async function renderTasksPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="tasks-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="tasks-back">→</button>
       <h1>المهام</h1>
     </div>
     <div class="card">

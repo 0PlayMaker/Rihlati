@@ -35,8 +35,10 @@ async function getCurrencyLabel() {
   return settings?.currency || 'دينار';
 }
 
-async function transactionRowHtml(t) {
-  const currency = await getCurrencyLabel();
+// Currency is passed in, not fetched here: this runs once per ROW, and
+// re-reading the same never-changing setting from IndexedDB for every
+// row turned one render into N database reads.
+function transactionRowHtml(t, currency) {
   const isPositive = t.amount > 0;
   return `
     <div class="txn-row" data-txn-id="${t.id}">
@@ -56,7 +58,8 @@ async function renderTransactionsList(container, { limit } = {}) {
     container.innerHTML = `<div class="empty-state"><p>ما في معاملات مسجلة بعد.</p></div>`;
     return;
   }
-  container.innerHTML = (await Promise.all(all.map(transactionRowHtml))).join('');
+  const currency = await getCurrencyLabel(); // once per render, not once per row
+  container.innerHTML = all.map(t => transactionRowHtml(t, currency)).join('');
   wireKebabMenus(container, async (rowId, action) => {
     if (action === 'delete') {
       if (!confirm('حذف هذه المعاملة؟')) return;
@@ -88,7 +91,7 @@ async function renderTransactionsGroupedByMonth(container) {
     const [y, m] = monthKey.split('-').map(Number);
     const totalIn = txns.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
     const totalOut = txns.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
-    const rows = (await Promise.all(txns.map(transactionRowHtml))).join('');
+    const rows = txns.map(t => transactionRowHtml(t, currency)).join('');
     return `
       <details class="diary-month txn-month" ${idx === 0 ? 'open' : ''}>
         <summary>
@@ -144,8 +147,8 @@ function openAddTransactionModal(onSaved) {
   });
   document.getElementById('txn-cancel').addEventListener('click', () => overlay.remove());
   document.getElementById('txn-save').addEventListener('click', async () => {
-    const amount = parseFloat(document.getElementById('txn-amount-input').value);
-    if (Number.isNaN(amount) || amount <= 0) return;
+    const amount = readNumericField('txn-amount-input');
+    if (amount === null || amount <= 0) return;
     const note = document.getElementById('txn-note-input').value.trim();
     const date = document.getElementById('txn-date-input').value || todayStr();
     await addTransaction(amount * sign, note, date);
@@ -171,8 +174,8 @@ function openSetBalanceModal(onSaved) {
   document.body.appendChild(overlay);
   document.getElementById('balance-cancel').addEventListener('click', () => overlay.remove());
   document.getElementById('balance-save').addEventListener('click', async () => {
-    const v = parseFloat(document.getElementById('balance-input').value);
-    if (Number.isNaN(v)) return;
+    const v = readNumericField('balance-input');
+    if (v === null) return;
     await setBalance(v);
     overlay.remove();
     if (onSaved) onSaved();
@@ -219,7 +222,7 @@ async function deleteShoppingListItem(id) {
 async function renderShoppingListsPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="shopping-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="shopping-back">→</button>
       <h1>قوائم التسوق</h1>
     </div>
     <div class="card">
@@ -427,8 +430,7 @@ async function getWishlistPhoto(kind, id) {
   return db[cfg.wishPhotoTable].get(id);
 }
 
-async function purchaseRowHtml(item, photoUrl) {
-  const currency = await getCurrencyLabel();
+function purchaseRowHtml(item, photoUrl, currency) {
   const deducts = item.deductFromBalance ?? false; // old records made before this fix default to "no"
   return `
     <div class="food-row" data-purchase-id="${item.id}">
@@ -453,10 +455,11 @@ async function renderPurchasesList(kind, container, { limit, onBalanceChange } =
     container.innerHTML = `<div class="empty-state"><p>ما في مشتريات مسجلة بعد.</p></div>`;
     return;
   }
+  const currency = await getCurrencyLabel(); // once per render, not once per row
   const rows = await Promise.all(items.map(async item => {
     const photoRow = await getPurchasePhoto(kind, item.id);
     const photoUrl = photoRow ? trackEconomyPhotoUrl(photoRow.photoBlob) : null;
-    return purchaseRowHtml(item, photoUrl);
+    return purchaseRowHtml(item, photoUrl, currency);
   }));
   container.innerHTML = rows.join('');
   wireKebabMenus(container, async (rowId, action) => {
@@ -545,8 +548,7 @@ function openAddPurchaseModal(kind, onSaved, existingId) {
   document.getElementById('purchase-save').addEventListener('click', async () => {
     const name = document.getElementById('purchase-name-input').value.trim();
     if (!name) return;
-    const priceRaw = document.getElementById('purchase-price-input').value;
-    const price = priceRaw === '' ? null : parseFloat(priceRaw);
+    const price = readNumericField('purchase-price-input');
     const deduct = document.getElementById('purchase-deduct-input').checked;
     const date = document.getElementById('purchase-date-input').value || todayStr();
     if (existingId) await updatePurchase(kind, existingId, { name, price, date, deductFromBalance: deduct, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
@@ -558,8 +560,7 @@ function openAddPurchaseModal(kind, onSaved, existingId) {
   applyExisting();
 }
 
-async function wishlistRowHtml(item, photoUrl) {
-  const currency = await getCurrencyLabel();
+function wishlistRowHtml(item, photoUrl, currency) {
   const deducts = item.deductFromBalance ?? false;
   return `
     <div class="food-row" data-wish-id="${item.id}">
@@ -585,10 +586,11 @@ async function renderWishlist(kind, container, onBalanceChange) {
     container.innerHTML = `<div class="empty-state"><p>القائمة فاضية.</p></div>`;
     return;
   }
+  const currency = await getCurrencyLabel(); // once per render, not once per row
   const rows = await Promise.all(items.map(async item => {
     const photoRow = await getWishlistPhoto(kind, item.id);
     const photoUrl = photoRow ? trackEconomyPhotoUrl(photoRow.photoBlob) : null;
-    return wishlistRowHtml(item, photoUrl);
+    return wishlistRowHtml(item, photoUrl, currency);
   }));
   container.innerHTML = rows.join('');
   wireKebabMenus(container, async (rowId, action) => {
@@ -676,8 +678,7 @@ function openWishlistModal(kind, { existingId, onSaved } = {}) {
     const name = document.getElementById('wish-name-input').value.trim();
     if (!name) return;
     const link = document.getElementById('wish-link-input').value.trim();
-    const priceRaw = document.getElementById('wish-price-input').value;
-    const price = priceRaw === '' ? null : parseFloat(priceRaw);
+    const price = readNumericField('wish-price-input');
     const deductFromBalance = document.getElementById('wish-deduct-input').checked;
     if (existingId) await updateWishlistItem(kind, existingId, { name, link, price, deductFromBalance, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
     else await addWishlistItem(kind, { name, link, price, deductFromBalance, photoBlob: pendingPhotoBlob });
@@ -694,7 +695,7 @@ async function renderPurchasesPage(kind, params, view) {
   const cfg = ECONOMY_KINDS[kind];
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="purchases-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="purchases-back">→</button>
       <h1>${cfg.label}</h1>
     </div>
     <div class="card">
@@ -716,7 +717,7 @@ async function renderWishlistPage(kind, params, view) {
   const cfg = ECONOMY_KINDS[kind];
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="wishlist-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="wishlist-back">→</button>
       <h1>قائمة أمنيات ${cfg.label}</h1>
     </div>
     <div class="card">
@@ -738,7 +739,7 @@ async function renderTransactionsPage(params, view) {
   const currency = await getCurrencyLabel();
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="txn-page-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="txn-page-back">→</button>
       <h1>المعاملات</h1>
     </div>
     <div class="card">
@@ -766,7 +767,7 @@ async function renderEconomyPage(params, view) {
 
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="economy-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="economy-back">→</button>
       <h1>الاقتصاد</h1>
       <button class="btn btn-primary btn-sm economy-shopping-btn" id="shopping-link">🛒 قوائم التسوق</button>
     </div>
@@ -911,10 +912,11 @@ async function purchaseDayProvider(kind, title, dateStr) {
   const items = (await getPurchases(kind)).filter(i => i.date === dateStr);
   if (items.length === 0) return null;
   const node = document.createElement('div');
+  const currency = await getCurrencyLabel(); // once per render, not once per row
   const rows = await Promise.all(items.map(async item => {
     const photoRow = await getPurchasePhoto(kind, item.id);
     const photoUrl = photoRow ? trackEconomyPhotoUrl(photoRow.photoBlob) : null;
-    return purchaseRowHtml(item, photoUrl);
+    return purchaseRowHtml(item, photoUrl, currency);
   }));
   node.innerHTML = rows.join('');
   node.querySelectorAll('.kebab-menu').forEach(el => el.remove());

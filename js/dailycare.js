@@ -3,16 +3,6 @@
 // more granular than dailyAdhkarItems (worship.js), which only tracks
 // one combined done/not-done per morning/evening rather than per item.
 
-let _careePhotoUrls = [];
-function trackCarePhotoUrl(blob) {
-  const url = URL.createObjectURL(blob);
-  _careePhotoUrls.push(url);
-  return url;
-}
-function revokeCarePhotoUrls() {
-  _careePhotoUrls.forEach(u => URL.revokeObjectURL(u));
-  _careePhotoUrls = [];
-}
 
 // ===================== CRUD =====================
 
@@ -78,9 +68,17 @@ function openCareRoutineModal(kind, { existingId, onSaved } = {}) {
     </div>`;
   document.body.appendChild(overlay);
 
+  // Only the transient preview URL is recycled here. existingPhotoUrl is
+  // cached and re-rendered on later passes, so it must NOT be revoked --
+  // doing so would leave a dead blob: src and a broken image.
+  let pendingPreviewUrl = null;
   function renderPhotoArea() {
     const el = document.getElementById('care-photo-preview');
-    if (pendingPhotoBlob) el.innerHTML = `<img src="${trackCarePhotoUrl(pendingPhotoBlob)}" alt="">`;
+    if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); pendingPreviewUrl = null; }
+    if (pendingPhotoBlob) {
+      pendingPreviewUrl = URL.createObjectURL(pendingPhotoBlob);
+      el.innerHTML = `<img src="${pendingPreviewUrl}" alt="">`;
+    }
     else if (existingPhotoUrl && !removePhotoFlag) el.innerHTML = `<img src="${existingPhotoUrl}" alt="">`;
     else el.innerHTML = '<span class="food-photo-placeholder">📷</span>';
   }
@@ -103,15 +101,24 @@ function openCareRoutineModal(kind, { existingId, onSaved } = {}) {
     document.getElementById('care-title-input').value = existing.title;
     document.getElementById('care-youtube-input').value = existing.youtubeLink || '';
     const photoRow = await getCareRoutinePhoto(existingId);
-    if (photoRow) { existingPhotoUrl = trackCarePhotoUrl(photoRow.photoBlob); renderPhotoArea(); }
+    if (photoRow) { existingPhotoUrl = URL.createObjectURL(photoRow.photoBlob); renderPhotoArea(); }
   })();
 
-  document.getElementById('care-cancel-btn').addEventListener('click', () => overlay.remove());
+  // Every exit path must free both blob URLs this modal created,
+  // otherwise each open/close cycle pins another copy of the photo.
+  function closeModal() {
+    if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
+    if (existingPhotoUrl) URL.revokeObjectURL(existingPhotoUrl);
+    pendingPreviewUrl = null;
+    existingPhotoUrl = null;
+    overlay.remove();
+  }
+  document.getElementById('care-cancel-btn').addEventListener('click', closeModal);
   const deleteBtn = document.getElementById('care-delete-btn');
   if (deleteBtn) deleteBtn.addEventListener('click', async () => {
     if (!confirm('حذف هذا الروتين؟')) return;
     await deleteCareRoutine(existingId);
-    overlay.remove();
+    closeModal();
     if (onSaved) onSaved();
   });
   document.getElementById('care-save-btn').addEventListener('click', async () => {
@@ -120,7 +127,7 @@ function openCareRoutineModal(kind, { existingId, onSaved } = {}) {
     const youtubeLink = document.getElementById('care-youtube-input').value.trim();
     if (existingId) await updateCareRoutine(existingId, { title, youtubeLink, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
     else await addCareRoutine(kind, { title, youtubeLink, photoBlob: pendingPhotoBlob });
-    overlay.remove();
+    closeModal();
     if (onSaved) onSaved();
   });
 }
@@ -131,7 +138,7 @@ async function careRoutineRowHtml(routine, dateStr) {
   const done = await isCareRoutineDone(routine.id, dateStr);
   const stats = await getCareRoutineStats(routine.id);
   const photoRow = await getCareRoutinePhoto(routine.id);
-  const photoUrl = photoRow ? trackCarePhotoUrl(photoRow.photoBlob) : null;
+  const photoUrl = photoRow ? URL.createObjectURL(photoRow.photoBlob) : null;
   const embed = routine.youtubeLink ? youtubeEmbedUrl(routine.youtubeLink) : null;
   return `
     <div class="care-routine-card" data-routine-id="${routine.id}">
@@ -152,6 +159,12 @@ async function careRoutineRowHtml(routine, dateStr) {
 }
 
 async function renderCareSection(container, kind, dateStr, onChange) {
+  // This card re-renders on every checkbox tick and each render mints a
+  // fresh blob URL per routine photo, so the outgoing render's URLs must
+  // be released or the images pile up in memory indefinitely. Scoped to
+  // THIS container: a blanket revoke-all would kill the sibling section's
+  // photos (morning and evening render separately).
+  revokeBlobUrlsIn(container);
   const routines = await getCareRoutines(kind);
   if (routines.length === 0) {
     container.innerHTML = `<p class="empty-state-sub">ما في روتين مضاف بعد.</p>`;

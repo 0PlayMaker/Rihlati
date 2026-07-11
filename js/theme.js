@@ -368,7 +368,7 @@ async function renderThemeEditorPage(params, view) {
 
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="theme-editor-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="theme-editor-back">→</button>
       <h1>تخصيص المظهر</h1>
     </div>
 

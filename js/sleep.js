@@ -41,16 +41,6 @@ function computeSleepDurationMinutes(baseDate, sleepTime, wakeTime) {
 
 // ===================== CRUD =====================
 
-let _sleepPhotoUrls = [];
-function trackSleepPhotoUrl(blob) {
-  const url = URL.createObjectURL(blob);
-  _sleepPhotoUrls.push(url);
-  return url;
-}
-function revokeSleepPhotoUrls() {
-  _sleepPhotoUrls.forEach(u => URL.revokeObjectURL(u));
-  _sleepPhotoUrls = [];
-}
 
 async function addSleepLog({ date, sleepTime, wakeTime, isNap, dreamText, photoBlob }) {
   const durationMinutes = computeSleepDurationMinutes(date, sleepTime, wakeTime);
@@ -154,9 +144,16 @@ function openSleepModal({ existingId, onSaved } = {}) {
     });
   });
 
+  // Only the transient preview URL is recycled; existingPhotoUrl is cached
+  // and re-rendered later, so revoking it would break the image.
+  let pendingPreviewUrl = null;
   function renderPhotoArea() {
     const el = document.getElementById('sleep-photo-preview');
-    if (pendingPhotoBlob) el.innerHTML = `<img src="${trackSleepPhotoUrl(pendingPhotoBlob)}" alt="">`;
+    if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); pendingPreviewUrl = null; }
+    if (pendingPhotoBlob) {
+      pendingPreviewUrl = URL.createObjectURL(pendingPhotoBlob);
+      el.innerHTML = `<img src="${pendingPreviewUrl}" alt="">`;
+    }
     else if (existingPhotoUrl && !removePhotoFlag) el.innerHTML = `<img src="${existingPhotoUrl}" alt="">`;
     else el.innerHTML = '<span class="food-photo-placeholder">📷</span>';
   }
@@ -183,15 +180,24 @@ function openSleepModal({ existingId, onSaved } = {}) {
     document.getElementById('sleep-dream-input').value = existing.dreamText || '';
     refreshPreview();
     const photoRow = await db.sleepDreamPhotos.get(existingId);
-    if (photoRow) { existingPhotoUrl = trackSleepPhotoUrl(photoRow.photoBlob); renderPhotoArea(); }
+    if (photoRow) { existingPhotoUrl = URL.createObjectURL(photoRow.photoBlob); renderPhotoArea(); }
   })();
 
-  document.getElementById('sleep-cancel-btn').addEventListener('click', () => overlay.remove());
+  // Every exit path must free both blob URLs this modal created,
+  // otherwise each open/close cycle pins another copy of the photo.
+  function closeModal() {
+    if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
+    if (existingPhotoUrl) URL.revokeObjectURL(existingPhotoUrl);
+    pendingPreviewUrl = null;
+    existingPhotoUrl = null;
+    overlay.remove();
+  }
+  document.getElementById('sleep-cancel-btn').addEventListener('click', closeModal);
   const deleteBtn = document.getElementById('sleep-delete-btn');
   if (deleteBtn) deleteBtn.addEventListener('click', async () => {
     if (!confirm('حذف هذا التسجيل؟')) return;
     await deleteSleepLog(existingId);
-    overlay.remove();
+    closeModal();
     if (onSaved) onSaved();
   });
   document.getElementById('sleep-save-btn').addEventListener('click', async () => {
@@ -203,7 +209,7 @@ function openSleepModal({ existingId, onSaved } = {}) {
     const dreamText = document.getElementById('sleep-dream-input').value.trim();
     if (existingId) await updateSleepLog(existingId, { date, sleepTime, wakeTime, isNap, dreamText, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
     else await addSleepLog({ date, sleepTime, wakeTime, isNap, dreamText, photoBlob: pendingPhotoBlob });
-    overlay.remove();
+    closeModal();
     if (onSaved) onSaved();
   });
 }
@@ -227,7 +233,7 @@ function sleepRowHtml(log) {
 async function renderSleepPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="sleep-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="sleep-back">→</button>
       <h1>النوم</h1>
     </div>
     <div class="card">

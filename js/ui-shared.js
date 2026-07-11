@@ -100,6 +100,24 @@ function resizeImageToBlob(file, maxDim = 256, quality = 0.85) {
   });
 }
 
+// Release the blob: URLs held by any <img> inside `el` before its
+// contents get replaced. Every URL.createObjectURL() pins the whole
+// image blob in memory until it's explicitly revoked, so a card that
+// re-renders (a checkbox tick, a list refresh) would otherwise leak a
+// fresh copy of every photo, forever.
+//
+// Deliberately DOM-scoped rather than a module-level "revoke everything
+// I ever created" list: several pages render two sibling sections from
+// the same function (daily care does morning + evening), and a blanket
+// revoke-all would tear down the sibling's still-visible images. Only
+// what is actually being thrown away gets freed.
+function revokeBlobUrlsIn(el) {
+  if (!el) return;
+  el.querySelectorAll('img[src^="blob:"]').forEach(img => {
+    URL.revokeObjectURL(img.src);
+  });
+}
+
 function renderRing({ size = 120, strokeWidth = 14, segments }) {
   const r = (size - strokeWidth) / 2;
   const c = 2 * Math.PI * r;

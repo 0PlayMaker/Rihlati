@@ -54,10 +54,43 @@ function weightStatusText(stats) {
 // universal numeric notation than body text. Each point gets an
 // invisible larger tap target (r=10) around the visible dot (r=3.5),
 // since a bare 3.5px target is too small to reliably tap on a phone.
+//
+// NOTE on preserveAspectRatio: this used to be set to "none", which
+// stretched the whole SVG to fill the container — including the dots,
+// which came out as ovals rather than circles whenever the container's
+// aspect ratio differed from the viewBox (it always did: CSS fixes the
+// height and lets the width flex). Left at the default so shapes stay
+// shapes; the line still spans the full width because the viewBox is
+// laid out to.
+
+// Smooth path through the points (Catmull-Rom -> cubic bezier), so the
+// weight line reads as a trend rather than a jagged zigzag. Falls back
+// to a straight segment when there are only two points.
+function smoothPath(coords) {
+  if (coords.length < 2) return '';
+  if (coords.length === 2) {
+    return `M ${coords[0][0].toFixed(1)} ${coords[0][1].toFixed(1)} L ${coords[1][0].toFixed(1)} ${coords[1][1].toFixed(1)}`;
+  }
+  let d = `M ${coords[0][0].toFixed(1)} ${coords[0][1].toFixed(1)}`;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const p0 = coords[i - 1] || coords[i];
+    const p1 = coords[i];
+    const p2 = coords[i + 1];
+    const p3 = coords[i + 2] || p2;
+    // Tension 6 keeps the curve tight to the data — high enough to look
+    // smooth, low enough that it can't invent a peak that isn't there.
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+  }
+  return d;
+}
 
 function renderWeightChart(points, targetWeight) {
   if (points.length === 0) return '<p class="empty-state-sub">سجلي وزنك لرؤية الرسم البياني</p>';
-  const width = 320, height = 140, padding = 22;
+  const width = 320, height = 150, padding = 24, padRight = 34;
   const values = points.map(p => p.value);
   let min = Math.min(...values), max = Math.max(...values);
   if (targetWeight != null) { min = Math.min(min, targetWeight); max = Math.max(max, targetWeight); }
@@ -65,22 +98,46 @@ function renderWeightChart(points, targetWeight) {
   const rangePad = (max - min) * 0.15;
   min -= rangePad; max += rangePad;
 
-  const xStep = points.length > 1 ? (width - 2 * padding) / (points.length - 1) : 0;
+  const plotW = width - padding - padRight;
+  const xStep = points.length > 1 ? plotW / (points.length - 1) : 0;
   const scaleY = (v) => height - padding - ((v - min) / (max - min)) * (height - 2 * padding);
   const coords = points.map((p, i) => [padding + i * xStep, scaleY(p.value)]);
 
-  const pathD = coords.map(([x, y], i) => `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`).join(' ');
-  const dots = coords.map(([x, y], i) => `
-    <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="10" fill="transparent" class="chart-point-hit" data-date="${points[i].date}" data-value="${points[i].value}"/>
-    <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="var(--pink-deep)" style="pointer-events:none"/>
-  `).join('');
-  const targetLine = targetWeight != null
-    ? `<line x1="${padding}" y1="${scaleY(targetWeight).toFixed(1)}" x2="${width - padding}" y2="${scaleY(targetWeight).toFixed(1)}" stroke="var(--blue-deep)" stroke-width="1.5" stroke-dasharray="4 4"/>`
+  const linePath = smoothPath(coords);
+  // Area fill: the same curve, closed down to the baseline. Gives the
+  // chart some visual weight instead of a lone hairline.
+  const baseY = height - padding;
+  const areaPath = points.length > 1
+    ? `${linePath} L ${coords[coords.length - 1][0].toFixed(1)} ${baseY} L ${coords[0][0].toFixed(1)} ${baseY} Z`
     : '';
 
-  return `<svg viewBox="0 0 ${width} ${height}" class="weight-chart-svg" preserveAspectRatio="none">
+  // Reference gridlines + value labels, so the numbers mean something
+  // without having to tap a dot.
+  const gridVals = [max - rangePad, (min + max) / 2, min + rangePad];
+  const grid = gridVals.map(v => `
+    <line x1="${padding}" y1="${scaleY(v).toFixed(1)}" x2="${width - padRight}" y2="${scaleY(v).toFixed(1)}" class="chart-gridline"/>
+    <text x="${width - padRight + 4}" y="${(scaleY(v) + 3).toFixed(1)}" class="chart-axis-label">${v.toFixed(1)}</text>
+  `).join('');
+
+  const dots = coords.map(([x, y], i) => `
+    <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="10" fill="transparent" class="chart-point-hit" data-date="${points[i].date}" data-value="${points[i].value}"/>
+    <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" class="chart-dot"/>
+  `).join('');
+  const targetLine = targetWeight != null
+    ? `<line x1="${padding}" y1="${scaleY(targetWeight).toFixed(1)}" x2="${width - padRight}" y2="${scaleY(targetWeight).toFixed(1)}" class="chart-target-line"/>`
+    : '';
+
+  return `<svg viewBox="0 0 ${width} ${height}" class="weight-chart-svg">
+    <defs>
+      <linearGradient id="weight-area-grad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="var(--pink-deep)" stop-opacity="0.28"/>
+        <stop offset="100%" stop-color="var(--pink-deep)" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    ${grid}
+    ${areaPath ? `<path d="${areaPath}" fill="url(#weight-area-grad)" stroke="none"/>` : ''}
     ${targetLine}
-    <path d="${pathD}" fill="none" stroke="var(--pink-deep)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="${linePath}" fill="none" class="chart-line"/>
     ${dots}
   </svg>`;
 }
@@ -101,8 +158,8 @@ function openWeightModal(onSaved) {
   document.body.appendChild(overlay);
   document.getElementById('weight-cancel').addEventListener('click', () => overlay.remove());
   document.getElementById('weight-save').addEventListener('click', async () => {
-    const v = parseFloat(normalizeArabicNumerals(document.getElementById('weight-input').value));
-    if (Number.isNaN(v) || v <= 0) return;
+    const v = readNumericField('weight-input');
+    if (v === null || v <= 0) return;
     await setWeight(todayStr(), v);
     overlay.remove();
     if (onSaved) onSaved();
@@ -139,8 +196,8 @@ async function openWeightModalForDate(dateStr, onSaved) {
     if (onSaved) onSaved();
   });
   document.getElementById('weight-save-d').addEventListener('click', async () => {
-    const v = parseFloat(normalizeArabicNumerals(document.getElementById('weight-input-d').value));
-    if (Number.isNaN(v) || v <= 0) return;
+    const v = readNumericField('weight-input-d');
+    if (v === null || v <= 0) return;
     await setWeight(dateStr, v);
     overlay.remove();
     if (onSaved) onSaved();
@@ -244,8 +301,8 @@ async function renderMeasurementsList(container) {
       const latest = await getMeasurementLatest(id);
       const input = prompt('القيمة بالسنتيمتر:', latest ? String(latest.value) : '');
       if (input === null || input === '') return;
-      const n = parseFloat(normalizeArabicNumerals(input));
-      if (!Number.isNaN(n) && n > 0) {
+      const n = parseNumericInput(input);
+      if (n !== null && n > 0) {
         await setMeasurementValue(id, todayStr(), n);
         await renderMeasurementsList(container);
       }
@@ -296,7 +353,7 @@ function openAddMeasurementModal(onAdded) {
 async function renderBodyPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="body-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="body-back">→</button>
       <h1>الصحة</h1>
     </div>
     <div class="card" id="body-sleep-summary"></div>
@@ -412,8 +469,8 @@ async function renderBodyPage(params, view) {
   await renderDailyCareCard(document.getElementById('daily-care-card'));
   document.getElementById('save-target-btn').addEventListener('click', async () => {
     const raw = document.getElementById('target-weight-input').value;
-    const v = raw === '' ? null : parseFloat(normalizeArabicNumerals(raw));
-    await db.settings.update(1, { targetWeightKg: (v != null && !Number.isNaN(v)) ? v : null });
+    const v = parseNumericInput(raw);
+    await db.settings.update(1, { targetWeightKg: v });
     toast('تم حفظ الهدف');
     refreshWeight();
   });

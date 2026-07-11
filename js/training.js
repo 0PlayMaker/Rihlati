@@ -69,9 +69,19 @@ function formatTimer(totalSeconds) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+// The countdown is driven by an absolute END TIMESTAMP, not by
+// decrementing a counter once per interval tick. Mobile browsers
+// throttle (or entirely suspend) intervals in a backgrounded tab, so
+// "remaining -= 1 every 1000ms" silently under-counts: leave the app
+// mid-set and the timer is simply wrong when you come back. Deriving
+// the remaining time from (endsAt - Date.now()) on every tick means
+// the display is correct the instant the tab wakes up, no matter how
+// many ticks the browser skipped. `remaining` is only the paused
+// leftover; while running, endsAt is the source of truth.
 function openTimerModal(exercise) {
   let duration = exercise.defaultDurationSec || 60;
-  let remaining = duration;
+  let remaining = duration;   // seconds left while paused/idle
+  let endsAt = null;          // absolute ms timestamp while running
   let intervalId = null;
 
   const overlay = document.createElement('div');
@@ -96,36 +106,54 @@ function openTimerModal(exercise) {
   const toggleBtn = document.getElementById('timer-toggle');
   const durationInput = document.getElementById('timer-duration-input');
 
+  // Reads the duration field safely (Arabic-Indic digits included).
+  const readDuration = () => parseNumericInput(durationInput.value, { int: true, min: 1 }) ?? duration;
+
+  function stopInterval() {
+    if (intervalId) { clearInterval(intervalId); intervalId = null; }
+  }
+
+  function finish() {
+    stopInterval();
+    endsAt = null;
+    remaining = 0;
+    display.textContent = formatTimer(0);
+    toggleBtn.textContent = 'ابدأ';
+    display.classList.add('timer-done');
+    playBeepSequence(3);
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+  }
+
   function tick() {
-    remaining -= 1;
-    display.textContent = formatTimer(Math.max(0, remaining));
-    if (remaining <= 0) {
-      clearInterval(intervalId);
-      intervalId = null;
-      toggleBtn.textContent = 'ابدأ';
-      display.classList.add('timer-done');
-      playBeepSequence(3);
-      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
-    }
+    if (endsAt === null) return;
+    // Derived from the clock, never accumulated — survives throttling.
+    const left = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
+    display.textContent = formatTimer(left);
+    if (left <= 0) finish();
   }
 
   toggleBtn.addEventListener('click', () => {
     if (intervalId) {
-      clearInterval(intervalId);
-      intervalId = null;
+      // Pause: freeze the leftover, drop the end timestamp.
+      remaining = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
+      stopInterval();
+      endsAt = null;
+      display.textContent = formatTimer(remaining);
       toggleBtn.textContent = 'استئناف';
     } else {
       unlockAudioContext(); // must happen inside this real tap, not later when the timer fires
-      if (remaining <= 0) remaining = Number(durationInput.value) || duration;
+      if (remaining <= 0) remaining = readDuration();
       display.classList.remove('timer-done');
-      intervalId = setInterval(tick, 1000);
+      endsAt = Date.now() + remaining * 1000;
+      tick(); // paint immediately rather than waiting a full second
+      intervalId = setInterval(tick, 250); // sub-second polling keeps the display crisp
       toggleBtn.textContent = 'إيقاف';
     }
   });
   document.getElementById('timer-reset').addEventListener('click', () => {
-    clearInterval(intervalId);
-    intervalId = null;
-    duration = Number(durationInput.value) || 60;
+    stopInterval();
+    endsAt = null;
+    duration = readDuration();
     remaining = duration;
     display.textContent = formatTimer(remaining);
     display.classList.remove('timer-done');
@@ -133,15 +161,17 @@ function openTimerModal(exercise) {
   });
   durationInput.addEventListener('change', () => {
     if (!intervalId) {
-      duration = Number(durationInput.value) || 60;
+      duration = readDuration();
       remaining = duration;
       display.textContent = formatTimer(remaining);
     }
   });
-  document.getElementById('timer-close').addEventListener('click', () => {
-    clearInterval(intervalId);
-    overlay.remove();
-  });
+
+  // The interval must not outlive the modal — on close, or if the
+  // person navigates away with the modal still open.
+  const teardown = () => { stopInterval(); overlay.remove(); };
+  document.getElementById('timer-close').addEventListener('click', teardown);
+  registerCleanup(teardown);
 }
 
 // ---------- create/edit modal ----------
@@ -190,9 +220,16 @@ async function openExerciseModal({ existingId, onSaved } = {}) {
     });
   });
 
+  // Only the transient preview URL is recycled; existingPhotoUrl is cached
+  // and re-rendered later, so revoking it would break the image.
+  let pendingPreviewUrl = null;
   function renderPhotoArea() {
     const el = document.getElementById('exercise-photo-preview');
-    if (pendingPhotoBlob) el.innerHTML = `<img src="${trackExercisePhotoUrl(pendingPhotoBlob)}" alt="">`;
+    if (pendingPreviewUrl) { URL.revokeObjectURL(pendingPreviewUrl); pendingPreviewUrl = null; }
+    if (pendingPhotoBlob) {
+      pendingPreviewUrl = URL.createObjectURL(pendingPhotoBlob);
+      el.innerHTML = `<img src="${pendingPreviewUrl}" alt="">`;
+    }
     else if (existingPhotoUrl && !removePhotoFlag) el.innerHTML = `<img src="${existingPhotoUrl}" alt="">`;
     else el.innerHTML = '<span class="food-photo-placeholder">📷</span>';
   }
@@ -237,8 +274,8 @@ async function openExerciseModal({ existingId, onSaved } = {}) {
     if (!name) return;
     const description = document.getElementById('exercise-desc-input').value.trim();
     const youtubeLink = document.getElementById('exercise-youtube-input').value.trim();
-    const min = parseInt(document.getElementById('exercise-duration-min-input').value, 10) || 0;
-    const sec = parseInt(document.getElementById('exercise-duration-sec-input').value, 10) || 0;
+    const min = readNumericField('exercise-duration-min-input', { int: true, min: 0 }) ?? 0;
+    const sec = readNumericField('exercise-duration-sec-input', { int: true, min: 0 }) ?? 0;
     const defaultDurationSec = (min > 0 || sec > 0) ? (min * 60 + sec) : null;
     const photoDisplayMode = overlay.querySelector('#exercise-photo-mode-chips .chip.active')?.dataset.mode || 'thumb_and_detail';
     if (existingId) await updateExercise(existingId, { name, description, youtubeLink, defaultDurationSec, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag, photoDisplayMode });
@@ -316,8 +353,8 @@ async function renderExercisesList(container, { showStreak = true } = {}) {
       const current = await getExerciseSets(id, today);
       const input = prompt('عدد المجموعات اليوم:', String(current));
       if (input === null) return;
-      const n = parseInt(input, 10);
-      if (!Number.isNaN(n) && n >= 0) { await setExerciseSets(id, today, n); await refresh(); }
+      const n = parseNumericInput(input, { int: true });
+      if (n !== null && n >= 0) { await setExerciseSets(id, today, n); await refresh(); }
     });
     const timerBtn = row.querySelector('[data-action="timer"]');
     if (timerBtn) timerBtn.addEventListener('click', () => {
@@ -332,7 +369,7 @@ async function renderExercisesList(container, { showStreak = true } = {}) {
 async function renderTrainingPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="training-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="training-back">→</button>
       <h1>التمارين</h1>
     </div>
     <div class="card">

@@ -97,14 +97,14 @@ async function renderWaterCard(container) {
     const current = await getWaterForDate(today);
     const input = prompt('كمية الماء اليوم (لتر):', current.toFixed(2));
     if (input === null) return;
-    const n = parseFloat(input);
-    if (!Number.isNaN(n) && n >= 0) { await setWaterExact(today, n); renderWaterCard(container); }
+    const n = parseNumericInput(input);
+    if (n !== null && n >= 0) { await setWaterExact(today, n); renderWaterCard(container); }
   });
   document.getElementById('water-edit-target').addEventListener('click', async () => {
     const input = prompt('الهدف اليومي (لتر):', String(target));
     if (input === null) return;
-    const n = parseFloat(input);
-    if (!Number.isNaN(n) && n > 0) { await db.settings.update(1, { dailyWaterTargetL: n }); renderWaterCard(container); }
+    const n = parseNumericInput(input);
+    if (n !== null && n > 0) { await db.settings.update(1, { dailyWaterTargetL: n }); renderWaterCard(container); }
   });
 }
 
@@ -210,12 +210,7 @@ async function openFoodModal({ date, existingId, onSaved }) {
 
   document.getElementById('food-save-btn').addEventListener('click', async () => {
     const time = document.getElementById('food-time-input').value || null;
-    const caloriesRaw = document.getElementById('food-calories-input').value;
-    let calories = null;
-    if (caloriesRaw !== '') {
-      const n = parseInt(caloriesRaw, 10);
-      if (!Number.isNaN(n)) calories = Math.max(0, n);
-    }
+    const calories = readNumericField('food-calories-input', { int: true, min: 0 });
     const notes = document.getElementById('food-notes-input').value.trim();
     const mealName = document.getElementById('food-name-input').value.trim();
 
@@ -289,10 +284,8 @@ function openFoodGoalsModal(onSaved) {
     document.body.appendChild(overlay);
     document.getElementById('food-goals-cancel').addEventListener('click', () => overlay.remove());
     document.getElementById('food-goals-save').addEventListener('click', async () => {
-      const mealsRaw = document.getElementById('meals-goal-input').value;
-      const calRaw = document.getElementById('calories-goal-input').value;
-      const meals = mealsRaw === '' ? null : Math.max(1, parseInt(mealsRaw, 10) || 1);
-      const cal = calRaw === '' ? null : Math.max(1, parseInt(calRaw, 10) || 1);
+      const meals = readNumericField('meals-goal-input', { int: true, min: 1 });
+      const cal = readNumericField('calories-goal-input', { int: true, min: 1 });
       await saveFoodGoals(meals, cal);
       overlay.remove();
       if (onSaved) onSaved();
@@ -304,7 +297,7 @@ async function renderFoodPage(params, view) {
   const today = todayStr();
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="food-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="food-back">→</button>
       <h1>الطعام</h1>
     </div>
     <div class="card">
@@ -416,8 +409,8 @@ async function waterDayProvider(dateStr) {
     if (btn) btn.addEventListener('click', async () => {
       const input = prompt('كمية الماء (لتر):', currentLiters.toFixed(2));
       if (input === null) return;
-      const n = parseFloat(input);
-      if (!Number.isNaN(n) && n >= 0) { await setWaterExact(dateStr, n); render(n); }
+      const n = parseNumericInput(input);
+      if (n !== null && n >= 0) { await setWaterExact(dateStr, n); render(n); }
     });
   }
   render(liters);

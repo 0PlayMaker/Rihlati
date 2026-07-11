@@ -306,7 +306,7 @@ async function renderSettingsPage(params, view) {
 
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="settings-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="settings-back">→</button>
       <h1>الإعدادات</h1>
     </div>
 
@@ -431,10 +431,8 @@ async function renderSettingsPage(params, view) {
     });
   });
   document.getElementById('settings-save-health').addEventListener('click', async () => {
-    const ageRaw = document.getElementById('settings-age').value;
-    const heightRaw = document.getElementById('settings-height').value;
-    const age = ageRaw === '' ? null : parseInt(ageRaw, 10);
-    const heightCm = heightRaw === '' ? null : parseInt(heightRaw, 10);
+    const age = readNumericField('settings-age', { int: true });
+    const heightCm = readNumericField('settings-height', { int: true });
     if (heightCm != null && (heightCm < 100 || heightCm > 220)) { alert('أدخلي طولاً صحيحاً بالسنتيمتر'); return; }
     if (age != null && (age < 1 || age > 120)) { alert('أدخلي عمراً صحيحاً'); return; }
     await db.settings.update(1, { age, sex: selectedSex, heightCm });

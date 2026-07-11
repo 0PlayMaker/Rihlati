@@ -376,7 +376,7 @@ function initPeriodCalendar(container, onChange) {
         (fertilityLevel && !isOvulation) ? 'cal-fertile-day' : ''
       ].filter(Boolean).join(' ');
       const marker = isOvulation ? '🥚' : (fertilityLevel ? '🌼' : '');
-      return `<button class="cal-cell ${classes}" data-date="${dateStr}">
+      return `<button class="cal-cell ${classes}" data-date="${dateStr}" aria-label="${formatDateArabic(dateStr, { weekday: true })}">
         <span class="cal-day-num">${day}</span>${marker ? `<span class="cal-day-marker">${marker}</span>` : ''}
       </button>`;
     }).join('');
@@ -443,7 +443,7 @@ async function renderPeriodHistoryList(container, onChange) {
 async function renderPeriodPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="period-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="period-back">→</button>
       <h1>الدورة الشهرية</h1>
     </div>
     <div class="card" id="period-status-card"></div>

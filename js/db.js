@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v43 · ١٠ يوليو ٢٠٢٦';
+const APP_VERSION = 'v44 · ١١ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -211,13 +211,15 @@ db.version(10).stores({
 
 // ---------- Phase 11 — Wird (daily Quran reading plan) ----------
 // One active plan at a time (id fixed at 1), not a list — she asked for
-// "a daily wird" (singular). progressPages/khatmCount are derived state
-// that lives WITH the plan rather than being recomputed from logs every
-// time, because unlike everything else in this app, the "current page
-// within this cycle" genuinely can't be reconstructed from a log of
-// daily amounts alone once a khatm has wrapped it back past zero — so
-// wirdLogs additionally records whether THAT SPECIFIC day's completion
-// triggered a khatm, which is what makes undo exact rather than a guess.
+// "a daily wird" (singular). The plan row holds ONLY the plan itself
+// (dailyAmount + unit). Progress and khatm count are NOT stored: they
+// are derived from wirdLogs, which records both pagesAdded and whether
+// that specific day's completion triggered a khatm — enough to replay
+// the whole history exactly, including cycles that wrapped past zero.
+// (An earlier version cached progressPages/khatmCount on the plan and
+// mutated them on each log/undo; that cache could drift out of sync
+// with the very log that's supposed to explain it, so it's gone. Same
+// "don't store what you can compute" rule as the balance and streaks.)
 db.version(11).stores({
   wirdSettings: '++id',
   wirdLogs: '++id, &date'
@@ -324,6 +326,35 @@ function normalizeArabicNumerals(str) {
   if (!str) return str;
   const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
   return String(str).replace(/[٠-٩]/g, d => arabicDigits.indexOf(d));
+}
+
+// The ONE way to read a number out of an input in this app.
+//
+// This is an Arabic-first app, so someone typing on an Arabic keyboard
+// produces Arabic-Indic digits (١٢٣) — which raw parseFloat/parseInt
+// turn into NaN, silently. Every numeric field must normalize first.
+// Returns null (never NaN) for empty/invalid input so callers can
+// distinguish "she left it blank" from "she typed something bad",
+// which `|| 0` and `|| 25` fallbacks could never do.
+//
+// opts: { int, min, max } — int floors to a whole number; min/max clamp.
+function parseNumericInput(value, { int = false, min = null, max = null } = {}) {
+  const raw = (value ?? '').toString().trim();
+  if (raw === '') return null;
+  const n = int
+    ? parseInt(normalizeArabicNumerals(raw), 10)
+    : parseFloat(normalizeArabicNumerals(raw));
+  if (!Number.isFinite(n)) return null;
+  let out = n;
+  if (min !== null) out = Math.max(min, out);
+  if (max !== null) out = Math.min(max, out);
+  return out;
+}
+
+// Convenience: read straight from an element id.
+function readNumericField(id, opts) {
+  const el = document.getElementById(id);
+  return parseNumericInput(el ? el.value : '', opts);
 }
 
 function daysBetween(dateStrA, dateStrB) {

@@ -392,7 +392,7 @@ function openHabitModal({ existingId, onSaved } = {}) {
 async function renderHabitsPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="habits-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="habits-back">→</button>
       <h1>العادات</h1>
     </div>
     <div class="card">

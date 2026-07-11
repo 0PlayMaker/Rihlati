@@ -15,6 +15,28 @@ function currentPath() {
 
 let _renderToken = 0;
 
+// ---------- page teardown ----------
+// The router swaps view.innerHTML on every navigation, which detaches
+// the old page's DOM — but anything the old page started OUTSIDE the
+// DOM keeps running: setInterval timers tick forever against dead
+// nodes (visit Study five times, get five zombie pomodoros all still
+// beeping), and every URL.createObjectURL() for a photo pins that
+// whole blob in memory until the tab closes. Pages register their
+// cleanup here and it runs right before the next route renders, so
+// this is fixed in ONE place instead of being re-remembered in every
+// page that ever adds a timer or shows an image.
+let _cleanups = [];
+function registerCleanup(fn) {
+  if (typeof fn === 'function') _cleanups.push(fn);
+}
+function runCleanups() {
+  const fns = _cleanups;
+  _cleanups = [];
+  fns.forEach(fn => {
+    try { fn(); } catch (err) { console.error('Cleanup failed:', err); }
+  });
+}
+
 // Route handlers that do a lot of awaiting BEFORE their first
 // view.innerHTML assignment (renderHome especially) can call this right
 // before writing to the DOM, to bail out quietly if a newer navigation
@@ -27,6 +49,7 @@ function isCurrentRenderToken(token) {
 }
 
 async function renderRoute() {
+  runCleanups(); // tear the previous page down before building the next
   const myToken = ++_renderToken;
   const path = currentPath();
   const segments = path.split('/').filter(Boolean); // e.g. ['day','2026-07-04']

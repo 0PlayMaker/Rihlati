@@ -70,6 +70,29 @@
   --card-border: transparent;
   --modal-bg: #FFFFFF;
   --glass-blur: 20px;
+
+  /* ---- semantic status tokens ----
+     Colors that carry MEANING (this went well / be careful / this is
+     the fertile window) get named by meaning, not by hue, and are set
+     in exactly one place. Components then ask for "success", not for
+     "#D4EDDA" — so a component can never quietly opt out of the theme,
+     and each mode below can retune all of them at once. Built on the
+     existing pastel family (mint/yellow/rose) rather than a second,
+     unrelated palette. */
+  --success: var(--mint);
+  --success-ink: #1E7E34;
+  --success-strong: var(--mint-deep);
+  --warning: var(--yellow);
+  --warning-ink: #856404;
+  --warning-strong: var(--yellow-deep);
+  --danger: var(--rose);
+  --danger-ink: #9B2C3F;
+  --danger-strong: var(--rose-deep);
+  --info: var(--blue);
+  --info-ink: #2C5C82;
+  --info-strong: var(--blue-deep);
+  /* Chart accents that must stay distinguishable from the main accent. */
+  --chart-secondary: #E8833E;
   --title-color: var(--ink);
   --btn-color: var(--pink-deep);
   --capsule-color: var(--pink-deep);
@@ -498,15 +521,15 @@ a { color: var(--pink-deep); text-decoration: none; }
 .cal-period-day { background: var(--pink); border-radius: var(--radius-sm); }
 .cal-period-day .cal-day-num { font-weight: 700; }
 .cal-predicted-period-day { background: transparent; border: 1.5px dashed var(--pink-deep); border-radius: var(--radius-sm); }
-.cal-fertile-day { background: rgba(107, 191, 130, 0.18); border-radius: var(--radius-sm); }
-.cal-ovulation-day { background: rgba(107, 191, 130, 0.35); border: 1.5px solid #6BBF82; border-radius: var(--radius-sm); }
+.cal-fertile-day { background: var(--success); opacity: 0.55; border-radius: var(--radius-sm); }
+.cal-ovulation-day { background: var(--success); border: 1.5px solid var(--success-strong); border-radius: var(--radius-sm); }
 .cal-day-marker { position: absolute; bottom: 2px; font-size: 9px; }
 .cal-legend { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); font-size: 11px; color: var(--ink-soft); }
 .cal-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-inline-end: 4px; vertical-align: middle; }
 .cal-legend .cal-period-day { background: var(--pink); }
 .cal-legend .cal-predicted-period-day { border: 1.5px dashed var(--pink-deep); }
-.cal-legend .cal-fertile-day { background: rgba(107, 191, 130, 0.35); }
-.cal-legend .cal-ovulation-day { background: #6BBF82; border: none; }
+.cal-legend .cal-fertile-day { background: var(--success); opacity: 0.55; }
+.cal-legend .cal-ovulation-day { background: var(--success-strong); border: none; }
 .period-history-row { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: var(--space-3) 0; border-bottom: 1px solid var(--track); background: none; border-left: none; border-right: none; border-top: none; cursor: pointer; text-align: right; }
 .period-history-row:last-child { border-bottom: none; }
 .period-history-range { font-size: 14px; }
@@ -568,7 +591,14 @@ a { color: var(--pink-deep); text-decoration: none; }
    ============================================================ */
 
 .weight-chart-wrap { width: 100%; }
-.weight-chart-svg { width: 100%; height: 140px; display: block; direction: ltr; }
+.weight-chart-svg { width: 100%; height: 150px; display: block; direction: ltr; overflow: visible; }
+/* Shared chart primitives — themed, so charts follow the palette
+   instead of each one hardcoding its own stroke colors. */
+.chart-line { stroke: var(--pink-deep); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.chart-dot { fill: var(--pink-deep); pointer-events: none; }
+.chart-gridline { stroke: var(--track); stroke-width: 1; }
+.chart-axis-label { font-size: 8px; fill: var(--ink-faint); }
+.chart-target-line { stroke: var(--info-strong); stroke-width: 1.5; stroke-dasharray: 4 4; }
 
 /* ============================================================
    Water
@@ -636,6 +666,27 @@ a { color: var(--pink-deep); text-decoration: none; }
   display: flex; flex-direction: column; min-width: 120px; overflow: hidden;
 }
 .kebab-dropdown.hidden { display: none; }
+/* Semantic tokens retuned for dark backgrounds. The light pastels
+   (#D4EDDA mint, #FFF3CD yellow) are correct on a cream page but GLARE
+   on near-black, so on dark modes the same meanings become muted, deep
+   tints with light text instead of the other way around. Because every
+   component asks for --success / --warning rather than a raw hex, this
+   one block retunes all of them at once. */
+body.theme-dark-ish {
+  --success: rgba(95, 190, 143, 0.22);
+  --success-ink: #7FD8A6;
+  --success-strong: #5FBE8F;
+  --warning: rgba(239, 197, 62, 0.20);
+  --warning-ink: #EFC53E;
+  --warning-strong: #EFC53E;
+  --danger: rgba(226, 131, 155, 0.22);
+  --danger-ink: #F0A9BC;
+  --danger-strong: #E2839B;
+  --info: rgba(127, 179, 222, 0.20);
+  --info-ink: #9CC9EC;
+  --info-strong: #7FB3DE;
+}
+
 body.theme-dark-ish .kebab-dropdown,
 body.theme-glass .kebab-dropdown,
 body.theme-glass-dark .kebab-dropdown {
@@ -977,8 +1028,8 @@ body.theme-dark-ish .food-photo-placeholder {
 .reading-delete:active { color: var(--pink-deep); }
 
 .pain-conf-chip { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: var(--radius-round); }
-.pain-conf-high { background: #D4EDDA; color: #1E7E34; }
-.pain-conf-medium { background: #FFF3CD; color: #856404; }
+.pain-conf-high { background: var(--success); color: var(--success-ink); }
+.pain-conf-medium { background: var(--warning); color: var(--warning-ink); }
 .pain-conf-low { background: var(--track); color: var(--ink-soft); }
 .pain-predict-today { display: flex; align-items: baseline; gap: var(--space-3); margin: var(--space-2) 0; }
 .pain-predict-big { font-size: 34px; font-weight: 800; color: var(--pink-deep); }
@@ -994,7 +1045,7 @@ body.theme-dark-ish .food-photo-placeholder {
 .pain-dot-today { fill: var(--pink-deep); stroke: #fff; stroke-width: 2; }
 .pain-axis-label { font-size: 9px; fill: var(--ink-faint); }
 .scatter-pain { fill: var(--pink-deep); opacity: 0.75; }
-.scatter-cramp { fill: #E8833E; opacity: 0.75; }
+.scatter-cramp { fill: var(--chart-secondary); opacity: 0.75; }
 
 .period-history-meta { display: flex; align-items: center; gap: var(--space-2); }
 .period-pain-score { font-size: 12px; font-weight: 700; color: var(--pink-deep); }

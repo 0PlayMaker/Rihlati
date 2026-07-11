@@ -101,12 +101,7 @@ async function getAllOpenCourseTodosWithCourse() {
   return todos
     .filter(t => !t.done && courseMap.has(t.courseId))
     .map(t => ({ ...t, courseTitle: courseMap.get(t.courseId).title }))
-    .sort((a, b) => {
-      if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
-      if (a.dueDate) return -1; // dated todos surface above undated ones
-      if (b.dueDate) return 1;
-      return b.createdAt - a.createdAt;
-    });
+    .sort(compareCourseTodos);
 }
 
 function courseTodoRowHtml(todo, showCourse) {
@@ -124,8 +119,18 @@ function courseTodoRowHtml(todo, showCourse) {
     </div>`;
 }
 
+// The same ordering the Home aggregate uses, so a todo doesn't change
+// position depending on which screen you look at it from: soonest due
+// first, dated ahead of undated, newest-created as the final tiebreak.
+function compareCourseTodos(a, b) {
+  if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
+  if (a.dueDate) return -1;
+  if (b.dueDate) return 1;
+  return b.createdAt - a.createdAt;
+}
+
 async function renderCourseTodoList(container, courseId) {
-  const all = (await db.courseTodos.where('courseId').equals(courseId).toArray()).sort((a, b) => b.createdAt - a.createdAt);
+  const all = (await db.courseTodos.where('courseId').equals(courseId).toArray()).sort(compareCourseTodos);
   if (all.length === 0) {
     container.innerHTML = `<div class="empty-state"><p>ما في مهام لهذه الدورة بعد.</p></div>`;
     return;
@@ -397,11 +402,17 @@ async function savePomodoroSettings(workMinutes, breakMinutes) {
   await db.settings.update(1, { pomodoroWorkMinutes: workMinutes, pomodoroBreakMinutes: breakMinutes });
 }
 
+// Same wall-clock design as the exercise timer: the countdown is
+// derived from an absolute end timestamp rather than accumulated one
+// tick at a time, so a throttled/suspended background tab can't make
+// the number lie. It also means a phase that "should" have ended while
+// the app was backgrounded is detected correctly on return.
 function renderPomodoroCard(container) {
   (async () => {
     const { workMinutes, breakMinutes } = await getPomodoroSettings();
     let isBreak = false;
-    let remaining = workMinutes * 60;
+    let remaining = workMinutes * 60; // seconds left while paused/idle
+    let endsAt = null;                // absolute ms timestamp while running
     let intervalId = null;
     let paused = false; // distinguishes "resuming a pause" from "starting fresh"
 
@@ -427,24 +438,43 @@ function renderPomodoroCard(container) {
     const workInput = document.getElementById('pomo-work-input');
     const breakInput = document.getElementById('pomo-break-input');
 
+    // Arabic-numeral-safe reads of the two minute fields.
+    const readWork = () => parseNumericInput(workInput.value, { int: true, min: 1 }) ?? 25;
+    const readBreak = () => parseNumericInput(breakInput.value, { int: true, min: 1 }) ?? 5;
+
+    function stopInterval() {
+      if (intervalId) { clearInterval(intervalId); intervalId = null; }
+    }
+
     function tick() {
-      remaining -= 1;
-      display.textContent = formatTimer(Math.max(0, remaining));
-      if (remaining <= 0) {
-        playBeepSequence(3);
-        if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
-        isBreak = !isBreak;
-        remaining = (isBreak ? Number(breakInput.value) : Number(workInput.value)) * 60;
-        phaseLabel.textContent = isBreak ? 'وقت الراحة' : 'وقت التركيز';
-        display.classList.toggle('timer-done', false);
+      if (endsAt === null) return;
+      let left = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
+      if (left > 0) {
+        display.textContent = formatTimer(left);
+        return;
       }
+      // Phase ended. Flip and start the next one from the moment the
+      // previous one actually expired, so a phase boundary crossed while
+      // backgrounded doesn't silently shift everything later.
+      playBeepSequence(3);
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+      const finishedAt = endsAt;
+      isBreak = !isBreak;
+      const nextSeconds = (isBreak ? readBreak() : readWork()) * 60;
+      endsAt = finishedAt + nextSeconds * 1000;
+      // If the tab was asleep long enough to blow through the next phase
+      // entirely, don't leave a negative clock — restart it from now.
+      if (endsAt <= Date.now()) endsAt = Date.now() + nextSeconds * 1000;
+      phaseLabel.textContent = isBreak ? 'وقت الراحة' : 'وقت التركيز';
+      display.classList.toggle('timer-done', false);
+      display.textContent = formatTimer(Math.max(0, Math.round((endsAt - Date.now()) / 1000)));
     }
 
     // Live preview while stopped/fresh — typing "1" should show 01:00
     // immediately, not silently wait until start is pressed.
     function livePreviewIfIdle() {
       if (!intervalId && !paused) {
-        remaining = (Number(workInput.value) || 0) * 60;
+        remaining = readWork() * 60;
         display.textContent = formatTimer(remaining);
       }
     }
@@ -452,37 +482,45 @@ function renderPomodoroCard(container) {
 
     toggleBtn.addEventListener('click', async () => {
       if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
+        remaining = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
+        stopInterval();
+        endsAt = null;
         paused = true;
+        display.textContent = formatTimer(remaining);
         toggleBtn.textContent = 'استئناف';
       } else {
         unlockAudioContext();
-        await savePomodoroSettings(Number(workInput.value) || 25, Number(breakInput.value) || 5);
+        await savePomodoroSettings(readWork(), readBreak());
         if (!paused) {
           // Fresh start (never started, or just finished a phase) — use
           // whatever is currently typed, not the value saved when this
           // card was first rendered.
-          remaining = Number(workInput.value) * 60 || 25 * 60;
+          remaining = readWork() * 60;
           isBreak = false;
           phaseLabel.textContent = 'وقت التركيز';
         }
         paused = false;
+        endsAt = Date.now() + remaining * 1000;
         display.textContent = formatTimer(remaining);
-        intervalId = setInterval(tick, 1000);
+        intervalId = setInterval(tick, 250);
         toggleBtn.textContent = 'إيقاف';
       }
     });
     document.getElementById('pomo-reset').addEventListener('click', () => {
-      clearInterval(intervalId);
-      intervalId = null;
+      stopInterval();
+      endsAt = null;
       paused = false;
       isBreak = false;
-      remaining = Number(workInput.value) * 60 || workMinutes * 60;
+      remaining = readWork() * 60;
       phaseLabel.textContent = 'وقت التركيز';
       display.textContent = formatTimer(remaining);
       toggleBtn.textContent = 'ابدأ';
     });
+
+    // Without this the interval outlives the page: navigate away and
+    // back five times and five pomodoros keep ticking (and beeping)
+    // against DOM nodes that no longer exist.
+    registerCleanup(stopInterval);
   })();
 }
 
@@ -491,7 +529,7 @@ function renderPomodoroCard(container) {
 async function renderStudyPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="study-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="study-back">→</button>
       <h1>التعلم</h1>
     </div>
     <div class="card">
@@ -574,7 +612,7 @@ async function renderCoursePage(params, view) {
 
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="course-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="course-back">→</button>
       <h1>${escapeHtml(course.title)}</h1>
       ${kebabMenuHtml('course-' + courseId, [{ key: 'edit', label: 'تعديل الدورة' }, { key: 'delete', label: 'حذف الدورة', danger: true }])}
     </div>

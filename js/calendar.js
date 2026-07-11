@@ -63,7 +63,7 @@ function initHomeCalendar(container) {
       const isToday = dateStr === today;
       const isFuture = dateStr > today;
       const hasActivity = activity.has(dateStr);
-      return `<button class="cal-cell ${isToday ? 'cal-today' : ''} ${isFuture ? 'cal-future' : ''}" data-date="${dateStr}">
+      return `<button class="cal-cell ${isToday ? 'cal-today' : ''} ${isFuture ? 'cal-future' : ''}" data-date="${dateStr}" aria-label="${formatDateArabic(dateStr, { weekday: true })}">
         <span class="cal-day-num">${day}</span>
         ${hasActivity ? '<span class="cal-dot"></span>' : ''}
       </button>`;
@@ -134,7 +134,7 @@ async function renderYearlyOverviewPage(params, view) {
   const year = params[0] ? Number(params[0]) : new Date().getFullYear();
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="yearly-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="yearly-back">→</button>
       <h1>نظرة على عامك</h1>
     </div>
     <div class="year-nav">

@@ -36,9 +36,34 @@ async function updateGoal(id, fields) {
 async function archiveGoal(id) {
   await db.goals.update(id, { archived: true });
 }
+// Ordering mirrors what the shopping list already does (`done` sinks):
+// finished goals drop to the bottom instead of squatting at the top just
+// because they're old, and among the unfinished the closest-to-done
+// surface first — that's the one worth a final push today. Creation date
+// is only the tiebreak now, not the whole rule.
 async function getActiveGoals() {
   const all = await db.goals.toArray();
-  return all.filter(g => !g.archived).sort((a, b) => a.createdAt - b.createdAt);
+  return all.filter(g => !g.archived).sort((a, b) => {
+    const aDone = isGoalComplete(a) ? 1 : 0;
+    const bDone = isGoalComplete(b) ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;            // done sinks
+    const aFrac = goalProgressFraction(a);
+    const bFrac = goalProgressFraction(b);
+    // Checkbox goals have no fraction — keep them with the ordinary
+    // group rather than inventing a progress number for them.
+    if (aFrac != null && bFrac != null && aFrac !== bFrac) return bFrac - aFrac; // closest to done first
+    if (aFrac != null && bFrac == null) return -1;
+    if (aFrac == null && bFrac != null) return 1;
+    return a.createdAt - b.createdAt;                      // stable tiebreak
+  });
+}
+
+// A goal counts as complete when a checkbox goal is checked, or a
+// measurable goal has reached 100%.
+function isGoalComplete(goal) {
+  if (effectiveProgressType(goal) === 'checkbox') return !!goal.done;
+  const frac = goalProgressFraction(goal);
+  return frac != null && frac >= 1;
 }
 
 function effectiveProgressType(goal) {
@@ -127,8 +152,8 @@ async function renderGoalsList(container, { limit } = {}) {
       const goal = (await db.goals.toArray()).find(g => g.id === id);
       const input = prompt(`القيمة الحالية (${goal.unit || ''}):`, String(goal.currentValue));
       if (input === null) return;
-      const n = parseFloat(input);
-      if (!Number.isNaN(n) && n >= 0) { await updateGoal(id, { currentValue: n }); await renderGoalsList(container, { limit }); }
+      const n = parseNumericInput(input);
+      if (n !== null && n >= 0) { await updateGoal(id, { currentValue: n }); await renderGoalsList(container, { limit }); }
     });
 
     const slider = row.querySelector('[data-action="slide"]');
@@ -214,11 +239,11 @@ async function openGoalModal({ existingId, onSaved }) {
 
     let targetValue = null, currentValue = existing?.currentValue ?? 0, unit = '';
     if (selectedType === 'numeric') {
-      const t = parseFloat(document.getElementById('goal-target-input').value);
-      const c = parseFloat(document.getElementById('goal-current-input').value);
-      if (Number.isNaN(t)) { alert('أدخلي هدفاً رقمياً صحيحاً'); return; }
+      const t = readNumericField('goal-target-input');
+      const c = readNumericField('goal-current-input');
+      if (t === null) { alert('أدخلي هدفاً رقمياً صحيحاً'); return; }
       targetValue = t;
-      currentValue = Number.isNaN(c) ? 0 : c;
+      currentValue = c === null ? 0 : c;
       unit = document.getElementById('goal-unit-input').value.trim();
     } else if (selectedType === 'percentage') {
       targetValue = 100;
@@ -247,7 +272,7 @@ async function openGoalModal({ existingId, onSaved }) {
 async function renderGoalsPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="goals-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="goals-back">→</button>
       <h1>الأهداف</h1>
     </div>
     <div class="card">

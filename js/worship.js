@@ -222,7 +222,7 @@ async function renderAdhkarDetailPage(params, view) {
 
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="adhkar-detail-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="adhkar-detail-back">→</button>
       <h1>${label}</h1>
     </div>
     ${dateStr !== todayStr() ? `<p class="settings-note">${formatDateArabic(dateStr, { weekday: true })}</p>` : ''}
@@ -349,7 +349,7 @@ async function getWirdPlan() {
 async function saveWirdPlan(dailyAmount, unit) {
   const existing = await getWirdPlan();
   if (existing) await db.wirdSettings.update(1, { dailyAmount, unit });
-  else await db.wirdSettings.put({ id: 1, dailyAmount, unit, progressPages: 0, khatmCount: 0, createdAt: Date.now() });
+  else await db.wirdSettings.put({ id: 1, dailyAmount, unit, createdAt: Date.now() });
 }
 async function deleteWirdPlan() {
   await db.wirdSettings.delete(1);
@@ -358,40 +358,53 @@ async function deleteWirdPlan() {
 async function isWirdLoggedToday() {
   return !!(await db.wirdLogs.where('date').equals(todayStr()).first());
 }
+
+// Progress and khatm count are DERIVED from the log, never stored.
+//
+// The old design kept progressPages/khatmCount on the plan row and
+// mutated them on every log/undo, justified by "you can't rebuild the
+// position within a cycle once a khatm wraps it past zero." That's not
+// actually true: every log row records BOTH pagesAdded and whether it
+// triggeredKhatm, so the whole history replays exactly. Storing it
+// bought nothing and allowed the stored numbers to drift out of sync
+// with the very history that's supposed to explain them (clear the
+// logs and the plan still claimed a khatm had happened). Same rule the
+// balance, streaks, and goal progress already follow.
+async function getWirdProgress() {
+  const logs = await db.wirdLogs.toArray();
+  const totalPages = logs.reduce((sum, l) => sum + (l.pagesAdded || 0), 0);
+  const khatmCount = logs.filter(l => l.triggeredKhatm).length;
+  return {
+    progressPages: totalPages - khatmCount * QURAN_TOTAL_PAGES,
+    khatmCount
+  };
+}
+
 async function logWirdToday() {
   const plan = await getWirdPlan();
   if (!plan || await isWirdLoggedToday()) return;
   const pagesToAdd = wirdUnitToPages(plan.dailyAmount, plan.unit);
-  let newProgress = plan.progressPages + pagesToAdd;
-  let triggeredKhatm = false;
-  if (newProgress >= QURAN_TOTAL_PAGES) {
-    triggeredKhatm = true;
-    newProgress -= QURAN_TOTAL_PAGES;
-  }
-  await db.wirdSettings.update(1, { progressPages: newProgress, khatmCount: plan.khatmCount + (triggeredKhatm ? 1 : 0) });
+  const { progressPages } = await getWirdProgress();
+  // Whether THIS day completed a khatm is a fact about this day, so it
+  // is recorded on the log itself — that's what keeps the replay exact.
+  const triggeredKhatm = (progressPages + pagesToAdd) >= QURAN_TOTAL_PAGES;
   await db.wirdLogs.add({ date: todayStr(), pagesAdded: pagesToAdd, triggeredKhatm });
 }
 async function undoWirdToday() {
+  // Deleting the log IS the undo now — progress recomputes from what's
+  // left, so there's no second copy to keep in step.
   const log = await db.wirdLogs.where('date').equals(todayStr()).first();
   if (!log) return;
-  const plan = await getWirdPlan();
-  let restoredProgress = plan.progressPages - log.pagesAdded;
-  let khatmCount = plan.khatmCount;
-  if (log.triggeredKhatm) {
-    khatmCount -= 1;
-    restoredProgress += QURAN_TOTAL_PAGES;
-  }
-  await db.wirdSettings.update(1, { progressPages: restoredProgress, khatmCount });
   await db.wirdLogs.delete(log.id);
 }
 async function getWirdStreak() {
   const logs = await db.wirdLogs.toArray();
   return computeCurrentStreak(logs.map(l => l.date), []);
 }
-function estimateWirdDaysToFinish(plan) {
+function estimateWirdDaysToFinish(plan, progressPages) {
   const dailyPages = wirdUnitToPages(plan.dailyAmount, plan.unit);
   if (dailyPages <= 0) return null;
-  const remaining = QURAN_TOTAL_PAGES - plan.progressPages;
+  const remaining = QURAN_TOTAL_PAGES - progressPages;
   return Math.max(0, Math.ceil(remaining / dailyPages));
 }
 
@@ -407,8 +420,9 @@ async function renderWirdCard(container) {
   }
   const loggedToday = await isWirdLoggedToday();
   const streak = await getWirdStreak();
-  const daysLeft = estimateWirdDaysToFinish(plan);
-  const frac = plan.progressPages / QURAN_TOTAL_PAGES;
+  const { progressPages, khatmCount } = await getWirdProgress();
+  const daysLeft = estimateWirdDaysToFinish(plan, progressPages);
+  const frac = progressPages / QURAN_TOTAL_PAGES;
 
   container.innerHTML = `
     <div class="section-header">
@@ -420,9 +434,9 @@ async function renderWirdCard(container) {
     </div>
     <p class="settings-note">وردك اليومي: ${plan.dailyAmount} ${wirdUnitLabel(plan.unit)}</p>
     <div class="mini-progress-track"><div class="mini-progress-fill" style="width:${frac * 100}%"></div></div>
-    <p class="mini-progress-text">${plan.progressPages} من ${QURAN_TOTAL_PAGES} صفحة</p>
+    <p class="mini-progress-text">${progressPages} من ${QURAN_TOTAL_PAGES} صفحة</p>
     ${daysLeft != null ? `<p class="settings-note">بهذا المعدل، ستختمين خلال ~${daysLeft} ${daysLeft === 1 ? 'يوم' : 'يوماً'}</p>` : ''}
-    <p class="tsr-streak">🌙 عدد الختمات: ${plan.khatmCount} ${streak > 0 ? `· 🔥${streak}` : ''}</p>
+    <p class="tsr-streak">🌙 عدد الختمات: ${khatmCount} ${streak > 0 ? `· 🔥${streak}` : ''}</p>
     ${loggedToday
       ? `<button class="btn btn-text btn-block" id="wird-undo-btn">↩️ تراجع عن ورد اليوم</button>`
       : `<button class="btn btn-primary btn-block" id="wird-log-btn">✅ أتممت وردي اليوم</button>`}
@@ -485,8 +499,8 @@ function openWirdSetupModal(onSaved) {
   });
   document.getElementById('wird-setup-cancel').addEventListener('click', () => overlay.remove());
   document.getElementById('wird-setup-save').addEventListener('click', async () => {
-    const amount = parseFloat(document.getElementById('wird-amount-input').value);
-    if (Number.isNaN(amount) || amount <= 0) return;
+    const amount = readNumericField('wird-amount-input');
+    if (amount === null || amount <= 0) return;
     const unit = overlay.querySelector('#wird-unit-chips .chip.active')?.dataset.unit || 'pages';
     await saveWirdPlan(amount, unit);
     overlay.remove();
@@ -656,8 +670,8 @@ function openQadaPrayerModal({ existingId, onSaved } = {}) {
     if (onSaved) onSaved();
   });
   document.getElementById('qada-prayer-save-btn').addEventListener('click', async () => {
-    const count = parseInt(document.getElementById('qada-prayer-count-input').value, 10);
-    if (Number.isNaN(count) || count < 0) return;
+    const count = readNumericField('qada-prayer-count-input', { int: true });
+    if (count === null || count < 0) return;
     const prayerName = overlay.querySelector('#qada-prayer-chips .chip.active')?.dataset.prayer || PRAYER_NAMES[0];
     if (existingId) await updateQadaPrayer(existingId, { prayerName, remaining: count });
     else await createQadaPrayer(prayerName, count);
@@ -747,8 +761,8 @@ function openQadaFastingModal({ existingId, onSaved } = {}) {
     if (onSaved) onSaved();
   });
   document.getElementById('qada-fasting-save-btn').addEventListener('click', async () => {
-    const count = parseInt(document.getElementById('qada-fasting-count-input').value, 10);
-    if (Number.isNaN(count) || count < 0) return;
+    const count = readNumericField('qada-fasting-count-input', { int: true });
+    if (count === null || count < 0) return;
     const label = document.getElementById('qada-fasting-label-input').value.trim();
     if (existingId) await updateQadaFasting(existingId, { label, remaining: count });
     else await createQadaFasting(label, count);
@@ -840,8 +854,8 @@ async function renderCustomAdhkarList(container, dateStr, { editable = true, sho
       const current = await getCustomAdhkarCount(id, dateStr);
       const input = prompt('عدد مرات التكرار:', String(current));
       if (input === null) return;
-      const n = parseInt(input, 10);
-      if (!Number.isNaN(n) && n >= 0) {
+      const n = parseNumericInput(input, { int: true });
+      if (n !== null && n >= 0) {
         await setCustomAdhkarCount(id, dateStr, n);
         await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
       }
@@ -904,7 +918,7 @@ async function renderWorshipPage(params, view) {
 
   view.innerHTML = `
     <div class="page-header">
-      <button class="icon-btn" id="worship-back">→</button>
+      <button class="icon-btn" aria-label="رجوع" id="worship-back">→</button>
       <h1>العبادة</h1>
     </div>
 
