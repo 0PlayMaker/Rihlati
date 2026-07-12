@@ -71,6 +71,37 @@ function playBeepSequence(count = 3, gapMs = 220) {
   for (let i = 0; i < count; i++) setTimeout(() => playBeep(), i * gapMs);
 }
 
+// One soft tone, for the celebratory chime. Separate from playBeep()
+// because that one is an ALERT (harsh 880Hz square-ish blip designed to
+// interrupt); this is a REWARD, so it wants a gentle sine with a slow
+// decay that rings rather than stabs.
+function playTone(freq, startOffset = 0, durationSec = 0.5, peak = 0.22) {
+  if (!_sharedAudioCtx) return;
+  try {
+    const t0 = _sharedAudioCtx.currentTime + startOffset;
+    const osc = _sharedAudioCtx.createOscillator();
+    const gain = _sharedAudioCtx.createGain();
+    osc.type = 'sine';
+    osc.connect(gain);
+    gain.connect(_sharedAudioCtx.destination);
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + durationSec);
+    osc.start(t0);
+    osc.stop(t0 + durationSec + 0.05);
+  } catch (e) { /* silent */ }
+}
+
+// Reaching a goal should SOUND like reaching a goal. A rising major
+// arpeggio (C–E–G–C) reads as "well done" in a way a repeated alert
+// beep simply doesn't.
+function playSuccessChime() {
+  unlockAudioContext();
+  const notes = [523.25, 659.25, 783.99, 1046.50]; // C5 E5 G5 C6
+  notes.forEach((f, i) => playTone(f, i * 0.11, 0.55, i === notes.length - 1 ? 0.26 : 0.18));
+}
+
 // Resizes+compresses an image client-side before it ever touches
 // IndexedDB. Profile picture uses a small maxDim (it's only ever a
 // circle avatar); Food calls this with a larger one since photos get
@@ -204,6 +235,26 @@ function kebabMenuHtml(rowId, actions) {
     </div>`;
 }
 
+// The dropdown is nested inside a card, and in the glass themes those
+// cards carry `backdrop-filter` — which silently CREATES A STACKING
+// CONTEXT. That traps the dropdown inside its own card: the next card
+// is a sibling context that paints later in DOM order, so it covers the
+// dropdown no matter how high the dropdown's own z-index goes. Bumping
+// z-index on the dropdown can never fix this; the CARD has to win.
+//
+// So while a menu is open, its nearest card ancestor is temporarily
+// promoted to a positioned, high-z-index element, which beats sibling
+// contexts sitting at `auto`. Cleared on close, so nothing stays raised.
+const KEBAB_HOST_SELECTOR = '.habit-card, .card, .goal-row, .material-card, .task-row-wrap, .course-row, .adhkar-counter-row, .period-history-row, .reading-row, .care-routine-card, .diary-entry-card, .txn-row';
+
+function clearRaisedKebabHosts() {
+  document.querySelectorAll('.kebab-host-raised').forEach(el => el.classList.remove('kebab-host-raised'));
+}
+function closeAllKebabs() {
+  document.querySelectorAll('.kebab-dropdown').forEach(d => d.classList.add('hidden'));
+  clearRaisedKebabHosts();
+}
+
 function wireKebabMenus(container, onAction) {
   container.querySelectorAll('.kebab-menu').forEach(menu => {
     const rowId = menu.dataset.kebabRow;
@@ -211,20 +262,37 @@ function wireKebabMenus(container, onAction) {
     const dropdown = menu.querySelector('[data-kebab-dropdown]');
     toggleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      document.querySelectorAll('.kebab-dropdown').forEach(d => { if (d !== dropdown) d.classList.add('hidden'); });
-      dropdown.classList.toggle('hidden');
+      const willOpen = dropdown.classList.contains('hidden');
+      closeAllKebabs();
+      if (!willOpen) return;
+      dropdown.classList.remove('hidden');
+
+      // Raise every card ancestor, not just the closest one — a row can
+      // sit inside a card which sits inside another card, and any one of
+      // them could be the context doing the trapping.
+      let el = menu.parentElement;
+      while (el && el !== document.body) {
+        if (el.matches && el.matches(KEBAB_HOST_SELECTOR)) el.classList.add('kebab-host-raised');
+        el = el.parentElement;
+      }
+
+      // If the menu would open off the bottom of the screen, flip it to
+      // open upward instead of pushing the page around.
+      dropdown.classList.remove('kebab-dropdown-up');
+      const rect = dropdown.getBoundingClientRect();
+      if (rect.bottom > window.innerHeight - 8) dropdown.classList.add('kebab-dropdown-up');
     });
     dropdown.querySelectorAll('[data-kebab-action]').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        dropdown.classList.add('hidden');
+        closeAllKebabs();
         onAction(rowId, btn.dataset.kebabAction);
       });
     });
   });
   if (!window._kebabGlobalListenerAdded) {
     document.addEventListener('click', () => {
-      document.querySelectorAll('.kebab-dropdown').forEach(d => d.classList.add('hidden'));
+      closeAllKebabs();
     });
     window._kebabGlobalListenerAdded = true;
   }
@@ -335,25 +403,38 @@ function openTasbeehModal({ title, benefit, goal, getCount, setCount, onClose })
   }
 
   let lastMilestone = 0;
+  let goalCelebrated = false;
   async function bump(delta) {
     const next = Math.max(0, count + delta);
     if (next === count) return;
+    const wasBelowGoal = hasGoal && count < goal;
     count = next;
     paint();
     await setCount(count);
-    // Haptic + tone only at meaningful moments, not on every single tap —
-    // a buzz per tap while counting to 100 would be maddening.
-    const milestone = hasGoal ? (count === goal) : (count > 0 && count % 33 === 0);
-    if (milestone && count !== lastMilestone) {
-      lastMilestone = count;
-      if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
-      if (typeof playBeepSequence === 'function') { unlockAudioContext(); playBeepSequence(2); }
-    } else if (delta > 0 && navigator.vibrate) {
-      navigator.vibrate(12); // a whisper of feedback per tap
-    }
-  }
 
-  tapEl.addEventListener('click', () => bump(1));
+    // Reaching the goal gets a real celebration — once. Counting PAST the
+    // goal is allowed and keeps working, it just doesn't re-fire the chime
+    // on every extra tap.
+    if (hasGoal && wasBelowGoal && count >= goal && !goalCelebrated) {
+      goalCelebrated = true;
+      playSuccessChime();
+      if (navigator.vibrate) navigator.vibrate([90, 50, 90, 50, 160]);
+      return;
+    }
+    if (hasGoal && count < goal) goalCelebrated = false; // stepped back below: allow it again
+
+    // Without a goal, every 33 is a natural resting point (a full سبحة).
+    if (!hasGoal && count > 0 && count % 33 === 0 && count !== lastMilestone) {
+      lastMilestone = count;
+      playSuccessChime();
+      if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+      return;
+    }
+    if (delta > 0 && navigator.vibrate) navigator.vibrate(12); // a whisper per tap
+  }
+  // Audio must be unlocked inside a real user gesture, so do it on the
+  // very first tap — otherwise the chime at the goal would be blocked.
+  tapEl.addEventListener('click', () => { unlockAudioContext(); bump(1); });
   overlay.querySelector('#tasbeeh-minus').addEventListener('click', () => bump(-1));
   overlay.querySelector('#tasbeeh-reset').addEventListener('click', async () => {
     if (count === 0) return;
@@ -376,6 +457,9 @@ function openTasbeehModal({ title, benefit, goal, getCount, setCount, onClose })
   (async () => {
     count = (await getCount()) || 0;
     lastMilestone = count;
+    // Already at/over the goal from an earlier session: don't re-fire the
+    // chime on the next tap, she already celebrated this one.
+    goalCelebrated = hasGoal && count >= goal;
     paint();
   })();
 }

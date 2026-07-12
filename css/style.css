@@ -655,6 +655,11 @@ a { color: var(--pink-deep); text-decoration: none; }
    ============================================================ */
 
 .kebab-menu { position: relative; flex-shrink: 0; z-index: 5; }
+/* While a menu is open, its card ancestor is promoted so the dropdown can
+   escape the stacking context that backdrop-filter (glass themes) creates
+   around each card — without this, the dropdown is painted UNDER the next
+   card and no z-index on the dropdown itself can rescue it. */
+.kebab-host-raised { position: relative; z-index: 80; }
 .kebab-btn {
   width: 32px; height: 32px; border-radius: var(--radius-round); border: none;
   background: var(--track); color: var(--ink-soft); font-size: 16px; font-weight: 700;
@@ -662,7 +667,7 @@ a { color: var(--pink-deep); text-decoration: none; }
 }
 .kebab-btn:active { transform: scale(0.92); }
 .kebab-dropdown {
-  position: absolute; top: calc(100% + 4px); left: 0; z-index: 60;
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 90;
   background: var(--surface); border-radius: var(--radius-md); box-shadow: var(--shadow-soft);
   display: flex; flex-direction: column; min-width: 120px; overflow: hidden;
 }
@@ -1057,8 +1062,8 @@ body.theme-dark-ish .food-photo-placeholder {
 .tasbeeh-overlay { align-items: center; justify-content: center; }
 .tasbeeh-modal {
   background: var(--modal-bg); border-radius: var(--radius-lg);
-  padding: var(--space-4) var(--space-3) var(--space-3);
-  width: min(94vw, 380px); text-align: center; position: relative;
+  padding: var(--space-3) var(--space-3) var(--space-3);
+  width: min(96vw, 440px); text-align: center; position: relative;
   box-shadow: var(--shadow-soft); border: 1px solid var(--card-border);
 }
 .tasbeeh-close { position: absolute; inset-inline-end: 8px; inset-block-start: 8px; }
@@ -1069,7 +1074,7 @@ body.theme-dark-ish .food-photo-placeholder {
 .tasbeeh-circle {
   position: relative; display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  width: min(72vw, 260px); height: min(72vw, 260px);
+  width: min(86vw, 340px); height: min(86vw, 340px);
   margin: var(--space-2) auto var(--space-3);
   border: none; background: none; padding: 0; cursor: pointer;
   border-radius: var(--radius-round);
@@ -1145,3 +1150,129 @@ body.theme-dark-ish .food-photo-placeholder {
   border-top: 1px solid var(--track);
   font-size: 13px; font-weight: 600; color: var(--success-ink); text-align: center;
 }
+
+/* Flip upward when there isn't room below (last row on a screen). */
+.kebab-dropdown-up { top: auto; bottom: calc(100% + 4px); }
+
+/* ---------- Health: weight stat block, metric gauges, measurements ---------- */
+.weight-stat-block { margin-top: var(--space-2); }
+.weight-stat-main { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.weight-stat-value { font-size: 40px; font-weight: 800; color: var(--title-color); line-height: 1; }
+.weight-stat-unit { font-size: 16px; font-weight: 600; color: var(--ink-faint); }
+.weight-stat-sub { display: block; font-size: 12px; color: var(--ink-faint); margin-top: 6px; }
+.weight-delta-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 13px; font-weight: 800; padding: 4px 10px;
+  border-radius: var(--radius-round); margin-inline-start: var(--space-2);
+}
+.weight-delta-arrow { font-size: 14px; }
+/* Neutral by default: losing/gaining isn't inherently good or bad. */
+.weight-delta-neutral { background: var(--capsule-color, var(--pink)); color: var(--ink-on-pastel); }
+.weight-delta-toward { background: var(--success); color: var(--success-ink); }
+.weight-delta-away { background: var(--warning); color: var(--warning-ink); }
+
+.metric-block { padding: var(--space-3) 0; border-bottom: 1px solid var(--track); }
+.metric-block:last-of-type { border-bottom: none; }
+.metric-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.metric-name { font-size: 14px; font-weight: 700; color: var(--ink); }
+.metric-chip { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: var(--radius-round); }
+.metric-chip-success { background: var(--success); color: var(--success-ink); }
+.metric-chip-warning { background: var(--warning); color: var(--warning-ink); }
+.metric-chip-danger { background: var(--danger); color: var(--danger-ink); }
+.metric-value-row { display: flex; align-items: baseline; gap: var(--space-2); margin: 6px 0; flex-wrap: wrap; }
+.metric-value { font-size: 28px; font-weight: 800; color: var(--title-color); line-height: 1; }
+.metric-hint { font-size: 11px; color: var(--ink-faint); }
+.metric-note { font-size: 11px; color: var(--ink-faint); line-height: 1.6; margin-top: 6px; }
+
+/* Themed band gauge with a position marker. */
+.gauge { position: relative; margin: var(--space-2) 0 var(--space-3); }
+.gauge-track { position: relative; height: 8px; border-radius: var(--radius-round); overflow: hidden; background: var(--track); }
+.gauge-band { position: absolute; top: 0; height: 100%; }
+.gauge-band-success { background: var(--success-strong); opacity: 0.75; }
+.gauge-band-warning { background: var(--warning-strong); opacity: 0.65; }
+.gauge-band-danger { background: var(--danger-strong); opacity: 0.65; }
+.gauge-marker { position: absolute; top: -3px; transform: translateX(50%); }
+.gauge-marker-dot {
+  display: block; width: 14px; height: 14px; border-radius: var(--radius-round);
+  background: var(--surface); border: 3px solid var(--title-color);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+}
+.gauge-caption { font-size: 10px; color: var(--ink-faint); text-align: center; }
+
+.measure-row { align-items: center; }
+.measure-main {
+  display: flex; align-items: center; justify-content: space-between;
+  flex: 1; gap: var(--space-2); background: none; border: none;
+  padding: var(--space-2) 0; cursor: pointer; text-align: start; color: var(--ink);
+}
+.measure-name { font-size: 15px; font-weight: 600; }
+.measure-value-block { display: flex; align-items: center; gap: 6px; }
+.measure-value { font-size: 16px; font-weight: 800; color: var(--title-color); }
+.measure-unit { font-size: 11px; font-weight: 600; color: var(--ink-faint); }
+.measure-delta {
+  font-size: 11px; font-weight: 800; padding: 2px 8px;
+  border-radius: var(--radius-round);
+  background: var(--capsule-color, var(--pink)); color: var(--ink-on-pastel);
+}
+.care-summary-row { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
+.care-summary-chip { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: var(--radius-round); background: var(--track); color: var(--ink-soft); }
+
+/* ---------- Diary hero card ---------- */
+.diary-hero { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.diary-hero-text { flex: 1; min-width: 0; }
+.diary-hero-title { font-size: 17px; font-weight: 800; color: var(--title-color); line-height: 1.5; }
+.diary-hero-body { font-size: 13px; color: var(--ink-soft); margin-top: 4px; line-height: 1.6; }
+.diary-hero-streak {
+  flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
+  background: var(--capsule-color, var(--pink)); border-radius: var(--radius-md);
+  padding: 8px 14px;
+}
+.diary-hero-flame { font-size: 18px; line-height: 1; }
+.diary-hero-num { font-size: 20px; font-weight: 800; color: var(--ink-on-pastel); line-height: 1.2; }
+/* Tone tints the left edge, so the card's mood is readable before the words are. */
+.diary-hero-success { border-inline-start: 3px solid var(--success-strong); padding-inline-start: var(--space-3); }
+.diary-hero-warning { border-inline-start: 3px solid var(--warning-strong); padding-inline-start: var(--space-3); }
+.diary-hero-challenge { border-inline-start: 3px solid var(--danger-strong); padding-inline-start: var(--space-3); }
+
+.diary-stat-row {
+  display: flex; justify-content: space-around; gap: var(--space-2);
+  margin: var(--space-3) 0; padding: var(--space-3) 0;
+  border-top: 1px solid var(--track); border-bottom: 1px solid var(--track);
+}
+.diary-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.diary-stat-num { font-size: 20px; font-weight: 800; color: var(--title-color); line-height: 1; }
+.diary-stat-label { font-size: 10px; color: var(--ink-faint); text-align: center; }
+/* Rings are buttons now — strip the default button chrome. */
+.ring-item-tappable, .small-ring-item-tappable {
+  background: none; border: none; padding: 0; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ring-item-tappable:active, .small-ring-item-tappable:active { transform: scale(0.96); }
+
+/* ---------- Study: course rings, due-date urgency ---------- */
+.course-ring-wrap { position: relative; width: 44px; height: 44px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.course-ring-emoji { position: absolute; font-size: 18px; }
+.task-reminder.due-overdue { background: var(--danger); color: var(--danger-ink); font-weight: 800; }
+.task-reminder.due-today { background: var(--warning); color: var(--warning-ink); font-weight: 800; }
+
+/* ---------- Yearly: heatmap + jump chips ---------- */
+.year-heatmap { display: flex; flex-direction: column; gap: 3px; margin-top: var(--space-2); direction: ltr; }
+.heat-row { display: flex; align-items: center; gap: 6px; }
+.heat-month { font-size: 9px; color: var(--ink-faint); width: 34px; flex-shrink: 0; text-align: right; }
+.heat-cells { display: flex; gap: 2px; flex: 1; }
+.heat-cell { flex: 1; aspect-ratio: 1; min-width: 5px; border-radius: 2px; background: var(--track); }
+.heat-0 { background: var(--track); }
+.heat-1 { background: var(--btn-color, var(--pink-deep)); opacity: 0.28; }
+.heat-2 { background: var(--btn-color, var(--pink-deep)); opacity: 0.5; }
+.heat-3 { background: var(--btn-color, var(--pink-deep)); opacity: 0.75; }
+.heat-4 { background: var(--btn-color, var(--pink-deep)); opacity: 1; }
+.heat-legend { display: flex; align-items: center; justify-content: flex-end; gap: 3px; margin-top: var(--space-2); font-size: 9px; color: var(--ink-faint); direction: ltr; }
+.heat-legend .heat-cell { width: 9px; height: 9px; flex: none; aspect-ratio: auto; }
+
+.yearly-jump-row { display: flex; gap: 6px; overflow-x: auto; padding: 0 0 var(--space-2); margin-bottom: var(--space-2); }
+.yearly-jump-chip {
+  flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 6px 12px;
+  border-radius: var(--radius-round); border: 1px solid var(--track);
+  background: var(--surface); color: var(--ink-soft); cursor: pointer;
+}
+.yearly-jump-chip:active { background: var(--capsule-color, var(--pink)); color: var(--ink-on-pastel); }

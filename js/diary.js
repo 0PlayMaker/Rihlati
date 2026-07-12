@@ -36,8 +36,92 @@ async function deleteDiaryEntry(date) {
   await db.diaryPhotos.delete(existing.id);
 }
 
-function diaryGlanceText(streak) {
-  return streak > 0 ? `🔥 ${streak} يوم متتالي` : 'اكتبي يوميتك الأولى';
+async function getDiaryStats() {
+  const entries = await getAllDiaryEntries(); // newest first
+  const dates = entries.map(e => e.date).sort(); // oldest -> newest
+  const total = dates.length;
+  const streak = await getDiaryStreak();
+
+  let longest = 0, run = 0, prev = null;
+  for (const d of dates) {
+    if (prev && daysBetween(prev, d) === 1) run += 1;
+    else run = 1;
+    if (run > longest) longest = run;
+    prev = d;
+  }
+  const last = dates.length ? dates[dates.length - 1] : null;
+  const daysSince = last ? daysBetween(last, todayStr()) : null;
+  const wroteToday = last === todayStr();
+  return { total, streak, longest, last, daysSince, wroteToday };
+}
+
+// Rotates by date so the same line doesn't greet her every single visit.
+function pickByDay(options) {
+  const seed = Number(todayStr().replace(/-/g, ''));
+  return options[seed % options.length];
+}
+
+function diaryMessage(stats) {
+  if (stats.total === 0) {
+    return { title: 'اكتبي يوميتك الأولى', body: 'صفحة بيضاء تنتظرك — لا يوجد "صح" و"خطأ" هنا.', tone: 'neutral' };
+  }
+  if (stats.wroteToday) {
+    return {
+      title: pickByDay(['كتبتِ اليوم ✨', 'يوميّة اليوم محفوظة', 'أحسنتِ — دوّنتِ يومك']),
+      body: stats.streak > 1 ? `${toArabicNumeral(stats.streak)} أيام متتالية. استمرّي.` : 'بداية جميلة.',
+      tone: 'success'
+    };
+  }
+  // Wrote yesterday: the streak is alive but today is still empty.
+  if (stats.daysSince === 1) {
+    return {
+      title: 'سلسلتك على المحكّ 🔥',
+      body: stats.streak > 0
+        ? `${toArabicNumeral(stats.streak)} ${stats.streak === 1 ? 'يوم' : 'أيام'} متتالية — لا تكسريها اليوم.`
+        : 'اكتبي اليوم لتبدأ سلسلتك.',
+      tone: 'warning'
+    };
+  }
+  // Gone quiet for a while — this is where the streak actually broke.
+  if (stats.daysSince >= 2) {
+    const gone = toArabicNumeral(stats.daysSince);
+    return {
+      title: pickByDay([
+        'وينك غايبة عني يا حلوة؟ مابدك تكتبي؟',
+        `مرّت ${gone} أيام… اشتقنا لخطّك`,
+        'الصفحة لسّه فاضية — تعالي'
+      ]),
+      body: stats.longest > 0
+        ? `أطول سلسلة لكِ كانت ${toArabicNumeral(stats.longest)} ${stats.longest === 1 ? 'يوم' : 'أيام'}. تتحدّينها؟`
+        : 'ابدئي من جديد اليوم.',
+      tone: 'challenge'
+    };
+  }
+  return { title: 'يومياتك', body: '', tone: 'neutral' };
+}
+
+async function renderDiaryStreakCard(container, onWrite) {
+  const stats = await getDiaryStats();
+  const msg = diaryMessage(stats);
+
+  container.innerHTML = `
+    <div class="diary-hero diary-hero-${msg.tone}">
+      <div class="diary-hero-text">
+        <p class="diary-hero-title">${msg.title}</p>
+        ${msg.body ? `<p class="diary-hero-body">${msg.body}</p>` : ''}
+      </div>
+      ${stats.streak > 0 ? `<div class="diary-hero-streak"><span class="diary-hero-flame">🔥</span><span class="diary-hero-num">${toArabicNumeral(stats.streak)}</span></div>` : ''}
+    </div>
+    ${stats.total > 0 ? `
+      <div class="diary-stat-row">
+        <div class="diary-stat"><span class="diary-stat-num">${toArabicNumeral(stats.total)}</span><span class="diary-stat-label">يوميّة</span></div>
+        <div class="diary-stat"><span class="diary-stat-num">${toArabicNumeral(stats.longest)}</span><span class="diary-stat-label">أطول سلسلة</span></div>
+        <div class="diary-stat"><span class="diary-stat-num">${stats.daysSince === 0 ? '٠' : toArabicNumeral(stats.daysSince)}</span><span class="diary-stat-label">يوم منذ آخر يوميّة</span></div>
+      </div>` : ''}
+    ${!stats.wroteToday ? `<button class="btn btn-primary btn-block" id="diary-hero-write">✍️ اكتبي الآن</button>` : ''}
+  `;
+  const writeBtn = document.getElementById('diary-hero-write');
+  if (writeBtn && onWrite) writeBtn.addEventListener('click', onWrite);
 }
 
 // ---------- object URL bookkeeping (a list can show several photos) ----------
@@ -156,13 +240,12 @@ async function renderDiaryPage(params, view) {
 
   async function refresh() {
     revokeDiaryPhotoUrls();
-    const streak = await getDiaryStreak();
-    document.getElementById('diary-streak-card').innerHTML = `
-      <p class="ring-label">يومياتك</p>
-      <p class="period-status-text">${diaryGlanceText(streak)}</p>
-    `;
-
     const today = todayStr();
+    await renderDiaryStreakCard(
+      document.getElementById('diary-streak-card'),
+      () => openDiaryModal({ date: today, onSaved: refresh })
+    );
+
     const todayEntry = await getDiaryEntry(today);
     const addBtn = document.getElementById('diary-add-btn');
     addBtn.textContent = todayEntry ? '✏️ تعديل يومية اليوم' : '+ إضافة يومية اليوم';

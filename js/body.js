@@ -21,30 +21,95 @@ async function setWeight(date, value) {
   else await db.weightLogs.add({ date, value, createdAt: Date.now() });
 }
 
+// Delta over a real, stated window.
+//
+// The old version took "the last log at least 30 days old, else just the
+// oldest log I have" — and then labelled whatever came back as "the last
+// 30 days". With only a few entries that silently compared today against
+// a log from two days ago, or two YEARS ago, and announced it as a 30-day
+// change. (That's how you get a "-95 kg in 30 days".) Now: pick the entry
+// nearest to 30 days back, and report the span actually measured, so the
+// number and the label can never disagree.
 async function getWeightStats() {
-  const logs = await getAllWeightLogs();
-  if (logs.length === 0) return { latest: null, deltaKg: null };
+  const logs = await getAllWeightLogs(); // oldest -> newest
+  if (logs.length === 0) return { latest: null, deltaKg: null, spanDays: null };
   const latest = logs[logs.length - 1];
-  const thirtyDaysAgo = addDays(todayStr(), -30);
-  const candidates = logs.filter(l => l.date <= thirtyDaysAgo);
-  const reference = candidates.length ? candidates[candidates.length - 1] : logs[0];
-  const deltaKg = reference.date === latest.date ? null : latest.value - reference.value;
-  return { latest, deltaKg };
+  const earlier = logs.slice(0, -1);
+  if (earlier.length === 0) return { latest, deltaKg: null, spanDays: null };
+
+  const target = addDays(todayStr(), -30);
+  // Closest entry to the 30-day mark, in either direction.
+  let reference = earlier[0];
+  let bestGap = Math.abs(daysBetween(earlier[0].date, target));
+  for (const l of earlier) {
+    const gap = Math.abs(daysBetween(l.date, target));
+    if (gap < bestGap) { bestGap = gap; reference = l; }
+  }
+  const spanDays = daysBetween(reference.date, latest.date);
+  if (spanDays <= 0) return { latest, deltaKg: null, spanDays: null };
+  return { latest, deltaKg: latest.value - reference.value, spanDays, referenceDate: reference.date };
 }
 
 // Short form for Home's small pill.
 function weightGlanceText(stats) {
   if (!stats.latest) return 'سجلي أول وزن';
   if (stats.deltaKg == null) return `${stats.latest.value} كغ`;
-  const sign = stats.deltaKg > 0 ? '+' : ''; // negative numbers already carry their own '-'
+  const sign = stats.deltaKg > 0 ? '+' : ''; // negatives carry their own '-'
   return `${stats.latest.value}كغ · ${sign}${stats.deltaKg.toFixed(1)}`;
 }
-// Long form for the Weight page's own status card.
-function weightStatusText(stats) {
-  if (!stats.latest) return 'سجلي وزنك الأول لتبدأ المتابعة';
-  if (stats.deltaKg == null) return `وزنك الحالي: ${stats.latest.value} كغ`;
-  const sign = stats.deltaKg > 0 ? '+' : '';
-  return `وزنك الحالي: ${stats.latest.value} كغ · ${sign}${stats.deltaKg.toFixed(1)}كغ خلال آخر ٣٠ يوم`;
+// Long form for the Weight page's own status card — a visual block, not
+// a sentence. Direction is shown with an arrow + a tinted pill rather
+// than spelled out, and the span is stated honestly ("over N days"),
+// never assumed to be 30.
+//
+// Deliberately NOT colour-coded green-for-down / red-for-up: gaining or
+// losing weight is not inherently good or bad, and an app that cheers
+// every drop is an app that quietly rewards under-eating. The pill only
+// takes on a "toward goal" tint when she has actually set a target.
+function weightStatBlockHtml(stats, targetWeight) {
+  if (!stats.latest) {
+    return `<p class="empty-state-sub">سجلي وزنك الأول لتبدأ المتابعة</p>`;
+  }
+  const value = stats.latest.value;
+  if (stats.deltaKg == null) {
+    return `
+      <div class="weight-stat-block">
+        <div class="weight-stat-main">
+          <span class="weight-stat-value">${toArabicNumeral(value)}</span>
+          <span class="weight-stat-unit">كغ</span>
+        </div>
+        <span class="weight-stat-sub">سجّلي مرّة أخرى لرؤية التغيّر</span>
+      </div>`;
+  }
+
+  const delta = stats.deltaKg;
+  const rising = delta > 0;
+  const flat = Math.abs(delta) < 0.05;
+  const arrow = flat ? '→' : (rising ? '↑' : '↓');
+
+  // Tint only means something when there's a goal to move toward.
+  let tone = 'neutral';
+  if (targetWeight != null && !flat) {
+    const movingToward = rising ? (value <= targetWeight) : (value >= targetWeight);
+    tone = movingToward ? 'toward' : 'away';
+  }
+
+  const spanLabel = stats.spanDays === 1
+    ? 'منذ أمس'
+    : `خلال ${toArabicNumeral(stats.spanDays)} ${stats.spanDays <= 10 ? 'أيام' : 'يوماً'}`;
+
+  return `
+    <div class="weight-stat-block">
+      <div class="weight-stat-main">
+        <span class="weight-stat-value">${toArabicNumeral(value)}</span>
+        <span class="weight-stat-unit">كغ</span>
+        <span class="weight-delta-pill weight-delta-${tone}">
+          <span class="weight-delta-arrow">${arrow}</span>
+          ${flat ? 'ثابت' : `${toArabicNumeral(Math.abs(delta).toFixed(1))} كغ`}
+        </span>
+      </div>
+      <span class="weight-stat-sub">${spanLabel}</span>
+    </div>`;
 }
 
 // ---------- hand-rolled SVG line chart ----------
@@ -204,11 +269,34 @@ async function openWeightModalForDate(dateStr, onSaved) {
   });
 }
 
-// ---------- BMI (factual reference, not a directive) ----------
-
+// ---------- BMI + waist-to-height (factual reference, not a directive) ----------
+//
+// Two deliberate departures from the naive version:
+//
+// 1. CORRECTED BMI. The classic formula (kg/m²) squares height, but human
+//    mass doesn't scale as height² — it lands nearer height^2.5. The
+//    consequence is well documented: the standard formula UNDERSTATES BMI
+//    for short people and OVERSTATES it for tall ones. That's precisely
+//    why the "healthy range" it produces for a short person looks absurdly
+//    low at the bottom end. So the corrected form (Trefethen's, scaled by
+//    1.3 so it agrees with the classic at average height ~1.69 m) is shown
+//    alongside it rather than instead of it — the standard number is what
+//    a doctor will quote, so hiding it would be unhelpful.
+//
+// 2. WAIST-TO-HEIGHT RATIO. BMI can't tell muscle from fat and can't see
+//    WHERE fat sits, which is the part that actually matters. Waist-to-
+//    height ratio can, it needs no age/sex/ethnicity-specific cutoffs, and
+//    NICE adopted it in 2022 with the memorable rule: keep your waist under
+//    half your height (< 0.5). This app already tracks a waist measurement,
+//    so it can compute the better metric for free.
 function computeBmi(weightKg, heightCm) {
   const h = heightCm / 100;
   return weightKg / (h * h);
+}
+// Trefethen's corrected index: 1.3 × kg / m^2.5.
+function computeCorrectedBmi(weightKg, heightCm) {
+  const h = heightCm / 100;
+  return 1.3 * weightKg / Math.pow(h, 2.5);
 }
 function bmiCategory(bmi) {
   if (bmi < 18.5) return 'أقل من المعتاد';
@@ -216,9 +304,38 @@ function bmiCategory(bmi) {
   if (bmi < 30) return 'أعلى من المعتاد';
   return 'مرتفع';
 }
+// Weight range for a "within the usual" corrected BMI at this height.
 function healthyWeightRange(heightCm) {
   const h = heightCm / 100;
-  return { min: 18.5 * h * h, max: 24.9 * h * h };
+  const p = Math.pow(h, 2.5);
+  return { min: 18.5 * p / 1.3, max: 24.9 * p / 1.3 };
+}
+
+function whtrCategory(ratio) {
+  if (ratio < 0.4) return { label: 'أقل من المعتاد', tone: 'warning' };
+  if (ratio < 0.5) return { label: 'ضمن المعتاد', tone: 'success' };
+  if (ratio < 0.6) return { label: 'أعلى من المعتاد', tone: 'warning' };
+  return { label: 'مرتفع', tone: 'danger' };
+}
+
+// A themed horizontal gauge: coloured bands + a marker where she sits.
+// Shows the shape of the scale instead of pronouncing a verdict.
+function gaugeHtml(value, min, max, bands, label) {
+  const clamped = Math.max(min, Math.min(max, value));
+  const pct = ((clamped - min) / (max - min)) * 100;
+  const segments = bands.map(b => {
+    const from = ((Math.max(min, b.from) - min) / (max - min)) * 100;
+    const to = ((Math.min(max, b.to) - min) / (max - min)) * 100;
+    return `<div class="gauge-band gauge-band-${b.tone}" style="inset-inline-start:${from}%; width:${to - from}%"></div>`;
+  }).join('');
+  return `
+    <div class="gauge">
+      <div class="gauge-track">${segments}</div>
+      <div class="gauge-marker" style="inset-inline-start:${pct}%">
+        <span class="gauge-marker-dot"></span>
+      </div>
+    </div>
+    ${label ? `<div class="gauge-caption">${label}</div>` : ''}`;
 }
 
 async function renderBmiCard(container) {
@@ -227,24 +344,90 @@ async function renderBmiCard(container) {
 
   if (!settings?.heightCm) {
     container.innerHTML = `
-      <p class="ring-label">مؤشر كتلة الجسم</p>
-      <p class="empty-state-sub">أضيفي طولك من الإعدادات لعرض المدى المرجعي للوزن</p>
+      <p class="ring-label">مؤشرات الجسم</p>
+      <p class="empty-state-sub">أضيفي طولك من الإعدادات لعرض المؤشرات</p>
       <button class="link-btn" id="go-to-health-settings">فتح الإعدادات ←</button>
     `;
     document.getElementById('go-to-health-settings').addEventListener('click', () => goTo('/settings'));
     return;
   }
+  if (!latest) {
+    container.innerHTML = `
+      <p class="ring-label">مؤشرات الجسم</p>
+      <p class="empty-state-sub">سجّلي وزنك لعرض المؤشرات</p>`;
+    return;
+  }
 
-  const range = healthyWeightRange(settings.heightCm);
-  const bmiLine = latest
-    ? `<p class="period-status-text">مؤشر كتلة الجسم: ${computeBmi(latest.value, settings.heightCm).toFixed(1)} (${bmiCategory(computeBmi(latest.value, settings.heightCm))})</p>`
-    : '';
+  const h = settings.heightCm;
+  const bmi = computeBmi(latest.value, h);
+  const cBmi = computeCorrectedBmi(latest.value, h);
+  const range = healthyWeightRange(h);
+  const cat = bmiCategory(cBmi);
+
+  const bmiBands = [
+    { from: 15, to: 18.5, tone: 'warning' },
+    { from: 18.5, to: 25, tone: 'success' },
+    { from: 25, to: 30, tone: 'warning' },
+    { from: 30, to: 40, tone: 'danger' }
+  ];
+
+  // Waist-to-height, if she tracks a waist measurement.
+  const waist = await getLatestWaistCm();
+  let whtrBlock = '';
+  if (waist) {
+    const ratio = waist / h;
+    const wc = whtrCategory(ratio);
+    const halfHeight = h / 2;
+    whtrBlock = `
+      <div class="metric-block">
+        <div class="metric-head">
+          <span class="metric-name">نسبة الخصر إلى الطول</span>
+          <span class="metric-chip metric-chip-${wc.tone}">${wc.label}</span>
+        </div>
+        <div class="metric-value-row">
+          <span class="metric-value">${toArabicNumeral(ratio.toFixed(2))}</span>
+          <span class="metric-hint">القاعدة: خصرك أقل من نصف طولك (أقل من ${toArabicNumeral(halfHeight.toFixed(0))} سم)</span>
+        </div>
+        ${gaugeHtml(ratio, 0.35, 0.65, [
+          { from: 0.35, to: 0.4, tone: 'warning' },
+          { from: 0.4, to: 0.5, tone: 'success' },
+          { from: 0.5, to: 0.6, tone: 'warning' },
+          { from: 0.6, to: 0.65, tone: 'danger' }
+        ], '')}
+        <p class="metric-note">مؤشر أدقّ من كتلة الجسم لأنه يرى أين تتوزّع الدهون، لا الوزن وحده.</p>
+      </div>`;
+  } else {
+    whtrBlock = `
+      <div class="metric-block">
+        <div class="metric-head">
+          <span class="metric-name">نسبة الخصر إلى الطول</span>
+        </div>
+        <p class="metric-note">أضيفي قياس «الخصر» في قياسات الجسم لعرض هذا المؤشر — وهو أدقّ من مؤشر كتلة الجسم.</p>
+      </div>`;
+  }
+
   container.innerHTML = `
-    <p class="ring-label">مؤشر كتلة الجسم</p>
-    ${bmiLine}
-    <p class="period-status-sub">المدى المرجعي لطولك: ${range.min.toFixed(0)}–${range.max.toFixed(0)} كغ</p>
-    <p class="settings-note">هذا مقياس عام وله حدوده (لا يأخذ الكتلة العضلية بالحسبان مثلاً)، وليس تشخيصاً طبياً.</p>
-    <button class="link-btn" id="go-to-health-settings">تعديل من الإعدادات ←</button>
+    <p class="ring-label">مؤشرات الجسم</p>
+
+    <div class="metric-block">
+      <div class="metric-head">
+        <span class="metric-name">مؤشر كتلة الجسم</span>
+        <span class="metric-chip metric-chip-${cBmi < 18.5 ? 'warning' : cBmi < 25 ? 'success' : cBmi < 30 ? 'warning' : 'danger'}">${cat}</span>
+      </div>
+      <div class="metric-value-row">
+        <span class="metric-value">${toArabicNumeral(cBmi.toFixed(1))}</span>
+        <span class="metric-hint">المعادلة التقليدية: ${toArabicNumeral(bmi.toFixed(1))}</span>
+      </div>
+      ${gaugeHtml(cBmi, 15, 40, bmiBands, '')}
+      <p class="metric-note">
+        الرقم الأول مصحَّح للطول (يقسم على الطول^٢٫٥ بدل ٢)، لأن المعادلة التقليدية تُظهر القصيرات أنحف والطويلات أثقل مما هنّ عليه.
+        المدى المعتاد لطولك: ${toArabicNumeral(range.min.toFixed(0))}–${toArabicNumeral(range.max.toFixed(0))} كغ.
+      </p>
+    </div>
+
+    ${whtrBlock}
+
+    <button class="link-btn" id="go-to-health-settings">تعديل الطول ←</button>
   `;
   document.getElementById('go-to-health-settings').addEventListener('click', () => goTo('/settings'));
 }
@@ -270,8 +453,46 @@ async function getMeasurementLatest(measurementId) {
   if (logs.length === 0) return null;
   return logs.sort((a, b) => b.date.localeCompare(a.date))[0];
 }
+// Full history, newest first.
+async function getMeasurementLogs(measurementId) {
+  const logs = await db.bodyMeasurementLogs.where('measurementId').equals(measurementId).toArray();
+  return logs.sort((a, b) => b.date.localeCompare(a.date));
+}
+// Change since the previous entry — what she actually wants to know at a
+// glance ("am I moving?"), rather than just today's absolute number.
+async function getMeasurementDelta(measurementId) {
+  const logs = await getMeasurementLogs(measurementId);
+  if (logs.length < 2) return null;
+  return {
+    delta: logs[0].value - logs[1].value,
+    spanDays: daysBetween(logs[1].date, logs[0].date),
+    from: logs[1].value
+  };
+}
 async function setMeasurementValue(measurementId, date, value) {
   await upsertLog(db.bodyMeasurementLogs, 'measurementId', measurementId, date, { value });
+}
+async function deleteMeasurementLog(logId) {
+  await db.bodyMeasurementLogs.delete(logId);
+}
+
+// The waist measurement, whatever she happened to call it — needed for
+// waist-to-height ratio. Matches the common Arabic spellings rather than
+// forcing a fixed name.
+async function getLatestWaistCm() {
+  const items = await getActiveMeasurements();
+  const waist = items.find(m => /خصر|وسط|waist/i.test(m.name));
+  if (!waist) return null;
+  const latest = await getMeasurementLatest(waist.id);
+  return latest ? latest.value : null;
+}
+
+function measurementDeltaPill(d) {
+  if (!d || Math.abs(d.delta) < 0.05) return '';
+  const rising = d.delta > 0;
+  return `<span class="measure-delta measure-delta-${rising ? 'up' : 'down'}">
+    ${rising ? '↑' : '↓'} ${toArabicNumeral(Math.abs(d.delta).toFixed(1))}
+  </span>`;
 }
 
 async function renderMeasurementsList(container) {
@@ -282,30 +503,30 @@ async function renderMeasurementsList(container) {
   }
   const rows = await Promise.all(items.map(async m => {
     const latest = await getMeasurementLatest(m.id);
+    const d = await getMeasurementDelta(m.id);
     return `
-      <div class="adhkar-counter-row" data-measurement-id="${m.id}">
-        <span class="adhkar-name">${escapeHtml(m.name)}</span>
-        <div class="adhkar-counter-controls">
-          <button class="adhkar-count-btn" data-action="edit">${latest ? latest.value + ' سم' : '—'}</button>
-          ${kebabMenuHtml(String(m.id), [
-            { key: 'rename', label: 'تعديل الاسم' },
-            { key: 'delete', label: 'حذف', danger: true }
-          ])}
-        </div>
+      <div class="task-row-wrap measure-row" data-measurement-id="${m.id}">
+        <button class="measure-main" data-action="open">
+          <span class="measure-name">${escapeHtml(m.name)}</span>
+          <span class="measure-value-block">
+            <span class="measure-value">${latest ? `${toArabicNumeral(latest.value)} <span class="measure-unit">سم</span>` : '—'}</span>
+            ${measurementDeltaPill(d)}
+          </span>
+        </button>
+        ${kebabMenuHtml(String(m.id), [
+          { key: 'rename', label: 'تعديل الاسم' },
+          { key: 'delete', label: 'حذف', danger: true }
+        ])}
       </div>`;
   }));
   container.innerHTML = rows.join('');
-  container.querySelectorAll('.adhkar-counter-row').forEach(row => {
+  const refresh = () => renderMeasurementsList(container);
+
+  container.querySelectorAll('.measure-row').forEach(row => {
     const id = Number(row.dataset.measurementId);
-    row.querySelector('[data-action="edit"]').addEventListener('click', async () => {
-      const latest = await getMeasurementLatest(id);
-      const input = prompt('القيمة بالسنتيمتر:', latest ? String(latest.value) : '');
-      if (input === null || input === '') return;
-      const n = parseNumericInput(input);
-      if (n !== null && n > 0) {
-        await setMeasurementValue(id, todayStr(), n);
-        await renderMeasurementsList(container);
-      }
+    const item = items.find(m => m.id === id);
+    row.querySelector('[data-action="open"]').addEventListener('click', () => {
+      openMeasurementDetailModal(item, refresh);
     });
   });
   wireKebabMenus(container, async (rowId, action) => {
@@ -315,12 +536,90 @@ async function renderMeasurementsList(container) {
       const name = prompt('اسم القياس:', item.name);
       if (!name || !name.trim()) return;
       await updateMeasurementName(id, name.trim());
-      await renderMeasurementsList(container);
+      await refresh();
     } else if (action === 'delete') {
       if (!confirm('حذف هذا القياس؟ سجل القياسات السابقة يبقى محفوظاً.')) return;
       await deleteMeasurement(id);
-      await renderMeasurementsList(container);
+      await refresh();
     }
+  });
+}
+
+// Tap a measurement to log a new value AND to see/edit/delete its history.
+// The old version was a bare prompt() that could only overwrite today —
+// there was no way to fix a typo from last week.
+function openMeasurementDetailModal(measurement, onDone) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal modal-lg">
+      <h2 class="modal-title">${escapeHtml(measurement.name)}</h2>
+      <div id="measure-summary"></div>
+
+      <label class="field-label">قياس جديد (سم)</label>
+      <div class="theme-accent-row">
+        <input class="text-input" type="text" inputmode="decimal" id="measure-new-value" placeholder="مثلاً: ٧٤٫٥">
+        <input class="text-input" type="date" id="measure-new-date" value="${todayStr()}">
+      </div>
+      <button class="btn btn-primary btn-block" id="measure-add-btn">حفظ القياس</button>
+
+      <h3 class="material-type-label" style="margin-top: var(--space-4);">السجل</h3>
+      <div id="measure-history"></div>
+
+      <div class="modal-actions">
+        <button class="btn btn-text" id="measure-close">إغلاق</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  async function refreshInner() {
+    const logs = await getMeasurementLogs(measurement.id);
+    const d = await getMeasurementDelta(measurement.id);
+
+    document.getElementById('measure-summary').innerHTML = logs.length ? `
+      <div class="weight-stat-block">
+        <div class="weight-stat-main">
+          <span class="weight-stat-value">${toArabicNumeral(logs[0].value)}</span>
+          <span class="weight-stat-unit">سم</span>
+          ${d ? `<span class="weight-delta-pill weight-delta-neutral">
+            <span class="weight-delta-arrow">${d.delta > 0 ? '↑' : d.delta < 0 ? '↓' : '→'}</span>
+            ${toArabicNumeral(Math.abs(d.delta).toFixed(1))} سم
+          </span>` : ''}
+        </div>
+        ${d ? `<span class="weight-stat-sub">منذ آخر قياس (${toArabicNumeral(d.spanDays)} ${d.spanDays <= 10 ? 'أيام' : 'يوماً'})</span>` : ''}
+      </div>` : `<p class="empty-state-sub">لا قياسات بعد.</p>`;
+
+    document.getElementById('measure-history').innerHTML = logs.length
+      ? logs.map(l => `
+        <div class="reading-row" data-log-id="${l.id}">
+          <span class="reading-time">${formatDateArabic(l.date, { weekday: false })}</span>
+          <span class="reading-vals">${toArabicNumeral(l.value)} سم</span>
+          <button class="reading-delete" data-log-id="${l.id}" aria-label="حذف">✕</button>
+        </div>`).join('')
+      : '';
+
+    document.querySelectorAll('#measure-history .reading-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('حذف هذا القياس؟')) return;
+        await deleteMeasurementLog(Number(btn.dataset.logId));
+        await refreshInner();
+      });
+    });
+  }
+  refreshInner();
+
+  document.getElementById('measure-add-btn').addEventListener('click', async () => {
+    const v = readNumericField('measure-new-value');
+    const date = document.getElementById('measure-new-date').value || todayStr();
+    if (v === null || v <= 0) return;
+    await setMeasurementValue(measurement.id, date, v);
+    document.getElementById('measure-new-value').value = '';
+    await refreshInner();
+    toast('تم حفظ القياس');
+  });
+  document.getElementById('measure-close').addEventListener('click', () => {
+    overlay.remove();
+    if (onDone) onDone();
   });
 }
 
@@ -407,11 +706,11 @@ async function renderBodyPage(params, view) {
 
   async function refreshWeight() {
     const stats = await getWeightStats();
+    const settings = await db.settings.get(1);
     document.getElementById('weight-glance-card').innerHTML = `
       <p class="ring-label">وزنك</p>
-      <p class="period-status-text">${weightStatusText(stats)}</p>
+      ${weightStatBlockHtml(stats, settings?.targetWeightKg ?? null)}
     `;
-    const settings = await db.settings.get(1);
     const allPoints = await getAllWeightLogs();
     const points = selectedRange === 'all'
       ? allPoints
@@ -466,7 +765,7 @@ async function renderBodyPage(params, view) {
 
   document.getElementById('weight-add-btn').addEventListener('click', () => openWeightModal(refreshWeight));
   await renderSleepSummaryCard(document.getElementById('body-sleep-summary'));
-  await renderDailyCareCard(document.getElementById('daily-care-card'));
+  await renderDailyCareSummaryCard(document.getElementById('daily-care-card'));
   document.getElementById('save-target-btn').addEventListener('click', async () => {
     const raw = document.getElementById('target-weight-input').value;
     const v = parseNumericInput(raw);

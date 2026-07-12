@@ -18,7 +18,7 @@ const SIMPLE_TABLES = [
   'economyTransactions', 'shoppingLists', 'shoppingListItems',
   'edibles', 'edibleWishlist', 'things', 'thingsWishlist',
   'recipes', 'exercises', 'exerciseLogs', 'standaloneSunnahLogs', 'wirdSettings', 'wirdLogs',
-  'courses', 'courseTodos', 'courseMaterials', 'dailyAdhkarItems', 'dailyAdhkarItemLogs', 'sleepLogs', 'qadaPrayers', 'qadaFasting', 'habitEvents', 'dailyCareRoutines', 'dailyCareLogs'
+  'courses', 'courseTodos', 'studySessions', 'courseMaterials', 'dailyAdhkarItems', 'dailyAdhkarItemLogs', 'sleepLogs', 'qadaPrayers', 'qadaFasting', 'habitEvents', 'dailyCareRoutines', 'dailyCareLogs'
 ];
 
 // Tables holding blobs, each keyed by a foreign id — can't go in JSON,

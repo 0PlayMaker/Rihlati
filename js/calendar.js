@@ -130,8 +130,39 @@ async function openDayDetail(dateStr) {
 
 // ---------- Yearly Overview ----------
 
+// A year heatmap built from the activity providers the calendar already
+// registers — 12 rows of days, tinted by how much was logged. It answers
+// "what did my year actually look like?" in a way a list of totals can't.
+function yearHeatmapHtml(year, activeDates) {
+  const counts = new Map();
+  activeDates.forEach(d => counts.set(d, (counts.get(d) || 0) + 1));
+  const max = Math.max(1, ...counts.values());
+
+  const months = ARABIC_MONTHS;
+  const rows = [];
+  for (let m = 0; m < 12; m++) {
+    const daysInMonth = new Date(year, m + 1, 0).getDate();
+    const cells = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const n = counts.get(dateStr) || 0;
+      // 5 levels: empty + four intensities. Quantised rather than a raw
+      // gradient so a single quiet day still reads as "something happened".
+      const level = n === 0 ? 0 : Math.min(4, Math.ceil((n / max) * 4));
+      cells.push(`<span class="heat-cell heat-${level}" title="${dateStr}: ${n}"></span>`);
+    }
+    rows.push(`
+      <div class="heat-row">
+        <span class="heat-month">${months[m]}</span>
+        <div class="heat-cells">${cells.join('')}</div>
+      </div>`);
+  }
+  return `<div class="year-heatmap">${rows.join('')}</div>`;
+}
+
 async function renderYearlyOverviewPage(params, view) {
-  const year = params[0] ? Number(params[0]) : new Date().getFullYear();
+  const thisYear = new Date().getFullYear();
+  const year = params[0] ? Number(params[0]) : thisYear;
   view.innerHTML = `
     <div class="page-header">
       <button class="icon-btn" aria-label="رجوع" id="yearly-back">→</button>
@@ -140,24 +171,81 @@ async function renderYearlyOverviewPage(params, view) {
     <div class="year-nav">
       <button class="icon-btn" id="year-prev" aria-label="السنة السابقة">›</button>
       <span class="cal-month-label">${year}</span>
-      <button class="icon-btn" id="year-next" aria-label="السنة التالية">‹</button>
+      <button class="icon-btn" id="year-next" aria-label="السنة التالية" ${year >= thisYear ? 'disabled' : ''}>‹</button>
     </div>
     <div class="card" id="yearly-total-card"></div>
+    <div class="card" id="yearly-heatmap-card"></div>
+    <div id="yearly-jump"></div>
     <div id="yearly-sections"></div>
   `;
   document.getElementById('yearly-back').addEventListener('click', () => history.back());
   document.getElementById('year-prev').addEventListener('click', () => goTo(`/yearly/${year - 1}`));
-  document.getElementById('year-next').addEventListener('click', () => goTo(`/yearly/${year + 1}`));
+  const nextBtn = document.getElementById('year-next');
+  // Walking into next year shows an empty page and looks broken.
+  if (year < thisYear) nextBtn.addEventListener('click', () => goTo(`/yearly/${year + 1}`));
 
   const results = await settleProviders(yearlyStatsProviders, year);
   const sections = results.filter(Boolean);
 
-  let grandTotal = 0;
-  sections.forEach(s => { if (typeof s.count === 'number') grandTotal += s.count; });
-  document.getElementById('yearly-total-card').innerHTML = `
-    <p class="ring-label">إجمالي الأنشطة المسجلة هذا العام</p>
-    <p class="period-status-text">${grandTotal} نشاط 🌸</p>
-  `;
+  // ---- Hero: things that actually mean something ----
+  // (The old version summed habit-logs + meals + transactions into a single
+  //  "activity count" — arithmetic across incompatible units that told her
+  //  nothing. These three numbers each answer a real question.)
+  const activityResults = await settleProviders(activityProviders);
+  const allDates = activityResults.flat().filter(d => typeof d === 'string' && d.startsWith(String(year)));
+  const uniqueDays = [...new Set(allDates)].sort();
+
+  const daysTracked = uniqueDays.length;
+  const longestRun = (() => {
+    let best = 0, run = 0, prev = null;
+    for (const d of uniqueDays) {
+      if (prev && daysBetween(prev, d) === 1) run += 1; else run = 1;
+      if (run > best) best = run;
+      prev = d;
+    }
+    return best;
+  })();
+  const byMonth = new Array(12).fill(0);
+  uniqueDays.forEach(d => { byMonth[Number(d.slice(5, 7)) - 1] += 1; });
+  const bestMonthIdx = byMonth.indexOf(Math.max(...byMonth));
+  const hasAny = daysTracked > 0;
+
+  document.getElementById('yearly-total-card').innerHTML = hasAny ? `
+    <p class="ring-label">عامك في أرقام</p>
+    <div class="diary-stat-row">
+      <div class="diary-stat">
+        <span class="diary-stat-num">${toArabicNumeral(daysTracked)}</span>
+        <span class="diary-stat-label">يوم سجّلتِ فيه</span>
+      </div>
+      <div class="diary-stat">
+        <span class="diary-stat-num">${toArabicNumeral(longestRun)}</span>
+        <span class="diary-stat-label">أطول تتابع</span>
+      </div>
+      <div class="diary-stat">
+        <span class="diary-stat-num">${byMonth[bestMonthIdx] > 0 ? ARABIC_MONTHS[bestMonthIdx] : '—'}</span>
+        <span class="diary-stat-label">أنشط شهر</span>
+      </div>
+    </div>` : `
+    <p class="ring-label">عامك في أرقام</p>
+    <p class="empty-state-sub">ما في بيانات مسجلة لهذه السنة بعد.</p>`;
+
+  const heatCard = document.getElementById('yearly-heatmap-card');
+  if (hasAny) {
+    heatCard.innerHTML = `
+      <p class="ring-label">شكل عامك</p>
+      ${yearHeatmapHtml(year, allDates)}
+      <div class="heat-legend">
+        <span>أقل</span>
+        <span class="heat-cell heat-0"></span>
+        <span class="heat-cell heat-1"></span>
+        <span class="heat-cell heat-2"></span>
+        <span class="heat-cell heat-3"></span>
+        <span class="heat-cell heat-4"></span>
+        <span>أكثر</span>
+      </div>`;
+  } else {
+    heatCard.style.display = 'none';
+  }
 
   const sectionsEl = document.getElementById('yearly-sections');
   if (sections.length === 0) {
@@ -178,11 +266,26 @@ async function renderYearlyOverviewPage(params, view) {
     return (rankA === -1 ? YEARLY_CATEGORY_ORDER.length : rankA) - (rankB === -1 ? YEARLY_CATEGORY_ORDER.length : rankB);
   });
 
+  // Jump chips — with a dozen sections this page is a long scroll, and
+  // scrolling past nine of them to reach the one you wanted is not a
+  // review, it's a chore.
+  document.getElementById('yearly-jump').innerHTML = `
+    <div class="yearly-jump-row">
+      ${sections.map((s, i) => `<button class="yearly-jump-chip" data-idx="${i}">${s.title}</button>`).join('')}
+    </div>`;
+
   sectionsEl.innerHTML = '';
-  sections.forEach(({ title, html }) => {
+  sections.forEach(({ title, html }, i) => {
     const card = document.createElement('div');
     card.className = 'card yearly-section-card';
+    card.id = `yearly-sec-${i}`;
     card.innerHTML = `<h2 class="card-title">${title}</h2>${html}`;
     sectionsEl.appendChild(card);
+  });
+  document.querySelectorAll('.yearly-jump-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const target = document.getElementById(`yearly-sec-${chip.dataset.idx}`);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   });
 }

@@ -13,17 +13,16 @@ async function rescheduleHomeReminders() {
 
 // Small ring used for the routine circles — same visual language as the
 // big ones, just sized down so two fit side by side under them.
-function smallRingHtml(frac, label, centerText, tone = 'accent') {
-  const color = tone === 'accent' ? 'var(--btn-color, var(--pink-deep))' : 'var(--mint-deep)';
-  const svg = renderRing({ size: 62, strokeWidth: 8, segments: [{ frac, color }] });
+function smallRingHtml(frac, label, centerText, path) {
+  const svg = renderRing({ size: 62, strokeWidth: 8, segments: [{ frac, color: 'var(--btn-color, var(--pink-deep))' }] });
   return `
-    <div class="small-ring-item">
+    <button class="small-ring-item small-ring-item-tappable" data-path="${path}" aria-label="${label}">
       <div class="ring-wrap small-ring-wrap">
         ${svg}
         <div class="ring-center-text small-ring-text">${centerText}</div>
       </div>
       <span class="small-ring-label">${label}</span>
-    </div>`;
+    </button>`;
 }
 
 // "What's actually left today" — the one thing a home screen can do that
@@ -94,32 +93,34 @@ async function renderHomeRingSection(container) {
 
   container.innerHTML = `
     <div class="rings-row">
-      <div class="ring-item">
+      <button class="ring-item ring-item-tappable" data-path="/habits" aria-label="عاداتك">
         <div class="ring-wrap">
           ${habitRing}
           <div class="ring-center-text">${ringData.total ? `${toArabicNumeral(ringData.done)}/${toArabicNumeral(ringData.total)}` : '—'}</div>
         </div>
         <span class="ring-label">عاداتك</span>
-      </div>
-      <div class="ring-item">
+      </button>
+      <button class="ring-item ring-item-tappable" data-path="/tasks" aria-label="مهامك">
         <div class="ring-wrap">
           ${taskRing}
           <div class="ring-center-text">${trackedTasks.length ? `${toArabicNumeral(doneTaskCount)}/${toArabicNumeral(trackedTasks.length)}` : '—'}</div>
         </div>
         <span class="ring-label">مهامك</span>
-      </div>
+      </button>
     </div>
 
     <div class="small-rings-row">
       ${smallRingHtml(
         morningRoutines.length ? morningDone / morningRoutines.length : 0,
         '🌅 صباحي',
-        morningRoutines.length ? `${toArabicNumeral(morningDone)}/${toArabicNumeral(morningRoutines.length)}` : '—'
+        morningRoutines.length ? `${toArabicNumeral(morningDone)}/${toArabicNumeral(morningRoutines.length)}` : '—',
+        '/dailycare'
       )}
       ${smallRingHtml(
         eveningRoutines.length ? eveningDone / eveningRoutines.length : 0,
         '🌙 مسائي',
-        eveningRoutines.length ? `${toArabicNumeral(eveningDone)}/${toArabicNumeral(eveningRoutines.length)}` : '—'
+        eveningRoutines.length ? `${toArabicNumeral(eveningDone)}/${toArabicNumeral(eveningRoutines.length)}` : '—',
+        '/dailycare'
       )}
     </div>
 
@@ -143,8 +144,8 @@ async function renderHomeRingSection(container) {
       </div>` : ''}
   `;
 
-  container.querySelectorAll('.remaining-chip').forEach(chip => {
-    chip.addEventListener('click', () => goTo(chip.dataset.path));
+  container.querySelectorAll('.remaining-chip, .ring-item-tappable, .small-ring-item-tappable').forEach(el => {
+    el.addEventListener('click', () => goTo(el.dataset.path));
   });
 }
 
@@ -499,6 +500,7 @@ function startApp(profile, settings) {
   route('/course', renderCoursePage);
   route('/adhkar-detail', renderAdhkarDetailPage);
   route('/sleep', renderSleepPage);
+  route('/dailycare', renderDailyCarePage);
   route('/yearly', renderYearlyOverviewPage);
   route('/settings', renderSettingsPage);
   route('/theme-editor', renderThemeEditorPage);

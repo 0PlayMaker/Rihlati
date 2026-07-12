@@ -105,12 +105,20 @@ async function getAllOpenCourseTodosWithCourse() {
 }
 
 function courseTodoRowHtml(todo, showCourse) {
+  // A due date is only useful if it can shout. Overdue and due-today get
+  // their own treatment instead of sitting in the same grey as everything
+  // else — that's the whole point of having entered a date.
+  const today = todayStr();
+  const overdue = !todo.done && todo.dueDate && todo.dueDate < today;
+  const dueToday = !todo.done && todo.dueDate === today;
+  const dueClass = overdue ? 'due-overdue' : dueToday ? 'due-today' : '';
+  const dueLabel = overdue ? 'متأخرة' : dueToday ? 'اليوم' : (todo.dueDate ? formatDateArabic(todo.dueDate, { weekday: false }) : '');
   return `
     <div class="task-row-wrap">
       <label class="task-row ${todo.done ? 'done' : ''}">
         <input type="checkbox" data-course-todo-id="${todo.id}" ${todo.done ? 'checked' : ''}>
         <span class="task-title">${escapeHtml(todo.title)}${showCourse ? ` <span class="course-todo-source">— ${escapeHtml(todo.courseTitle)}</span>` : ''}</span>
-        ${todo.dueDate ? `<span class="task-reminder">📅 ${formatDateArabic(todo.dueDate, { weekday: false })}</span>` : ''}
+        ${todo.dueDate ? `<span class="task-reminder ${dueClass}">${overdue ? '⚠️' : '📅'} ${dueLabel}</span>` : ''}
       </label>
       <div class="row-actions-wrap">${kebabMenuHtml(String(todo.id), [
         { key: 'edit', label: 'تعديل' },
@@ -407,9 +415,55 @@ async function savePomodoroSettings(workMinutes, breakMinutes) {
 // tick at a time, so a throttled/suspended background tab can't make
 // the number lie. It also means a phase that "should" have ended while
 // the app was backgrounded is detected correctly on return.
-function renderPomodoroCard(container) {
+
+// ===================== Study sessions (focus time) =====================
+// Logged only when a FOCUS phase actually completes — a break isn't study,
+// and a phase you abandoned halfway isn't either. Attribution to a course
+// is optional: plenty of focused work doesn't belong to a course.
+
+async function logStudySession(minutes, courseId = null) {
+  if (!minutes || minutes <= 0) return;
+  await db.studySessions.add({
+    date: todayStr(),
+    courseId: courseId ?? null,
+    minutes: Math.round(minutes),
+    completedAt: Date.now()
+  });
+}
+async function getStudySessions() {
+  return db.studySessions.toArray();
+}
+async function getStudyMinutesForDate(dateStr) {
+  const rows = await db.studySessions.where('date').equals(dateStr).toArray();
+  return rows.reduce((sum, r) => sum + (r.minutes || 0), 0);
+}
+async function getStudyMinutesForCourse(courseId) {
+  const rows = await db.studySessions.where('courseId').equals(courseId).toArray();
+  return rows.reduce((sum, r) => sum + (r.minutes || 0), 0);
+}
+async function getStudyStreak() {
+  const rows = await getStudySessions();
+  return computeCurrentStreak(rows.map(r => r.date), []);
+}
+async function getStudyWeekMinutes() {
+  const rows = await getStudySessions();
+  const from = addDays(todayStr(), -6);
+  return rows.filter(r => r.date >= from).reduce((sum, r) => sum + (r.minutes || 0), 0);
+}
+// "٢ س ١٥ د" reads better than "135 minutes" once sessions add up.
+function formatStudyMinutes(mins) {
+  if (!mins) return '٠ د';
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0) return `${toArabicNumeral(m)} د`;
+  if (m === 0) return `${toArabicNumeral(h)} س`;
+  return `${toArabicNumeral(h)} س ${toArabicNumeral(m)} د`;
+}
+
+function renderPomodoroCard(container, onSessionLogged) {
   (async () => {
     const { workMinutes, breakMinutes } = await getPomodoroSettings();
+    const courses = await getActiveCourses();
     let isBreak = false;
     let remaining = workMinutes * 60; // seconds left while paused/idle
     let endsAt = null;                // absolute ms timestamp while running
@@ -420,6 +474,12 @@ function renderPomodoroCard(container) {
       <h2 class="card-title">🍅 مؤقّت بومودورو</h2>
       <div class="timer-display" id="pomo-display">${formatTimer(remaining)}</div>
       <p class="settings-note" id="pomo-phase-label">وقت التركيز</p>
+      ${courses.length ? `
+        <label class="field-label">لأي دورة؟ (اختياري)</label>
+        <select class="text-input" id="pomo-course-select">
+          <option value="">بدون دورة</option>
+          ${courses.map(c => `<option value="${c.id}">${escapeHtml(c.title)}</option>`).join('')}
+        </select>` : ''}
       <div class="timer-duration-row">
         <label class="field-label">تركيز (د)</label>
         <input class="text-input" type="number" min="1" id="pomo-work-input" value="${workMinutes}">
@@ -458,6 +518,17 @@ function renderPomodoroCard(container) {
       // backgrounded doesn't silently shift everything later.
       playBeepSequence(3);
       if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+
+      // A completed FOCUS phase is real study time — record it. (A break
+      // isn't, so nothing is logged when the break ends.)
+      if (!isBreak) {
+        const sel = document.getElementById('pomo-course-select');
+        const courseId = sel && sel.value ? Number(sel.value) : null;
+        logStudySession(readWork(), courseId).then(() => {
+          if (typeof onSessionLogged === 'function') onSessionLogged();
+        });
+      }
+
       const finishedAt = endsAt;
       isBreak = !isBreak;
       const nextSeconds = (isBreak ? readBreak() : readWork()) * 60;
@@ -526,12 +597,46 @@ function renderPomodoroCard(container) {
 
 // ===================== Pages =====================
 
+async function renderStudyFocusCard(container) {
+  const [todayMins, weekMins, streak] = await Promise.all([
+    getStudyMinutesForDate(todayStr()),
+    getStudyWeekMinutes(),
+    getStudyStreak()
+  ]);
+  const sessions = await getStudySessions();
+
+  if (sessions.length === 0) {
+    container.innerHTML = `
+      <h2 class="card-title">⏳ وقت التركيز</h2>
+      <p class="mini-progress-text">أنهي جلسة بومودورو واحدة ليبدأ التتبّع — كل جلسة تُسجَّل تلقائياً.</p>`;
+    return;
+  }
+
+  container.innerHTML = `
+    <h2 class="card-title">⏳ وقت التركيز</h2>
+    <div class="diary-stat-row">
+      <div class="diary-stat">
+        <span class="diary-stat-num">${formatStudyMinutes(todayMins)}</span>
+        <span class="diary-stat-label">اليوم</span>
+      </div>
+      <div class="diary-stat">
+        <span class="diary-stat-num">${formatStudyMinutes(weekMins)}</span>
+        <span class="diary-stat-label">آخر ٧ أيام</span>
+      </div>
+      <div class="diary-stat">
+        <span class="diary-stat-num">${streak > 0 ? '🔥' + toArabicNumeral(streak) : '—'}</span>
+        <span class="diary-stat-label">أيام متتالية</span>
+      </div>
+    </div>`;
+}
+
 async function renderStudyPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
       <button class="icon-btn" aria-label="رجوع" id="study-back">→</button>
       <h1>التعلم</h1>
     </div>
+    <div class="card" id="study-focus-card"></div>
     <div class="card">
       <div class="section-header">
         <h2 class="card-title">دوراتي</h2>
@@ -556,12 +661,26 @@ async function renderStudyPage(params, view) {
     }
     const rows = await Promise.all(courses.map(async c => {
       const progress = await getCourseTodoProgress(c.id);
+      const focusMins = await getStudyMinutesForCourse(c.id);
+      const frac = progress.total > 0 ? progress.done / progress.total : 0;
+      const complete = progress.total > 0 && progress.done === progress.total;
+      // A ring reads faster than "3/5 مهمة", and shows completion at a glance.
+      const ring = renderRing({
+        size: 44, strokeWidth: 5,
+        segments: [{ frac, color: complete ? 'var(--success-strong)' : 'var(--btn-color, var(--pink-deep))' }]
+      });
       return `
         <button class="food-row course-row" data-course-id="${c.id}">
-          <span class="food-thumb food-thumb-placeholder">${c.emoji || '🎓'}</span>
+          <div class="course-ring-wrap">
+            ${progress.total > 0 ? ring : ''}
+            <span class="course-ring-emoji">${c.emoji || '🎓'}</span>
+          </div>
           <div class="food-row-info">
-            <span class="food-row-title">${escapeHtml(c.title)}</span>
-            ${progress.total > 0 ? `<span class="food-row-notes">${progress.done}/${progress.total} مهمة</span>` : ''}
+            <span class="food-row-title">${escapeHtml(c.title)}${complete ? ' ✅' : ''}</span>
+            <span class="food-row-notes">
+              ${progress.total > 0 ? `${toArabicNumeral(progress.done)}/${toArabicNumeral(progress.total)} مهمة` : 'لا مهام بعد'}
+              ${focusMins > 0 ? ` · ⏳ ${formatStudyMinutes(focusMins)}` : ''}
+            </span>
           </div>
         </button>`;
     }));
@@ -602,7 +721,16 @@ async function renderStudyPage(params, view) {
   }
   await refreshAllTodos();
 
-  renderPomodoroCard(document.getElementById('pomodoro-card'));
+  async function refreshFocus() {
+    await renderStudyFocusCard(document.getElementById('study-focus-card'));
+  }
+  await refreshFocus();
+  // When a focus phase completes, the totals above must update immediately —
+  // otherwise she finishes a session and the card still says zero.
+  renderPomodoroCard(document.getElementById('pomodoro-card'), async () => {
+    await refreshFocus();
+    await refreshCourses();
+  });
 }
 
 async function renderCoursePage(params, view) {
@@ -685,10 +813,41 @@ async function studyYearlyProvider(year) {
   const newCourses = courses.filter(c => new Date(c.createdAt).getFullYear() === year);
   const allTodos = await db.courseTodos.toArray();
   const doneTodos = allTodos.filter(t => t.done && t.doneAt && new Date(t.doneAt).getFullYear() === year);
-  if (newCourses.length === 0 && doneTodos.length === 0) return null;
+
+  const sessions = (await getStudySessions()).filter(s => s.date.startsWith(prefix));
+  const totalMins = sessions.reduce((sum, s) => sum + (s.minutes || 0), 0);
+  const studyDays = new Set(sessions.map(s => s.date)).size;
+
+  if (newCourses.length === 0 && doneTodos.length === 0 && sessions.length === 0) return null;
+
+  // Per-course focus time, collapsed behind a details so the section stays
+  // compact when she has many courses.
+  const byCourse = {};
+  sessions.forEach(s => {
+    if (s.courseId == null) return;
+    byCourse[s.courseId] = (byCourse[s.courseId] || 0) + (s.minutes || 0);
+  });
+  const courseMap = new Map(courses.map(c => [c.id, c]));
+  const courseRows = Object.entries(byCourse)
+    .sort((a, b) => b[1] - a[1])
+    .filter(([id]) => courseMap.has(Number(id)))
+    .map(([id, mins]) => {
+      const c = courseMap.get(Number(id));
+      return `<div class="yearly-row"><span>${c.emoji || '🎓'} ${escapeHtml(c.title)}</span><span>${formatStudyMinutes(mins)}</span></div>`;
+    }).join('');
+
   const html = `
-    <div class="yearly-row"><span>دورات جديدة</span><span>${newCourses.length}</span></div>
-    <div class="yearly-row"><span>مهام منجزة</span><span>${doneTodos.length}</span></div>
+    <div class="yearly-row"><span>دورات جديدة</span><span>${toArabicNumeral(newCourses.length)}</span></div>
+    <div class="yearly-row"><span>مهام منجزة</span><span>${toArabicNumeral(doneTodos.length)}</span></div>
+    ${sessions.length ? `
+      <div class="yearly-row"><span>إجمالي وقت التركيز</span><span>⏳ ${formatStudyMinutes(totalMins)}</span></div>
+      <div class="yearly-row"><span>أيام الدراسة</span><span>${toArabicNumeral(studyDays)} يوم</span></div>
+      <div class="yearly-row"><span>عدد الجلسات</span><span>${toArabicNumeral(sessions.length)}</span></div>` : ''}
+    ${courseRows ? `
+      <details class="yearly-pain-details">
+        <summary>وقت التركيز لكل دورة</summary>
+        ${courseRows}
+      </details>` : ''}
   `;
-  return { title: 'التعلم', html, count: newCourses.length + doneTodos.length };
+  return { title: 'التعلم', html, count: newCourses.length + doneTodos.length + sessions.length };
 }

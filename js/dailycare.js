@@ -217,6 +217,67 @@ async function renderCareGlance(container) {
     </div>`;
 }
 
+// Compact summary for the Health page — same shape as the Sleep and
+// Training cards (glance + فتح), rather than dumping the full editable
+// lists inline and making Health twice as long as it needs to be.
+async function renderDailyCareSummaryCard(container) {
+  const today = todayStr();
+  const [morning, evening] = await Promise.all([getCareRoutines('morning'), getCareRoutines('evening')]);
+  const all = [...morning, ...evening];
+
+  if (all.length === 0) {
+    container.innerHTML = `
+      <div class="section-header">
+        <h2 class="card-title">🧴 العناية اليومية</h2>
+        <a class="see-all-link" href="#/dailycare">فتح ←</a>
+      </div>
+      <p class="mini-progress-text">أضيفي روتينك الصباحي والمسائي لتبدأ التتبّع</p>`;
+    return;
+  }
+
+  const [mDone, eDone] = await Promise.all([
+    countCareRoutinesDone(morning, today),
+    countCareRoutinesDone(evening, today)
+  ]);
+  const doneCount = mDone + eDone;
+  const frac = doneCount / all.length;
+
+  // Best current streak across her routines — the one worth showing.
+  let bestStreak = 0;
+  for (const r of all) {
+    const s = await getCareRoutineStats(r.id);
+    if (s.streak > bestStreak) bestStreak = s.streak;
+  }
+
+  container.innerHTML = `
+    <div class="section-header">
+      <h2 class="card-title">🧴 العناية اليومية</h2>
+      <a class="see-all-link" href="#/dailycare">فتح ←</a>
+    </div>
+    <div class="mini-progress">
+      <div class="mini-progress-track"><div class="mini-progress-fill" style="width:${frac * 100}%"></div></div>
+      <span class="mini-progress-text">اليوم: ${toArabicNumeral(doneCount)}/${toArabicNumeral(all.length)}</span>
+    </div>
+    <div class="care-summary-row">
+      ${morning.length ? `<span class="care-summary-chip">🌅 ${toArabicNumeral(mDone)}/${toArabicNumeral(morning.length)}</span>` : ''}
+      ${evening.length ? `<span class="care-summary-chip">🌙 ${toArabicNumeral(eDone)}/${toArabicNumeral(evening.length)}</span>` : ''}
+      ${bestStreak > 0 ? `<span class="tsr-streak">🔥 ${toArabicNumeral(bestStreak)}</span>` : ''}
+    </div>`;
+}
+
+// The full page — where the routines are actually managed.
+async function renderDailyCarePage(params, view) {
+  view.innerHTML = `
+    <div class="page-header">
+      <button class="icon-btn" aria-label="رجوع" id="care-back">→</button>
+      <h1>العناية اليومية</h1>
+    </div>
+    <div class="card" id="daily-care-card"></div>
+  `;
+  document.getElementById('care-back').addEventListener('click', () => history.back());
+  await renderDailyCareCard(document.getElementById('daily-care-card'));
+}
+
 async function renderDailyCareCard(container) {
   const today = todayStr();
   container.innerHTML = `

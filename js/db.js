@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v45 · ١٢ يوليو ٢٠٢٦';
+const APP_VERSION = 'v46 · ١٢ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -316,6 +316,17 @@ db.version(18).stores({
 // treats "missing" as the sensible default, so old rows keep working.
 db.version(19).stores({
   dailyAdhkarItemLogs: '++id, &[itemId+date], itemId'
+});
+
+// ---------- Phase 20 — study sessions ----------
+// The pomodoro used to run and then throw the result away: you could
+// focus for three hours and the app would remember nothing. Each
+// completed FOCUS phase is now logged (break phases aren't — they're
+// not study), optionally attributed to a course, which is what makes
+// focus totals, a study streak, per-course time, and the yearly view
+// possible at all. Not day-unique: several sessions a day is the norm.
+db.version(20).stores({
+  studySessions: '++id, date, courseId'
 });
 
 // ---------- date helpers (used everywhere) ----------
