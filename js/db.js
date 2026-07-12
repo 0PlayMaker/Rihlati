@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v49 · ١٢ يوليو ٢٠٢٦';
+const APP_VERSION = 'v50 · ١٢ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -327,6 +327,21 @@ db.version(19).stores({
 // possible at all. Not day-unique: several sessions a day is the norm.
 db.version(20).stores({
   studySessions: '++id, date, courseId'
+});
+
+// ---------- Phase 21 — chewing sessions (وضع المضغ) ----------
+// Slow, deliberate eating: chew for N seconds, swallow, rest, repeat,
+// until the meal's target duration is up. The point is that satiety
+// signals take ~20 minutes to arrive, so a meal inhaled in five minutes
+// is one you finish still hungry.
+//
+// Logged per meal (foodLogId, nullable — she might want to pace a meal
+// she never bothered to log) so it's a habit she can SEE herself
+// building, not a gimmick used once. Everything about how the session
+// actually went — bites, seconds, whether she finished — is recorded;
+// nothing about it is derived from settings that might change later.
+db.version(21).stores({
+  chewSessions: '++id, date, foodLogId'
 });
 
 // ---------- date helpers (used everywhere) ----------

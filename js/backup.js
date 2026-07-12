@@ -13,7 +13,7 @@
 const SIMPLE_TABLES = [
   'habits', 'habitLogs', 'fixedTasks', 'fixedTaskLogs', 'customTodos', 'streakPauses',
   'prayerLogs', 'sunnahLogs', 'adhkarAfterLogs', 'dailyAdhkarLogs', 'customAdhkar', 'customAdhkarLogs',
-  'moodLogs', 'periodLogs', 'periodReadings', 'foodLogs', 'waterLogs', 'weightLogs', 'bodyMeasurements', 'bodyMeasurementLogs',
+  'moodLogs', 'periodLogs', 'periodReadings', 'foodLogs', 'chewSessions', 'waterLogs', 'weightLogs', 'bodyMeasurements', 'bodyMeasurementLogs',
   'goals', 'diaryEntries',
   'economyTransactions', 'shoppingLists', 'shoppingListItems',
   'edibles', 'edibleWishlist', 'things', 'thingsWishlist',

@@ -97,34 +97,174 @@ function initHomeCalendar(container) {
 
 // ---------- Day Detail bottom sheet ----------
 
+// Day Detail. Everything logged on a date, grouped by area, with the
+// quick-adds that make sense FOR THAT DATE.
+//
+// On editing the past: the six editable providers here (tasks, todos,
+// food, water, weight, diary) are all things you SHOULD be able to fix
+// retroactively — forgetting to tick yesterday's task is exactly the case
+// this screen exists for, and streaks recompute from the logs, so a
+// correction correctly repairs the streak rather than corrupting it.
+// Anything whose meaning is anchored to "now" — the habit clocks (driven
+// by relapse timestamps), the wird's khatm position — is deliberately
+// read-only here, because retro-editing those would rewrite a history
+// that other numbers are derived from.
+const DAY_SECTION_ORDER = [
+  'المزاج', 'يومياتي',
+  'الصلوات', 'السنن والأذكار', 'الأذكار المخصصة', 'ورد القرآن',
+  'العادات', 'المهام اليومية', 'قائمة المهام', 'مهام الدورات',
+  'الطعام', 'الماء', 'وضع المضغ', 'المأكولات', 'الوصفات',
+  'الوزن', 'النوم', 'العناية اليومية', 'التمارين', 'الدورة الشهرية',
+  'الاقتصاد', 'المشتريات'
+];
+
 async function openDayDetail(dateStr) {
+  const today = todayStr();
+  const isToday = dateStr === today;
+  const isFuture = dateStr > today;
+  const dayDiff = daysBetween(dateStr, today);
+
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay sheet-overlay';
   overlay.innerHTML = `
     <div class="sheet">
       <div class="sheet-handle"></div>
-      <h2 class="sheet-title">${formatDateArabic(dateStr)}</h2>
+
+      <div class="day-nav">
+        <button class="icon-btn" id="day-prev" aria-label="اليوم السابق">›</button>
+        <div class="day-nav-title">
+          <h2 class="sheet-title">${formatDateArabic(dateStr)}</h2>
+          <span class="day-nav-sub" id="day-nav-sub"></span>
+        </div>
+        <button class="icon-btn" id="day-next" aria-label="اليوم التالي" ${isToday || isFuture ? 'disabled' : ''}>‹</button>
+      </div>
+
+      <div class="day-summary" id="day-summary"></div>
       <div class="sheet-body" id="day-detail-body"></div>
+
+      ${!isFuture ? `
+        <div class="day-quick">
+          <span class="day-quick-label">إضافة سريعة</span>
+          <div class="day-quick-row">
+            <button class="day-quick-btn" data-add="mood">🙂 مزاج</button>
+            <button class="day-quick-btn" data-add="diary">📔 يومية</button>
+            <button class="day-quick-btn" data-add="food">🍽️ وجبة</button>
+            <button class="day-quick-btn" data-add="weight">⚖️ وزن</button>
+          </div>
+        </div>` : `
+        <p class="day-future-note">📅 يوم قادم — لا يمكن التسجيل فيه بعد.</p>`}
+
       <button class="btn btn-text sheet-close" id="day-detail-close">إغلاق</button>
     </div>`;
   document.body.appendChild(overlay);
   document.getElementById('day-detail-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
-  const body = document.getElementById('day-detail-body');
-  const results = await settleProviders(dayProviders, dateStr);
-  const sections = results.filter(Boolean);
-
-  if (sections.length === 0) {
-    body.innerHTML = `<div class="empty-state"><p>ما في شي مسجل بهذا اليوم.</p></div>`;
-    return;
+  // Walking between days without closing and reopening the sheet.
+  document.getElementById('day-prev').addEventListener('click', () => {
+    overlay.remove();
+    openDayDetail(addDays(dateStr, -1));
+  });
+  const nextBtn = document.getElementById('day-next');
+  if (!isToday && !isFuture) {
+    nextBtn.addEventListener('click', () => {
+      overlay.remove();
+      openDayDetail(addDays(dateStr, 1));
+    });
   }
-  sections.forEach(({ title, node }) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'day-detail-section';
-    wrap.innerHTML = `<h3 class="day-detail-section-title">${title}</h3>`;
-    wrap.appendChild(node);
-    body.appendChild(wrap);
+
+  // "قبل ٣ أيام" is more legible than making her subtract dates herself.
+  const subEl = document.getElementById('day-nav-sub');
+  subEl.textContent = isToday ? 'اليوم'
+    : isFuture ? 'يوم قادم'
+    : dayDiff === 1 ? 'أمس'
+    : `قبل ${toArabicNumeral(dayDiff)} ${dayDiff <= 10 ? 'أيام' : 'يوماً'}`;
+  subEl.className = `day-nav-sub ${isToday ? 'day-nav-today' : ''}`;
+
+  const body = document.getElementById('day-detail-body');
+
+  async function refreshBody() {
+    body.innerHTML = '';
+    const results = await settleProviders(dayProviders, dateStr);
+    const sections = results.filter(Boolean);
+
+    // Day summary: mood + how much was logged, before the detail.
+    const mood = await getMoodLog(dateStr);
+    const summaryEl = document.getElementById('day-summary');
+    summaryEl.innerHTML = (sections.length === 0 && !mood) ? '' : `
+      <div class="day-summary-row">
+        ${mood ? `<span class="day-summary-mood">${mood.emoji}</span>` : ''}
+        <span class="day-summary-count">${toArabicNumeral(sections.length)} ${sections.length === 1 ? 'قسم مسجّل' : 'أقسام مسجّلة'}</span>
+        ${mood?.tags?.length ? `<span class="day-summary-tags">${mood.tags.map(k => {
+          const t = MOOD_TAGS.find(x => x.key === k);
+          return t ? t.emoji : '';
+        }).join(' ')}</span>` : ''}
+      </div>`;
+
+    if (sections.length === 0) {
+      body.innerHTML = `<div class="empty-state"><p>${isFuture ? 'يوم لم يأتِ بعد.' : 'ما في شي مسجل بهذا اليوم.'}</p></div>`;
+      return;
+    }
+
+    // Grouped by area, in a fixed order — providers register in whatever
+    // order the app happens to load them, which is not an order anyone
+    // would choose to read in.
+    sections.sort((a, b) => {
+      const ra = DAY_SECTION_ORDER.indexOf(a.title);
+      const rb = DAY_SECTION_ORDER.indexOf(b.title);
+      return (ra === -1 ? 999 : ra) - (rb === -1 ? 999 : rb);
+    });
+
+    sections.forEach(({ title, node }) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'day-detail-section';
+      wrap.innerHTML = `<h3 class="day-detail-section-title">${title}</h3>`;
+      wrap.appendChild(node);
+      body.appendChild(wrap);
+    });
+  }
+  await refreshBody();
+
+  // Quick-adds are date-aware: they log to THIS day, not to today.
+  overlay.querySelectorAll('.day-quick-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const what = btn.dataset.add;
+      if (what === 'mood') {
+        openDayMoodModal(dateStr, refreshBody);
+      } else if (what === 'diary') {
+        openDiaryModal({ date: dateStr, onSaved: refreshBody });
+      } else if (what === 'food') {
+        openFoodModal({ date: dateStr, onSaved: refreshBody });
+      } else if (what === 'weight') {
+        const input = prompt(`الوزن في ${formatDateArabic(dateStr, { weekday: false })} (كغ):`);
+        if (input === null) return;
+        const v = parseNumericInput(input);
+        if (v === null || v <= 0) return;
+        await setWeight(dateStr, v);
+        await refreshBody();
+        toast('تم حفظ الوزن');
+      }
+    });
+  });
+}
+
+// A small sheet for logging mood on a specific (possibly past) date.
+function openDayMoodModal(dateStr, onSaved) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal modal-lg">
+      <h2 class="modal-title">مزاج ${formatDateArabic(dateStr, { weekday: false })}</h2>
+      <div id="day-mood-widget"></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="day-mood-done">تم</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  renderMoodWidget(document.getElementById('day-mood-widget'), dateStr, { editable: true });
+  document.getElementById('day-mood-done').addEventListener('click', () => {
+    overlay.remove();
+    if (onSaved) onSaved();
   });
 }
 
@@ -255,7 +395,7 @@ async function renderYearlyOverviewPage(params, view) {
   // Grouped by category so related sections land next to each other,
   // rather than in whatever order their providers happened to register.
   const YEARLY_CATEGORY_ORDER = [
-    'الوزن', 'النوم', 'العناية اليومية', 'التمارين', 'الطعام والماء', 'الوصفات', 'المزاج', 'الدورة الشهرية',
+    'الوزن', 'النوم', 'العناية اليومية', 'التمارين', 'الطعام والماء', 'وضع المضغ', 'الوصفات', 'المزاج', 'الدورة الشهرية',
     'العبادة', 'ورد القرآن', 'القضاء (الحالة الحالية)',
     'العادات', 'المهام اليومية', 'قائمة المهام', 'الأهداف (الحالة الحالية)', 'التعلم',
     'يومياتي', 'الاقتصاد'

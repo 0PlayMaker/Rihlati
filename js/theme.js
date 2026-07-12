@@ -230,6 +230,15 @@ function applyTheme(mode, accentHex, opts = {}) {
   const blurPx = opts.blurAmount != null ? opts.blurAmount : 20;
   root.setProperty('--glass-blur', `${blurPx}px`);
 
+  // Per-tile accents for the six section cards. Cleared (not left stale)
+  // when she removes a custom colour, so the tile falls back to its
+  // palette default rather than keeping a colour she just deleted.
+  TILE_ACCENT_FIELDS.forEach(f => {
+    const v = opts.tiles ? opts.tiles[f.settingsKey] : null;
+    if (v) root.setProperty(`--tile-${f.id}`, v);
+    else root.removeProperty(`--tile-${f.id}`);
+  });
+
   document.body.classList.toggle('theme-glass', mode === 'glass' || mode === 'glassDark');
   document.body.classList.toggle('theme-glass-dark', mode === 'glassDark');
   document.body.classList.toggle('theme-dark-ish', mode === 'dark' || mode === 'amoled' || mode === 'glassDark');
@@ -246,7 +255,8 @@ async function applyStoredTheme() {
     textColor: settings?.customTextColor,
     subtextColor: settings?.customSubtextColor,
     bottomBarColor: settings?.customBottomBarColor,
-    blurAmount: settings?.customBlurAmount
+    blurAmount: settings?.customBlurAmount,
+    tiles: Object.fromEntries(TILE_ACCENT_FIELDS.map(f => [f.settingsKey, settings?.[f.settingsKey]]))
   });
 }
 
@@ -265,26 +275,56 @@ const CUSTOM_COLOR_FIELDS = [
   { key: 'text', settingsKey: 'customTextColor', label: 'النص', group: 'نصوص', withAlpha: false, fallback: () => '#4A4152' },
   { key: 'subtext', settingsKey: 'customSubtextColor', label: 'النص الفرعي', group: 'نصوص', withAlpha: false, fallback: () => '#8B8394' }
 ];
-const THEME_SETTINGS_KEYS = ['themeMode', 'accentColor', ...CUSTOM_COLOR_FIELDS.map(f => f.settingsKey), 'customBlurAmount'];
+// The six section tiles on Home each carry their own accent. Making them
+// customisable is the difference between "a theme" and "a theme that
+// actually covers what she looks at most".
+const TILE_ACCENT_FIELDS = [
+  { id: 'food-action',    settingsKey: 'tileFoodColor',    label: '🍽️ الطعام',      fallback: 'var(--yellow-deep)' },
+  { id: 'worship-action', settingsKey: 'tileWorshipColor', label: '🕌 العبادة',      fallback: 'var(--mint-deep)' },
+  { id: 'diary-action',   settingsKey: 'tileDiaryColor',   label: '📔 يومياتي',      fallback: 'var(--lavender-deep)' },
+  { id: 'period-action',  settingsKey: 'tilePeriodColor',  label: '🌙 الدورة',       fallback: 'var(--rose-deep)' },
+  { id: 'economy-action', settingsKey: 'tileEconomyColor', label: '💰 الاقتصاد',     fallback: 'var(--mint-deep)' },
+  { id: 'body-action',    settingsKey: 'tileBodyColor',    label: '⚖️ الصحة',        fallback: 'var(--blue-deep)' }
+];
+
+const THEME_SETTINGS_KEYS = ['themeMode', 'accentColor', ...CUSTOM_COLOR_FIELDS.map(f => f.settingsKey), ...TILE_ACCENT_FIELDS.map(f => f.settingsKey), 'customBlurAmount'];
 
 // ---------- Settings page: minimal — mode + presets + link to editor ----------
 
 function renderThemeSection(currentMode, currentAccent, presets) {
   return `
     <div class="card settings-card">
-      <h2 class="card-title">المظهر</h2>
-      <label class="field-label">الوضع</label>
+      <h3 class="card-title">الوضع</h3>
       <div class="habit-type-chips theme-mode-chips" id="theme-mode-chips">
         ${Object.entries(THEME_MODES).map(([key, m]) => `
           <button class="chip theme-mode-chip ${key === (currentMode || 'light') ? 'active' : ''}" data-mode="${key}">${m.label}</button>
         `).join('')}
         ${(presets || []).map(p => `<button class="chip theme-preset-chip" data-preset-id="${p.id}">🎨 ${escapeHtml(p.name)}</button>`).join('')}
       </div>
-      <a class="link-btn" href="#/theme-editor">🎨 تخصيص المظهر بالكامل ←</a>
+      <div class="theme-quick-row">
+        <a class="btn btn-secondary btn-sm" href="#/theme-editor">🎨 تخصيص كامل</a>
+        <button class="btn btn-text btn-sm theme-restore-quick" id="theme-restore-quick">↺ المظهر الافتراضي</button>
+      </div>
     </div>`;
 }
 
+async function restoreDefaultTheme() {
+  const reset = { themeMode: 'light', accentColor: DEFAULT_ACCENT, customBlurAmount: null };
+  CUSTOM_COLOR_FIELDS.forEach(f => { reset[f.settingsKey] = null; });
+  TILE_ACCENT_FIELDS.forEach(f => { reset[f.settingsKey] = null; });
+  await db.settings.update(1, reset);
+  await applyStoredTheme();
+}
+
 function wireThemeSection(view) {
+  const restoreBtn = document.getElementById('theme-restore-quick');
+  if (restoreBtn) restoreBtn.addEventListener('click', async () => {
+    if (!confirm('استعادة المظهر الافتراضي؟ (لن تُحذف مظاهرك المحفوظة)')) return;
+    await restoreDefaultTheme();
+    toast('↺ عاد المظهر الافتراضي');
+    renderSettingsPage([], document.getElementById('view'));
+  });
+
   const modeChips = document.getElementById('theme-mode-chips');
   modeChips.querySelectorAll('.theme-mode-chip').forEach(chip => {
     chip.addEventListener('click', async () => {
@@ -393,6 +433,16 @@ async function renderThemeEditorPage(params, view) {
     ${groups.map(g => themeGroupSectionHtml(g, CUSTOM_COLOR_FIELDS.filter(f => f.group === g), cc)).join('')}
 
     <div class="card settings-card">
+      <h2 class="card-title">بطاقات الأقسام</h2>
+      <p class="settings-note">ألوان البطاقات الست في الصفحة الرئيسية.</p>
+      ${TILE_ACCENT_FIELDS.map(f => `
+        <label class="field-label">${f.label}</label>
+        ${hslPickerHtml(`tile-${f.id}`, cc[f.settingsKey] || DEFAULT_ACCENT)}
+        <button class="btn btn-text btn-sm theme-clear-btn" data-clear="${f.settingsKey}">اللون الافتراضي</button>
+      `).join('<div class="theme-field-sep"></div>')}
+    </div>
+
+    <div class="card settings-card">
       <h2 class="card-title">التمويه الزجاجي</h2>
       <p class="settings-note">يؤثر فقط في الأوضاع الزجاجية.</p>
       <div class="hsl-slider-row"><label for="theme-blur-input">مقدار التمويه</label><input type="range" min="0" max="40" value="${cc.customBlurAmount ?? 20}" id="theme-blur-input" class="hsl-slider"></div>
@@ -437,6 +487,7 @@ async function renderThemeEditorPage(params, view) {
     CUSTOM_COLOR_FIELDS.forEach(f => { opts[camelFromKey(f)] = s[f.settingsKey]; });
     opts.bottomBarColor = s.customBottomBarColor;
     opts.blurAmount = s.customBlurAmount;
+    opts.tiles = Object.fromEntries(TILE_ACCENT_FIELDS.map(f => [f.settingsKey, s[f.settingsKey]]));
     applyTheme(s.themeMode || 'light', s.accentColor, opts);
   }
   function camelFromKey(f) {
@@ -475,6 +526,9 @@ async function renderThemeEditorPage(params, view) {
   CUSTOM_COLOR_FIELDS.forEach(f => {
     wireHslPicker(`theme-${f.key}`, async (val) => { await saveField(f.settingsKey, val); await liveApply(); }, { withAlpha: f.withAlpha });
   });
+  TILE_ACCENT_FIELDS.forEach(f => {
+    wireHslPicker(`tile-${f.id}`, async (val) => { await saveField(f.settingsKey, val); await liveApply(); });
+  });
   document.querySelectorAll('.theme-clear-btn').forEach(btn => {
     btn.addEventListener('click', async () => { await saveField(btn.dataset.clear, null); await liveApply(); toast('أُعيد للون الافتراضي'); });
   });
@@ -510,10 +564,7 @@ async function renderThemeEditorPage(params, view) {
 
   document.getElementById('theme-restore-default').addEventListener('click', async () => {
     if (!confirm('استعادة المظهر الافتراضي (فاتح، اللون الوردي الأصلي، بلا ألوان مخصصة)؟')) return;
-    const reset = { themeMode: 'light', accentColor: DEFAULT_ACCENT, customBlurAmount: null };
-    CUSTOM_COLOR_FIELDS.forEach(f => { reset[f.settingsKey] = null; });
-    await db.settings.update(1, reset);
-    await applyStoredTheme();
+    await restoreDefaultTheme(); // one definition, shared with the Settings shortcut
     renderThemeEditorPage(params, view);
   });
 }

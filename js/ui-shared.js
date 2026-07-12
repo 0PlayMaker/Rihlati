@@ -102,6 +102,50 @@ function playSuccessChime() {
   notes.forEach((f, i) => playTone(f, i * 0.11, 0.55, i === notes.length - 1 ? 0.26 : 0.18));
 }
 
+// A soft, low, very short "tok" for each chew. This fires roughly twice a
+// second for as long as the meal lasts, so it has to be something you can
+// stop noticing — anything bright or long would be unbearable by minute
+// three. Low frequency, tiny amplitude, ~60ms.
+function playChewTick() {
+  if (!_sharedAudioCtx) return;
+  try {
+    const t0 = _sharedAudioCtx.currentTime;
+    const osc = _sharedAudioCtx.createOscillator();
+    const gain = _sharedAudioCtx.createGain();
+    osc.type = 'triangle';
+    osc.connect(gain);
+    gain.connect(_sharedAudioCtx.destination);
+    osc.frequency.setValueAtTime(150, t0);
+    osc.frequency.exponentialRampToValueAtTime(90, t0 + 0.06);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.07, t0 + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.07);
+    osc.start(t0);
+    osc.stop(t0 + 0.09);
+  } catch (e) { /* silent */ }
+}
+
+// Swallowing is a DOWNWARD motion, so the sound is a downward glide —
+// a falling pitch is the only thing that actually reads as "gulp".
+function playSwallowSound() {
+  if (!_sharedAudioCtx) return;
+  try {
+    const t0 = _sharedAudioCtx.currentTime;
+    const osc = _sharedAudioCtx.createOscillator();
+    const gain = _sharedAudioCtx.createGain();
+    osc.type = 'sine';
+    osc.connect(gain);
+    gain.connect(_sharedAudioCtx.destination);
+    osc.frequency.setValueAtTime(420, t0);
+    osc.frequency.exponentialRampToValueAtTime(140, t0 + 0.28);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.34);
+    osc.start(t0);
+    osc.stop(t0 + 0.4);
+  } catch (e) { /* silent */ }
+}
+
 // Resizes+compresses an image client-side before it ever touches
 // IndexedDB. Profile picture uses a small maxDim (it's only ever a
 // circle avatar); Food calls this with a larger one since photos get
@@ -149,6 +193,12 @@ function revokeBlobUrlsIn(el) {
   });
 }
 
+// Segments normally stack head-to-tail (done, then missed, then the rest),
+// which is what a single divided total wants. But a segment can also claim
+// a FIXED slice by giving an explicit `offset` (0..1 around the circle) —
+// needed by the tasbeeh ring, where each dhikr owns its own arc and fills
+// only within it, leaving a visible gap when it's short rather than
+// sliding up to meet its neighbour.
 function renderRing({ size = 120, strokeWidth = 14, segments }) {
   const r = (size - strokeWidth) / 2;
   const c = 2 * Math.PI * r;
@@ -158,14 +208,31 @@ function renderRing({ size = 120, strokeWidth = 14, segments }) {
     if (seg.frac <= 0) return '';
     const len = seg.frac * c;
     const dash = `${len} ${c - len}`;
-    const offset = -acc;
-    acc += len;
-    return `<circle cx="${center}" cy="${center}" r="${r}" fill="none" stroke="${seg.color}" stroke-width="${strokeWidth}" stroke-dasharray="${dash}" stroke-dashoffset="${offset}" stroke-linecap="round" transform="rotate(-90 ${center} ${center})"/>`;
+    // Explicit offset wins; otherwise fall back to sequential stacking.
+    const start = (seg.offset != null) ? seg.offset * c : acc;
+    if (seg.offset == null) acc += len;
+    return `<circle cx="${center}" cy="${center}" r="${r}" fill="none" stroke="${seg.color}" stroke-width="${strokeWidth}" stroke-dasharray="${dash}" stroke-dashoffset="${-start}" stroke-linecap="round" transform="rotate(-90 ${center} ${center})"/>`;
   }).join('');
   return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" class="ring-svg">
     <circle cx="${center}" cy="${center}" r="${r}" fill="none" stroke="var(--track)" stroke-width="${strokeWidth}"/>
     ${arcs}
   </svg>`;
+}
+
+// Divider ticks between a ring's fixed slices — without them a 6-way
+// tasbeeh ring reads as one continuous arc with odd gaps, not six.
+function ringDividersHtml(size, strokeWidth, count) {
+  if (count < 2) return '';
+  const r = (size - strokeWidth) / 2;
+  const center = size / 2;
+  const inner = r - strokeWidth / 2;
+  const outer = r + strokeWidth / 2;
+  return Array.from({ length: count }, (_, i) => {
+    const a = (i / count) * 2 * Math.PI - Math.PI / 2;
+    const x1 = center + inner * Math.cos(a), y1 = center + inner * Math.sin(a);
+    const x2 = center + outer * Math.cos(a), y2 = center + outer * Math.sin(a);
+    return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" class="ring-divider"/>`;
+  }).join('');
 }
 
 // Returns one month's worth of grid cells as date strings, with `null`
@@ -464,9 +531,14 @@ function openTasbeehModal({ title, benefit, goal, getCount, setCount, onClose })
   })();
 }
 
-// Arabic-Indic digits for display. (Kept here so ui-shared has no
-// dependency on period-pain.js, which defines its own copy for its
-// own charts.)
+// Arabic-Indic digits for display — but only if she wants them. Some
+// people read ١٢٣ instantly and 123 slowly; some the exact reverse. The
+// switch lives INSIDE this function rather than at the ~200 call sites,
+// so flipping the setting changes every number in the app at once.
+let _useArabicNumerals = true;
+function setNumeralMode(useArabic) { _useArabicNumerals = useArabic !== false; }
+function getNumeralMode() { return _useArabicNumerals; }
 function toArabicNumeral(n) {
+  if (!_useArabicNumerals) return String(n);
   return String(n).replace(/[0-9]/g, d => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
 }

@@ -80,8 +80,23 @@ async function getHabitMissedDates(habitId) {
 // so multiple mishaps in one day each count toward the yearly total
 // rather than collapsing into a single day-level marker.
 
+// "فاتني اليوم" on a GOOD habit is a claim about the whole day — you can't
+// miss today twice, so it's once per day. "حدثت زلة" on a BAD habit is a
+// claim about a moment, and you genuinely can slip several times in one day
+// (three cigarettes is three slips), so those stay append-only. Guarding
+// both would have quietly broken the case the event log exists for.
 async function logHabitMishap(habitId) {
+  const habit = await db.habits.get(habitId);
+  if (habit && getHabitType(habit) === 'good' && await hasMishapToday(habitId)) {
+    return { alreadyLogged: true };
+  }
   await db.habitEvents.add({ habitId, type: 'mishap', timestamp: Date.now(), date: todayStr() });
+  return { alreadyLogged: false };
+}
+async function hasMishapToday(habitId) {
+  const today = todayStr();
+  const events = await db.habitEvents.where('habitId').equals(habitId).toArray();
+  return events.some(e => e.type === 'mishap' && e.date === today);
 }
 async function logHabitRelapse(habitId) {
   await db.habitEvents.add({ habitId, type: 'relapse', timestamp: Date.now(), date: todayStr() });
@@ -306,9 +321,14 @@ async function renderHabitRowsInto(container, habits, dateStr, { editable, onCha
 // log today as a slip, or undo it if she tapped by mistake. No daily
 // done-tap anywhere in this flow.
 
-function habitCardHtml(habit, stats, refMs) {
+function habitCardHtml(habit, stats, refMs, missedToday = false) {
   const isBad = getHabitType(habit) === 'bad';
-  const mishapLabel = isBad ? '⚠️ حدثت زلة' : '❌ فاتني اليوم';
+  // A good habit already marked missed today shows that state instead of
+  // inviting the tap again — the button was previously happy to record
+  // "I missed today" five times, which is not a thing that can happen.
+  const mishapLabel = isBad
+    ? '⚠️ حدثت زلة'
+    : (missedToday ? '✓ سُجّل: فاتني اليوم' : '❌ فاتني اليوم');
   return `
     <div class="habit-card" data-row-id="${habit.id}">
       <div class="habit-card-top">
@@ -328,7 +348,7 @@ function habitCardHtml(habit, stats, refMs) {
       </div>
       <p class="habit-card-stats">${habitStatsLine(stats)}</p>
       <div class="habit-card-actions">
-        <button class="btn btn-secondary habit-mishap-btn" data-habit-mishap="${habit.id}">${mishapLabel}</button>
+        <button class="btn btn-secondary habit-mishap-btn ${(!isBad && missedToday) ? 'habit-mishap-used' : ''}" data-habit-mishap="${habit.id}" ${(!isBad && missedToday) ? 'disabled' : ''}>${mishapLabel}</button>
         <button class="btn btn-danger habit-relapse-btn" data-habit-relapse="${habit.id}">⛔ انتكاسة: تصفير</button>
       </div>
     </div>`;
@@ -343,7 +363,8 @@ async function renderHabitCards(container, habits, { onChange, emptyText } = {})
   const rows = await Promise.all(habits.map(async h => {
     const stats = await getHabitStats(h.id);
     const refMs = await getHabitClockReferenceMs(h);
-    return habitCardHtml(h, stats, refMs);
+    const missedToday = await hasMishapToday(h.id);
+    return habitCardHtml(h, stats, refMs, missedToday);
   }));
   container.innerHTML = rows.join('');
 
@@ -355,7 +376,8 @@ async function renderHabitCards(container, habits, { onChange, emptyText } = {})
   container.querySelectorAll('[data-habit-mishap]').forEach(btn => {
     btn.addEventListener('click', async () => {
       // Logged and counted, but deliberately does NOT touch the clock.
-      await logHabitMishap(Number(btn.dataset.habitMishap));
+      const res = await logHabitMishap(Number(btn.dataset.habitMishap));
+      if (res.alreadyLogged) { toast('سُجّل مسبقاً اليوم'); return; }
       await refresh();
     });
   });
@@ -486,41 +508,57 @@ async function renderHabitsSummary(container) {
   }
   const today = todayStr();
   const ring = await getHabitsRingData();
+  const weekFrom = addDays(today, -6);
 
-  // Longest live clock across the bad habits — the number she's proudest of.
-  let bestClockMs = 0, bestClockName = null;
-  const badHabits = habits.filter(h => getHabitType(h) === 'bad');
-  for (const h of badHabits) {
-    const refMs = await getHabitClockReferenceMs(h);
-    const ms = Date.now() - refMs;
-    if (ms > bestClockMs) { bestClockMs = ms; bestClockName = h; }
-  }
-
-  // Best streak among the good ones.
-  let bestStreak = 0, bestStreakName = null;
-  for (const h of habits.filter(x => getHabitType(x) === 'good')) {
+  // Everything, not just the winner. A single "best streak" line is a
+  // keyhole view of twelve habits — it tells you nothing about the other
+  // eleven, which is where the trouble usually is.
+  const rows = await Promise.all(habits.map(async h => {
     const stats = await getHabitStats(h.id);
-    if (stats.streak > bestStreak) { bestStreak = stats.streak; bestStreakName = h; }
-  }
+    const refMs = await getHabitClockReferenceMs(h);
+    const events = await getHabitEvents(h.id);
+    const weekMishaps = events.filter(e => e.type === 'mishap' && e.date >= weekFrom).length;
+    const missedToday = await hasMishapToday(h.id);
+    return {
+      habit: h,
+      type: getHabitType(h),
+      streak: stats.streak,
+      clockMs: Date.now() - refMs,
+      weekMishaps,
+      missedToday
+    };
+  }));
 
-  const frac = ring.total ? ring.done / ring.total : 0;
+  const good = rows.filter(r => r.type === 'good');
+  const bad = rows.filter(r => r.type === 'bad');
+  const onStreak = rows.filter(r => r.streak > 0).length;
+  const slippedToday = rows.filter(r => r.missedToday).length;
+  const weekMishapsTotal = rows.reduce((s, r) => s + r.weekMishaps, 0);
+  const bestRow = rows.reduce((b, r) => (!b || r.clockMs > b.clockMs) ? r : b, null);
   const hiddenCount = habits.filter(h => h.hiddenFromHome).length;
 
-  // Only surface a highlight if it actually says something. A habit added
-  // today has a genuinely zero streak and a zero clock — reporting
-  // "0 ساعات، 0 دقائق" is technically true and completely useless.
-  const showStreak = bestStreakName && bestStreak > 0;
-  const showClock = bestClockName && bestClockMs > 3600000; // > 1 hour
+  // A compact strip: every habit, its streak, and whether it slipped today.
+  const stripHtml = (list, emptyText) => list.length
+    ? `<div class="habit-strip">
+        ${list.map(r => `
+          <div class="habit-strip-item ${r.missedToday ? 'habit-strip-missed' : (r.streak > 0 ? 'habit-strip-on' : '')}">
+            <span class="habit-strip-icon">${r.habit.emoji}</span>
+            <span class="habit-strip-name">${escapeHtml(r.habit.name)}${r.habit.hiddenFromHome ? ' 🙈' : ''}</span>
+            <span class="habit-strip-num">${r.streak > 0 ? '🔥' + toArabicNumeral(r.streak) : (r.missedToday ? '💔' : '·')}</span>
+          </div>`).join('')}
+      </div>`
+    : `<p class="mini-progress-text">${emptyText}</p>`;
 
   container.innerHTML = `
     <div class="section-header">
       <h2 class="card-title">🌱 عاداتك</h2>
       ${hiddenCount > 0 ? `<span class="habit-hidden-count">🙈 ${toArabicNumeral(hiddenCount)} مخفية</span>` : ''}
     </div>
+
     <div class="habits-summary">
       <div class="ring-wrap">
         ${renderRing({
-          size: 92, strokeWidth: 10,
+          size: 88, strokeWidth: 10,
           segments: [
             { frac: ring.total ? ring.done / ring.total : 0, color: 'var(--success-strong)' },
             { frac: ring.total ? ring.missed / ring.total : 0, color: 'var(--danger-strong)' }
@@ -529,12 +567,24 @@ async function renderHabitsSummary(container) {
         <div class="ring-center-text">${ring.total ? `${toArabicNumeral(ring.done)}/${toArabicNumeral(ring.total)}` : '—'}</div>
       </div>
       <div class="habits-summary-side">
-        <p class="ring-label">اليوم</p>
-        ${showStreak ? `<p class="habit-highlight">🔥 <strong>${escapeHtml(bestStreakName.name)}</strong> — ${toArabicNumeral(bestStreak)} ${bestStreak === 1 ? 'يوم' : 'أيام'}</p>` : ''}
-        ${showClock ? `<p class="habit-highlight">⏱️ <strong>${escapeHtml(bestClockName.name)}</strong> — ${formatHabitClock(bestClockMs)}</p>` : ''}
-        ${!showStreak && !showClock ? `<p class="mini-progress-text">${ring.done > 0 ? 'بداية جيدة اليوم ✨' : 'ابدئي اليوم 🌸'}</p>` : ''}
+        <div class="goals-chip-row">
+          <span class="goals-chip ${onStreak > 0 ? 'goals-chip-done' : ''}">🔥 ${toArabicNumeral(onStreak)} في تتابع</span>
+          ${slippedToday > 0 ? `<span class="goals-chip goals-chip-slip">💔 ${toArabicNumeral(slippedToday)} اليوم</span>` : ''}
+        </div>
+        ${bestRow && bestRow.clockMs > 3600000
+          ? `<p class="habit-highlight">⏱️ <strong>${escapeHtml(bestRow.habit.name)}</strong> — ${formatHabitClock(bestRow.clockMs)}</p>`
+          : ''}
+        ${weekMishapsTotal > 0
+          ? `<p class="habit-week-note">💔 ${toArabicNumeral(weekMishapsTotal)} ${weekMishapsTotal === 1 ? 'زلة' : 'زلات'} هذا الأسبوع</p>`
+          : `<p class="habit-week-note habit-week-clean">✨ أسبوع نظيف</p>`}
       </div>
-    </div>`;
+    </div>
+
+    <details class="habit-summary-details">
+      <summary>كل عاداتك (${toArabicNumeral(habits.length)})</summary>
+      ${good.length ? `<p class="habit-strip-title">🌱 أبنيها</p>${stripHtml(good, '')}` : ''}
+      ${bad.length ? `<p class="habit-strip-title">🚫 أقلع عنها</p>${stripHtml(bad, '')}` : ''}
+    </details>`;
 }
 
 async function renderHabitsPage(params, view) {

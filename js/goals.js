@@ -125,7 +125,14 @@ function goalRowHtml(goal) {
         <span class="goal-target-label">من ${toArabicNumeral(goal.targetValue)} ${escapeHtml(goal.unit || '')}</span>
       </div>`;
   } else {
-    controlHtml = `<label class="checkbox-row"><input type="checkbox" data-action="toggle-done" ${goal.done ? 'checked' : ''}><span>تم تحقيق الهدف</span></label>`;
+    // A raw <input type="checkbox"> next to a progress ring and a stepper
+    // looked like a form field that wandered in from another app — and
+    // "tick this small box" is a limp way to mark a goal ACHIEVED.
+    controlHtml = `
+      <button class="goal-check-btn ${goal.done ? 'goal-check-done' : ''}" data-action="toggle-done">
+        <span class="goal-check-mark">${goal.done ? '✅' : '○'}</span>
+        <span class="goal-check-text">${goal.done ? 'تحقّق الهدف 🎉' : 'اضغطي عند تحقيقه'}</span>
+      </button>`;
   }
 
   // Deadline: a goal with no date is a wish. If she set one, it should be
@@ -222,9 +229,17 @@ async function renderGoalsList(container, { limit, onChange } = {}) {
       });
     }
 
-    const checkbox = row.querySelector('[data-action="toggle-done"]');
-    if (checkbox) checkbox.addEventListener('change', async () => {
-      await updateGoal(id, { done: checkbox.checked });
+    // It's a button now, not a checkbox — read the current state from the
+    // record rather than from a .checked that no longer exists.
+    const checkBtn = row.querySelector('[data-action="toggle-done"]');
+    if (checkBtn) checkBtn.addEventListener('click', async () => {
+      const goal = await db.goals.get(id);
+      const nowDone = !goal.done;
+      await updateGoal(id, { done: nowDone });
+      if (nowDone) {
+        playSuccessChime();
+        if (navigator.vibrate) navigator.vibrate([90, 50, 90, 50, 160]);
+      }
       await renderGoalsList(container, { limit, onChange });
       if (onChange) await onChange();
     });

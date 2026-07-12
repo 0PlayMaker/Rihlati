@@ -339,6 +339,7 @@ async function renderFoodPage(params, view) {
       <div id="food-summary-card"></div>
     </div>
     <div class="card" id="water-card"></div>
+    <div class="card" id="chew-card"></div>
     <div class="card">
       <button class="btn btn-primary btn-block" id="food-add-btn">+ تسجيل وجبة</button>
       <div id="food-list"></div>
@@ -411,6 +412,7 @@ async function renderFoodPage(params, view) {
       <div class="food-type-strip">${typeStrip}</div>
     `;
     await renderFoodList(document.getElementById('food-list'), today, { onChange: refresh });
+    await renderChewCard(document.getElementById('chew-card'), refresh);
   }
 
   document.getElementById('food-goals-btn').addEventListener('click', () => openFoodGoalsModal(refresh));

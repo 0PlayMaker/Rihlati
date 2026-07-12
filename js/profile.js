@@ -304,82 +304,55 @@ async function renderSettingsPage(params, view) {
   const settings = await db.settings.get(1);
   const notifStatus = notificationStatus();
 
+  const prefs = await getHomeTrackerPrefs();
+  const arabicNums = settings?.useArabicNumerals !== false;
+
   view.innerHTML = `
     <div class="page-header">
       <button class="icon-btn" aria-label="رجوع" id="settings-back">→</button>
       <h1>الإعدادات</h1>
     </div>
 
-    ${renderThemeSection(settings?.themeMode, settings?.accentColor, settings?.customThemePresets)}
-
-    <div class="card settings-card">
-      <div class="pfp-preview pfp-small" id="settings-pfp">${profile.pictureBlob ? `<img src="${pictureUrl(profile.pictureBlob)}" alt="">` : '🌸'}</div>
-      ${photoPickerHtml('settings-pfp', { withRemove: !!profile.pictureBlob })}
-      <label class="field-label">الاسم</label>
-      <input class="text-input" id="settings-name" value="${escapeHtml(profile.name)}">
-      <button class="btn btn-primary btn-sm" id="settings-save-name">حفظ الاسم</button>
+    <div class="settings-jump">
+      <button class="settings-jump-chip" data-jump="sec-home">🏠 الرئيسية</button>
+      <button class="settings-jump-chip" data-jump="sec-look">🎨 المظهر</button>
+      <button class="settings-jump-chip" data-jump="sec-account">👤 حسابك</button>
+      <button class="settings-jump-chip" data-jump="sec-prefs">⚙️ تفضيلات</button>
+      <button class="settings-jump-chip" data-jump="sec-notif">🔔 الإشعارات</button>
+      <button class="settings-jump-chip" data-jump="sec-data">💾 البيانات</button>
     </div>
 
+    <h2 class="settings-group-title" id="sec-home">🏠 الصفحة الرئيسية</h2>
+
     <div class="card settings-card">
-      <h2 class="card-title">المعلومات الصحية</h2>
-      <label class="field-label">العمر</label>
-      <input class="text-input" type="number" id="settings-age" value="${settings.age ?? ''}" placeholder="مثلاً: 28">
-      <label class="field-label">الجنس</label>
-      <div class="sex-chips" id="settings-sex-chips">
-        <button class="chip ${(settings.sex ?? 'female') === 'female' ? 'active' : ''}" data-sex="female">أنثى</button>
-        <button class="chip ${settings.sex === 'male' ? 'active' : ''}" data-sex="male">ذكر</button>
+      <h3 class="card-title">البطاقة العلوية</h3>
+      <p class="settings-note">اختاري ما تريدين رؤيته. حتى ${toArabicNumeral(HOME_MAX_BIG)} دائرة كبيرة و${toArabicNumeral(HOME_MAX_SMALL)} صغيرة — أو لا شيء إن أردتِ.</p>
+
+      <label class="field-label">الدوائر الكبيرة <span class="settings-count" id="big-count">${toArabicNumeral(prefs.big.length)}/${toArabicNumeral(HOME_MAX_BIG)}</span></label>
+      <div class="tracker-grid" id="big-trackers">
+        ${HOME_TRACKERS.filter(t => t.size === 'big').map(t => `
+          <button class="tracker-chip ${prefs.big.includes(t.key) ? 'active' : ''}" data-size="big" data-key="${t.key}">
+            <span class="tracker-chip-icon">${t.icon}</span>
+            <span class="tracker-chip-label">${t.label}</span>
+          </button>`).join('')}
       </div>
-      <label class="field-label">الطول (سم)</label>
-      <input class="text-input" type="number" id="settings-height" value="${settings.heightCm ?? ''}" placeholder="مثلاً: 165">
-      <button class="link-btn" id="settings-save-health">حفظ المعلومات الصحية</button>
-      <p class="settings-note">تُستخدم لحساب مؤشر كتلة الجسم في صفحة الوزن.</p>
-    </div>
 
-    <div class="card settings-card">
-      <h2 class="card-title">العملة</h2>
-      <input class="text-input" id="settings-currency" value="${escapeHtml(settings.currency || '')}" placeholder="دينار">
-      <button class="link-btn" id="settings-save-currency">حفظ</button>
-    </div>
-
-    <div class="card settings-card">
-      <h2 class="card-title">عبارات الترحيب</h2>
-      <p class="settings-note">تظهر عشوائياً في الصفحة الرئيسية.</p>
-      <details class="weight-history-details">
-        <summary>عرض وإدارة العبارات</summary>
-        <div id="welcome-phrases-list"></div>
-        <div class="food-photo-actions">
-          <input class="text-input" id="new-phrase-input" placeholder="أضيفي عبارة جديدة">
-          <button class="btn btn-secondary btn-sm" id="add-phrase-btn">+ إضافة</button>
-        </div>
-      </details>
-    </div>
-
-    <div class="card settings-card">
-      <div class="settings-row">
-        <span>رمز الحماية (PIN)</span>
-        <label class="switch"><input type="checkbox" id="settings-pin-toggle" ${settings.pinEnabled ? 'checked' : ''}><span class="switch-track"></span></label>
+      <label class="field-label">الدوائر الصغيرة <span class="settings-count" id="small-count">${toArabicNumeral(prefs.small.length)}/${toArabicNumeral(HOME_MAX_SMALL)}</span></label>
+      <div class="tracker-grid" id="small-trackers">
+        ${HOME_TRACKERS.filter(t => t.size === 'small').map(t => `
+          <button class="tracker-chip ${prefs.small.includes(t.key) ? 'active' : ''}" data-size="small" data-key="${t.key}">
+            <span class="tracker-chip-icon">${t.icon}</span>
+            <span class="tracker-chip-label">${t.label}</span>
+          </button>`).join('')}
       </div>
-      <div id="settings-pin-change-wrap" class="${settings.pinEnabled ? '' : 'hidden'}">
-        <button class="link-btn" id="settings-change-pin">تغيير الرمز</button>
-      </div>
-    </div>
 
-    <div class="card settings-card">
-      <div class="settings-row">
-        <span>الإشعارات والتذكيرات</span>
-        <span class="settings-status">${notifStatus === 'granted' ? 'مفعّلة ✅' : notifStatus === 'denied' ? 'محظورة من الجهاز' : 'غير مفعّلة'}</span>
+      <div id="tasbeeh-picker-wrap" class="${prefs.small.includes('tasbeeh') ? '' : 'hidden'}">
+        <label class="field-label">📿 أي الأذكار تظهر في دائرة المسبحة؟</label>
+        <p class="settings-note">تنقسم الدائرة إلى قوس لكل ذكر (حتى ${toArabicNumeral(ADHKAR_RING_MAX)}). الأذكار بلا هدف لا تظهر — لا شيء يملأ قوسها.</p>
+        <div id="tasbeeh-picker"></div>
       </div>
-      ${notifStatus !== 'granted' && notifStatus !== 'unsupported' ? `<button class="btn btn-secondary btn-sm" id="settings-enable-notif">تفعيل الإشعارات</button>` : ''}
-      <p class="settings-note">ملاحظة: التطبيق محلي بالكامل بدون سيرفر، فالتذكيرات تعمل بشكل موثوق أثناء تشغيل التطبيق، وتظهر التذكيرات الفائتة عند فتحه من جديد.</p>
-      ${notifStatus === 'granted' ? renderReminderCategoriesHtml(settings) : ''}
-    </div>
 
-    <div class="card settings-card">
-      <div class="settings-row"><span>نسخة احتياطية</span></div>
-      <p class="settings-note">${settings.lastBackupAt ? 'آخر نسخة احتياطية: ' + new Date(settings.lastBackupAt).toLocaleDateString('ar') : 'لم تُنشأ نسخة احتياطية بعد'}</p>
-      <button class="btn btn-primary btn-sm" id="settings-export">تنزيل نسخة احتياطية</button>
-      <input type="file" accept=".zip" id="settings-import-input" class="hidden-file-input">
-      <button class="btn btn-secondary btn-sm" id="settings-import">استعادة من نسخة احتياطية</button>
+      <button class="link-btn" id="reset-home-trackers">↺ استعادة الترتيب الافتراضي</button>
     </div>
 
     <div class="card settings-card">
@@ -396,6 +369,99 @@ async function renderSettingsPage(params, view) {
       </div>
     </div>
 
+    <h2 class="settings-group-title" id="sec-look">🎨 المظهر</h2>
+    ${renderThemeSection(settings?.themeMode, settings?.accentColor, settings?.customThemePresets)}
+
+    <div class="card settings-card">
+      <div class="settings-row">
+        <span>الأرقام العربية (١٢٣)</span>
+        <label class="switch"><input type="checkbox" id="settings-numerals" ${arabicNums ? 'checked' : ''}><span class="switch-track"></span></label>
+      </div>
+      <p class="settings-note">أطفئيه لعرض الأرقام هكذا: 123</p>
+    </div>
+
+    <h2 class="settings-group-title" id="sec-account">👤 حسابك</h2>
+
+    <div class="card settings-card">
+      <div class="pfp-preview pfp-small" id="settings-pfp">${profile.pictureBlob ? `<img src="${pictureUrl(profile.pictureBlob)}" alt="">` : '🌸'}</div>
+      ${photoPickerHtml('settings-pfp', { withRemove: !!profile.pictureBlob })}
+      <label class="field-label">الاسم</label>
+      <input class="text-input" id="settings-name" value="${escapeHtml(profile.name)}">
+      <button class="btn btn-primary btn-sm" id="settings-save-name">حفظ الاسم</button>
+    </div>
+
+    <div class="card settings-card">
+      <h3 class="card-title">المعلومات الصحية</h3>
+      <label class="field-label">العمر</label>
+      <input class="text-input" type="text" inputmode="numeric" id="settings-age" value="${settings.age ?? ''}" placeholder="مثلاً: ٢٨">
+      <label class="field-label">الجنس</label>
+      <div class="sex-chips" id="settings-sex-chips">
+        <button class="chip ${(settings.sex ?? 'female') === 'female' ? 'active' : ''}" data-sex="female">أنثى</button>
+        <button class="chip ${settings.sex === 'male' ? 'active' : ''}" data-sex="male">ذكر</button>
+      </div>
+      <label class="field-label">الطول (سم)</label>
+      <input class="text-input" type="text" inputmode="numeric" id="settings-height" value="${settings.heightCm ?? ''}" placeholder="مثلاً: ١٦٥">
+      <button class="link-btn" id="settings-save-health">حفظ المعلومات الصحية</button>
+      <p class="settings-note">تُستخدم لحساب مؤشرات الجسم في صفحة الصحة.</p>
+    </div>
+
+    <div class="card settings-card">
+      <div class="settings-row">
+        <span>رمز الحماية (PIN)</span>
+        <label class="switch"><input type="checkbox" id="settings-pin-toggle" ${settings.pinEnabled ? 'checked' : ''}><span class="switch-track"></span></label>
+      </div>
+      <div id="settings-pin-change-wrap" class="${settings.pinEnabled ? '' : 'hidden'}">
+        <button class="link-btn" id="settings-change-pin">تغيير الرمز</button>
+      </div>
+    </div>
+
+    <h2 class="settings-group-title" id="sec-prefs">⚙️ تفضيلات</h2>
+
+    <div class="card settings-card">
+      <h3 class="card-title">العملة</h3>
+      <input class="text-input" id="settings-currency" value="${escapeHtml(settings.currency || '')}" placeholder="دينار">
+      <button class="link-btn" id="settings-save-currency">حفظ</button>
+    </div>
+
+    <div class="card settings-card">
+      <h3 class="card-title">عبارات الترحيب</h3>
+      <p class="settings-note">تظهر عشوائياً في الصفحة الرئيسية.</p>
+      <details class="weight-history-details">
+        <summary>عرض وإدارة العبارات</summary>
+        <div id="welcome-phrases-list"></div>
+        <div class="food-photo-actions">
+          <input class="text-input" id="new-phrase-input" placeholder="أضيفي عبارة جديدة">
+          <button class="btn btn-secondary btn-sm" id="add-phrase-btn">+ إضافة</button>
+        </div>
+      </details>
+    </div>
+
+    <h2 class="settings-group-title" id="sec-notif">🔔 الإشعارات</h2>
+
+    <div class="card settings-card">
+      <div class="settings-row">
+        <span>الإشعارات والتذكيرات</span>
+        <span class="settings-status">${notifStatus === 'granted' ? 'مفعّلة ✅' : notifStatus === 'denied' ? 'محظورة من الجهاز' : 'غير مفعّلة'}</span>
+      </div>
+      ${notifStatus !== 'granted' && notifStatus !== 'unsupported' ? `<button class="btn btn-secondary btn-sm" id="settings-enable-notif">تفعيل الإشعارات</button>` : ''}
+      ${notifStatus === 'denied' ? `<p class="settings-note">حظرتِ الإشعارات من إعدادات المتصفح أو الجهاز — يلزم السماح بها من هناك أولاً.</p>` : ''}
+      <p class="settings-note">التطبيق محلي بالكامل بلا سيرفر، فالتذكيرات تعمل بشكل موثوق أثناء تشغيله، وتظهر الفائتة منها عند فتحه من جديد.</p>
+      ${notifStatus === 'granted' ? renderReminderCategoriesHtml(settings) : ''}
+    </div>
+
+    <h2 class="settings-group-title" id="sec-data">💾 البيانات</h2>
+
+    <div class="card settings-card">
+      <h3 class="card-title">نسخة احتياطية</h3>
+      <p class="settings-note">${settings.lastBackupAt ? '✅ آخر نسخة: ' + new Date(settings.lastBackupAt).toLocaleDateString('ar') : '⚠️ لم تُنشأ نسخة احتياطية بعد'}</p>
+      ${(!settings.lastBackupAt || (Date.now() - settings.lastBackupAt > 30 * 86400000)) ? `
+        <p class="settings-warn">بياناتك على هذا الجهاز فقط. إن فُقد الجهاز أو مُسحت بيانات المتصفح، تضيع معها — النسخة الاحتياطية هي نسختك الوحيدة.</p>` : ''}
+      <button class="btn btn-primary btn-sm" id="settings-export">⬇️ تنزيل نسخة احتياطية</button>
+      <input type="file" accept=".zip" id="settings-import-input" class="hidden-file-input">
+      <button class="btn btn-secondary btn-sm" id="settings-import">⬆️ استعادة من نسخة احتياطية</button>
+      <p class="settings-note">النسخة تشمل كل شيء: بياناتك، صورك، إعداداتك ومظاهرك المخصصة.</p>
+    </div>
+
     <div class="card settings-card credit-settings-card">
       ${creditBlockHtml()}
     </div>
@@ -405,6 +471,95 @@ async function renderSettingsPage(params, view) {
   `;
 
   document.getElementById('settings-back').addEventListener('click', () => history.back());
+
+  // ---- jump nav ----
+  view.querySelectorAll('.settings-jump-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const target = document.getElementById(chip.dataset.jump);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+
+  // ---- home tracker picker ----
+  let bigSel = [...prefs.big];
+  let smallSel = [...prefs.small];
+
+  function paintCounts() {
+    document.getElementById('big-count').textContent = `${toArabicNumeral(bigSel.length)}/${toArabicNumeral(HOME_MAX_BIG)}`;
+    document.getElementById('small-count').textContent = `${toArabicNumeral(smallSel.length)}/${toArabicNumeral(HOME_MAX_SMALL)}`;
+    document.getElementById('tasbeeh-picker-wrap').classList.toggle('hidden', !smallSel.includes('tasbeeh'));
+  }
+
+  async function toggleTracker(size, key, chip) {
+    const sel = size === 'big' ? bigSel : smallSel;
+    const max = size === 'big' ? HOME_MAX_BIG : HOME_MAX_SMALL;
+    const i = sel.indexOf(key);
+    if (i >= 0) {
+      sel.splice(i, 1);
+      chip.classList.remove('active');
+    } else {
+      // A hard cap rather than silently dropping the oldest: quietly
+      // removing something she picked would be worse than saying no.
+      if (sel.length >= max) { toast(`الحد الأقصى ${toArabicNumeral(max)}`); return; }
+      sel.push(key);
+      chip.classList.add('active');
+    }
+    paintCounts();
+    await saveHomeTrackerPrefs({ big: bigSel, small: smallSel });
+  }
+
+  view.querySelectorAll('.tracker-chip').forEach(chip => {
+    chip.addEventListener('click', () => toggleTracker(chip.dataset.size, chip.dataset.key, chip));
+  });
+
+  document.getElementById('reset-home-trackers').addEventListener('click', async () => {
+    if (!confirm('استعادة الدوائر الافتراضية؟')) return;
+    bigSel = [...HOME_DEFAULT_BIG];
+    smallSel = [...HOME_DEFAULT_SMALL];
+    await saveHomeTrackerPrefs({ big: bigSel, small: smallSel });
+    await db.settings.update(1, { homeAdhkarIds: null });
+    renderSettingsPage(params, view);
+  });
+
+  // ---- which adhkar appear in the tasbeeh ring ----
+  async function renderTasbeehPicker() {
+    const el = document.getElementById('tasbeeh-picker');
+    if (!el) return;
+    const items = (await getActiveCustomAdhkar()).filter(a => a.goalCount > 0);
+    const s = await db.settings.get(1);
+    const chosen = s?.homeAdhkarIds || items.slice(0, ADHKAR_RING_MAX).map(a => a.id);
+    if (items.length === 0) {
+      el.innerHTML = `<p class="settings-note">ما في أذكار مخصصة بهدف عدد. أضيفيها من صفحة العبادة.</p>`;
+      return;
+    }
+    el.innerHTML = items.map(a => `
+      <label class="checkbox-row">
+        <input type="checkbox" data-adhkar="${a.id}" ${chosen.includes(a.id) ? 'checked' : ''}>
+        <span>${escapeHtml(a.name)} <span class="settings-count">${toArabicNumeral(a.goalCount)}</span></span>
+      </label>`).join('');
+    el.querySelectorAll('[data-adhkar]').forEach(cb => {
+      cb.addEventListener('change', async () => {
+        let picked = [...el.querySelectorAll('[data-adhkar]:checked')].map(x => Number(x.dataset.adhkar));
+        if (picked.length > ADHKAR_RING_MAX) {
+          cb.checked = false;
+          toast(`الحد الأقصى ${toArabicNumeral(ADHKAR_RING_MAX)} أذكار`);
+          picked = picked.filter(id => id !== Number(cb.dataset.adhkar));
+        }
+        await db.settings.update(1, { homeAdhkarIds: picked });
+      });
+    });
+  }
+  await renderTasbeehPicker();
+
+  // ---- numeral system ----
+  document.getElementById('settings-numerals').addEventListener('change', async (e) => {
+    const useArabic = e.target.checked;
+    await db.settings.update(1, { useArabicNumerals: useArabic });
+    setNumeralMode(useArabic);
+    // Repaint immediately — the whole point is to SEE the difference.
+    renderSettingsPage(params, view);
+  });
+
   wireThemeSection(view);
 
   wirePhotoPicker('settings-pfp', async (file) => {
