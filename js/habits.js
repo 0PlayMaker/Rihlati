@@ -335,6 +335,7 @@ function habitCardHtml(habit, stats, refMs) {
 }
 
 async function renderHabitCards(container, habits, { onChange, emptyText } = {}) {
+  if (!container) return; // page was replaced mid-render
   if (habits.length === 0) {
     container.innerHTML = emptyText ? `<p class="empty-state-sub">${emptyText}</p>` : '';
     return;
@@ -471,12 +472,78 @@ function openHabitModal({ existingId, onSaved } = {}) {
 
 // ---------- full Habits page ----------
 
+// Habits summary — the page opened straight into two lists, so with a
+// dozen habits you couldn't tell how today was going, or which streak was
+// your longest, without scrolling and comparing rows by eye.
+async function renderHabitsSummary(container) {
+  if (!container) return;
+  const habits = await getActiveHabits();
+  if (habits.length === 0) {
+    container.innerHTML = `
+      <h2 class="card-title">🌱 عاداتك</h2>
+      <p class="mini-progress-text">أضيفي عادتك الأولى لتبدأ</p>`;
+    return;
+  }
+  const today = todayStr();
+  const ring = await getHabitsRingData();
+
+  // Longest live clock across the bad habits — the number she's proudest of.
+  let bestClockMs = 0, bestClockName = null;
+  const badHabits = habits.filter(h => getHabitType(h) === 'bad');
+  for (const h of badHabits) {
+    const refMs = await getHabitClockReferenceMs(h);
+    const ms = Date.now() - refMs;
+    if (ms > bestClockMs) { bestClockMs = ms; bestClockName = h; }
+  }
+
+  // Best streak among the good ones.
+  let bestStreak = 0, bestStreakName = null;
+  for (const h of habits.filter(x => getHabitType(x) === 'good')) {
+    const stats = await getHabitStats(h.id);
+    if (stats.streak > bestStreak) { bestStreak = stats.streak; bestStreakName = h; }
+  }
+
+  const frac = ring.total ? ring.done / ring.total : 0;
+  const hiddenCount = habits.filter(h => h.hiddenFromHome).length;
+
+  // Only surface a highlight if it actually says something. A habit added
+  // today has a genuinely zero streak and a zero clock — reporting
+  // "0 ساعات، 0 دقائق" is technically true and completely useless.
+  const showStreak = bestStreakName && bestStreak > 0;
+  const showClock = bestClockName && bestClockMs > 3600000; // > 1 hour
+
+  container.innerHTML = `
+    <div class="section-header">
+      <h2 class="card-title">🌱 عاداتك</h2>
+      ${hiddenCount > 0 ? `<span class="habit-hidden-count">🙈 ${toArabicNumeral(hiddenCount)} مخفية</span>` : ''}
+    </div>
+    <div class="habits-summary">
+      <div class="ring-wrap">
+        ${renderRing({
+          size: 92, strokeWidth: 10,
+          segments: [
+            { frac: ring.total ? ring.done / ring.total : 0, color: 'var(--success-strong)' },
+            { frac: ring.total ? ring.missed / ring.total : 0, color: 'var(--danger-strong)' }
+          ]
+        })}
+        <div class="ring-center-text">${ring.total ? `${toArabicNumeral(ring.done)}/${toArabicNumeral(ring.total)}` : '—'}</div>
+      </div>
+      <div class="habits-summary-side">
+        <p class="ring-label">اليوم</p>
+        ${showStreak ? `<p class="habit-highlight">🔥 <strong>${escapeHtml(bestStreakName.name)}</strong> — ${toArabicNumeral(bestStreak)} ${bestStreak === 1 ? 'يوم' : 'أيام'}</p>` : ''}
+        ${showClock ? `<p class="habit-highlight">⏱️ <strong>${escapeHtml(bestClockName.name)}</strong> — ${formatHabitClock(bestClockMs)}</p>` : ''}
+        ${!showStreak && !showClock ? `<p class="mini-progress-text">${ring.done > 0 ? 'بداية جيدة اليوم ✨' : 'ابدئي اليوم 🌸'}</p>` : ''}
+      </div>
+    </div>`;
+}
+
 async function renderHabitsPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
       <button class="icon-btn" aria-label="رجوع" id="habits-back">→</button>
       <h1>العادات</h1>
     </div>
+    <div class="card" id="habits-summary"></div>
     <div class="card">
       <h2 class="card-title">🌱 عادات جيدة</h2>
       <div id="good-habits-list"></div>
@@ -496,11 +563,13 @@ async function renderHabitsPage(params, view) {
   const badEl = document.getElementById('bad-habits-list');
   const today = todayStr();
 
+  const summaryEl = document.getElementById('habits-summary');
   async function refreshBoth() {
     const good = await getActiveHabitsByType('good');
     const bad = await getActiveHabitsByType('bad');
     await renderHabitCards(goodEl, good, { onChange: refreshBoth, emptyText: 'ما في عادات جيدة مضافة بعد.' });
     await renderHabitCards(badEl, bad, { onChange: refreshBoth, emptyText: 'ما في عادات مضافة للإقلاع عنها بعد.' });
+    await renderHabitsSummary(summaryEl);
   }
   await refreshBoth();
 

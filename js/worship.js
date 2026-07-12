@@ -988,6 +988,73 @@ async function getWorshipTodayStats() {
 
 // ===================== full Worship page =====================
 
+// A worship panel worth looking at: which prayers are actually done (not
+// just how many), how the last week went, and where the wird and adhkar
+// stand — so the top of the page answers "where am I today?" without
+// scrolling through every section to find out.
+async function renderWorshipTopCard(container, today) {
+  const stats = await getWorshipTodayStats();
+  const ringSvg = renderRing({
+    size: 96, strokeWidth: 11,
+    segments: [{ frac: stats.total ? stats.done / stats.total : 0, color: stats.done === stats.total ? 'var(--success-strong)' : 'var(--btn-color, var(--pink-deep))' }]
+  });
+
+  // Which of the five, individually.
+  const prayerPills = await Promise.all(PRAYER_NAMES.map(async name => {
+    const status = await getFardStatus(name, today);
+    const done = status === 'done';
+    const missed = status === 'missed';
+    return `<span class="prayer-pill ${done ? 'prayer-pill-done' : missed ? 'prayer-pill-missed' : ''}">${PRAYER_LABELS[name]}</span>`;
+  }));
+
+  // Last 7 days of prayer completion — the shape of the week.
+  const weekDots = await Promise.all(Array.from({ length: 7 }, async (_, i) => {
+    const d = addDays(today, -6 + i);
+    let n = 0;
+    for (const name of PRAYER_NAMES) if (await getFardStatus(name, d) === 'done') n++;
+    const level = n === 0 ? 0 : n <= 2 ? 1 : n <= 4 ? 2 : 3;
+    return `<span class="worship-week-dot worship-week-${level}" title="${d}: ${n}/5"></span>`;
+  }));
+
+  // Adhkar + wird status, so the card covers the whole page's ground.
+  const [morningDone, eveningDone] = await Promise.all([
+    isDailyAdhkarDone('morning', today),
+    isDailyAdhkarDone('evening', today)
+  ]);
+  const wirdPlan = await getWirdPlan();
+  const wirdDone = wirdPlan ? await isWirdLoggedToday() : false;
+  const wirdProgress = wirdPlan ? await getWirdProgress() : null;
+
+  container.innerHTML = `
+    <div class="worship-top">
+      <div class="ring-wrap">
+        ${ringSvg}
+        <div class="ring-center-text">${toArabicNumeral(stats.done)}/${toArabicNumeral(stats.total)}</div>
+      </div>
+      <div class="worship-top-side">
+        <p class="ring-label">صلواتك اليوم</p>
+        <div class="prayer-pills">${prayerPills.join('')}</div>
+        <div class="worship-week">${weekDots.join('')}</div>
+      </div>
+    </div>
+
+    <div class="worship-chips">
+      ${stats.streak > 0 ? `<span class="worship-chip worship-chip-on">🔥 ${toArabicNumeral(stats.streak)} يوم</span>` : ''}
+      <span class="worship-chip ${morningDone ? 'worship-chip-on' : ''}">🌅 أذكار الصباح</span>
+      <span class="worship-chip ${eveningDone ? 'worship-chip-on' : ''}">🌙 أذكار المساء</span>
+      ${wirdPlan ? `<span class="worship-chip ${wirdDone ? 'worship-chip-on' : ''}">📖 الورد</span>` : ''}
+    </div>
+
+    ${wirdPlan && wirdProgress ? `
+      <div class="worship-wird-line">
+        <div class="mini-progress-track"><div class="mini-progress-fill" style="width:${(wirdProgress.progressPages / QURAN_TOTAL_PAGES) * 100}%"></div></div>
+        <span class="mini-progress-text">📖 ${toArabicNumeral(wirdProgress.progressPages)} من ${toArabicNumeral(QURAN_TOTAL_PAGES)} صفحة${wirdProgress.khatmCount > 0 ? ` · 🌙 ${toArabicNumeral(wirdProgress.khatmCount)} ختمة` : ''}</span>
+      </div>` : ''}
+
+    ${stats.paused ? `<p class="settings-note">🌸 التتبّع متوقّف مؤقتاً (الدورة الشهرية)</p>` : ''}
+  `;
+}
+
 async function renderWorshipPage(params, view) {
   const today = todayStr();
 
@@ -1047,19 +1114,8 @@ async function renderWorshipPage(params, view) {
   document.getElementById('worship-back').addEventListener('click', () => history.back());
 
   async function refreshRingAndPause() {
+    await renderWorshipTopCard(document.getElementById('worship-ring-card'), today);
     const stats = await getWorshipTodayStats();
-    const ringSvg = renderRing({
-      size: 100, strokeWidth: 12,
-      segments: [{ frac: stats.done / stats.total, color: 'var(--mint-deep)' }]
-    });
-    document.getElementById('worship-ring-card').innerHTML = `
-      <div class="rings-row">
-        <div class="ring-wrap">${ringSvg}<div class="ring-center-text">${stats.done}/${stats.total}</div></div>
-        <div class="ring-label-block">
-          <p class="ring-label">صلواتك اليوم</p>
-          <span class="mini-progress-text">${stats.streak > 0 ? `🔥 ${stats.streak} يوم متتالي` : 'ابدئي اليوم 🌸'}${stats.paused ? ' — متوقف مؤقتاً 🌸' : ''}</span>
-        </div>
-      </div>`;
     const pauseBtn = document.getElementById('fard-pause-btn');
     if (pauseBtn) pauseBtn.textContent = stats.paused ? '🌸 استئناف التتبع بعد الدورة' : '🌸 إيقاف مؤقت (الدورة الشهرية)';
   }

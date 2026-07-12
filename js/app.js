@@ -13,8 +13,11 @@ async function rescheduleHomeReminders() {
 
 // Small ring used for the routine circles — same visual language as the
 // big ones, just sized down so two fit side by side under them.
-function smallRingHtml(frac, label, centerText, path) {
-  const svg = renderRing({ size: 62, strokeWidth: 8, segments: [{ frac, color: 'var(--btn-color, var(--pink-deep))' }] });
+function smallRingHtml(frac, label, centerText, path, tone) {
+  const color = tone === 'period' ? 'var(--pink-deep)'
+    : tone === 'late' ? 'var(--warning-strong)'
+    : 'var(--btn-color, var(--pink-deep))';
+  const svg = renderRing({ size: 62, strokeWidth: 8, segments: [{ frac, color }] });
   return `
     <button class="small-ring-item small-ring-item-tappable" data-path="${path}" aria-label="${label}">
       <div class="ring-wrap small-ring-wrap">
@@ -25,11 +28,104 @@ function smallRingHtml(frac, label, centerText, path) {
     </button>`;
 }
 
-// "What's actually left today" — the one thing a home screen can do that
-// a list of rings can't: tell her what to DO next. Each chip is a live
-// count of something still undone and taps straight through to it. Chips
-// only appear when there's something outstanding, so a finished day
-// collapses the whole strip rather than showing a row of proud zeros.
+// Period ring. The fill represents where she is in the cycle — so the
+// ring's own shape says "nearly due" before you read a single word.
+// The label is what she actually asked for: a countdown, or the day of
+// the period she's currently on.
+async function buildPeriodRingData() {
+  const ongoing = await getOngoingPeriod();
+  const status = await getPeriodStatus();
+
+  if (ongoing) {
+    const day = daysBetween(ongoing.startDate, todayStr()) + 1;
+    return {
+      frac: 1,
+      center: `${toArabicNumeral(day)}`,
+      label: day === 1 ? '🌸 أول يوم' : `🌸 يوم ${toArabicNumeral(day)}`,
+      tone: 'period'
+    };
+  }
+  if (status.state === 'unknown' || !status.stats || status.stats.cycleSamples === 0) {
+    return { frac: 0, center: '—', label: '🌸 الدورة', tone: 'neutral' };
+  }
+  if (status.state === 'late') {
+    return { frac: 1, center: `+${toArabicNumeral(status.daysLate)}`, label: '🌸 متأخرة', tone: 'late' };
+  }
+  if (status.state === 'due') {
+    return { frac: 1, center: '~', label: '🌸 متوقّعة الآن', tone: 'late' };
+  }
+  // Upcoming: how far through the cycle are we?
+  const days = status.daysUntil;
+  const cycleLen = Math.round(status.stats.avgCycleLength) || 28;
+  const elapsed = Math.max(0, cycleLen - days);
+  return {
+    frac: Math.min(1, elapsed / cycleLen),
+    center: toArabicNumeral(days),
+    label: `🌸 ${toArabicNumeral(days)} ${days === 1 ? 'يوم للدورة' : 'يوم للدورة'}`,
+    tone: 'neutral'
+  };
+}
+
+// Health ring: progress toward the weight target if she set one, else
+// just the current weight. Never invents a goal she didn't ask for.
+async function buildHealthRingData() {
+  const settings = await db.settings.get(1);
+  const stats = await getWeightStats();
+  if (!stats.latest) {
+    return { frac: 0, center: '—', label: '⚖️ الوزن' };
+  }
+  const current = stats.latest.value;
+  const target = settings?.targetWeightKg ?? null;
+  if (target == null) {
+    return { frac: 0, center: toArabicNumeral(current), label: '⚖️ كغ' };
+  }
+  // Progress measured from where she STARTED, not from zero — "60% of the
+  // way from 70kg to 60kg" is meaningful; "55/60 of a kilogram" is not.
+  const logs = await getAllWeightLogs();
+  const start = logs.length ? logs[0].value : current;
+  const totalGap = Math.abs(start - target);
+  const remaining = Math.abs(current - target);
+  const frac = totalGap === 0 ? 1 : Math.max(0, Math.min(1, 1 - remaining / totalGap));
+  const reached = remaining < 0.5;
+  return {
+    frac,
+    center: toArabicNumeral(current),
+    label: reached ? '⚖️ بلغتِ هدفك ✨' : `⚖️ الهدف ${toArabicNumeral(target)}`
+  };
+}
+
+async function renderHomeSmallRings() {
+  const today = todayStr();
+  const [morningRoutines, eveningRoutines] = await Promise.all([
+    getCareRoutines('morning'), getCareRoutines('evening')
+  ]);
+  const [morningDone, eveningDone] = await Promise.all([
+    countCareRoutinesDone(morningRoutines, today),
+    countCareRoutinesDone(eveningRoutines, today)
+  ]);
+  const period = await buildPeriodRingData();
+  const health = await buildHealthRingData();
+
+  return `
+    <div class="small-rings-row">
+      ${smallRingHtml(
+        morningRoutines.length ? morningDone / morningRoutines.length : 0,
+        '🌅 صباحي',
+        morningRoutines.length ? `${toArabicNumeral(morningDone)}/${toArabicNumeral(morningRoutines.length)}` : '—',
+        '/dailycare'
+      )}
+      ${smallRingHtml(
+        eveningRoutines.length ? eveningDone / eveningRoutines.length : 0,
+        '🌙 مسائي',
+        eveningRoutines.length ? `${toArabicNumeral(eveningDone)}/${toArabicNumeral(eveningRoutines.length)}` : '—',
+        '/dailycare'
+      )}
+    </div>
+    <div class="small-rings-row">
+      ${smallRingHtml(period.frac, period.label, period.center, '/period', period.tone)}
+      ${smallRingHtml(health.frac, health.label, health.center, '/body')}
+    </div>`;
+}
 async function buildRemainingTodayChips() {
   const chips = [];
   const today = todayStr();
@@ -56,6 +152,7 @@ async function buildRemainingTodayChips() {
 }
 
 async function renderHomeRingSection(container) {
+  if (!container) return; // page was replaced mid-render
   const today = todayStr();
   const ringData = await getHabitsRingData();
   // Only the tasks she asked to be counted feed this ring.
@@ -80,15 +177,7 @@ async function renderHomeRingSection(container) {
     segments: [{ frac: taskFrac, color: 'var(--btn-color, var(--pink-deep))' }]
   });
 
-  // Morning / evening routine rings.
-  const [morningRoutines, eveningRoutines] = await Promise.all([
-    getCareRoutines('morning'), getCareRoutines('evening')
-  ]);
-  const [morningDone, eveningDone] = await Promise.all([
-    countCareRoutinesDone(morningRoutines, today),
-    countCareRoutinesDone(eveningRoutines, today)
-  ]);
-
+  const smallRings = await renderHomeSmallRings();
   const chips = await buildRemainingTodayChips();
 
   container.innerHTML = `
@@ -109,20 +198,7 @@ async function renderHomeRingSection(container) {
       </button>
     </div>
 
-    <div class="small-rings-row">
-      ${smallRingHtml(
-        morningRoutines.length ? morningDone / morningRoutines.length : 0,
-        '🌅 صباحي',
-        morningRoutines.length ? `${toArabicNumeral(morningDone)}/${toArabicNumeral(morningRoutines.length)}` : '—',
-        '/dailycare'
-      )}
-      ${smallRingHtml(
-        eveningRoutines.length ? eveningDone / eveningRoutines.length : 0,
-        '🌙 مسائي',
-        eveningRoutines.length ? `${toArabicNumeral(eveningDone)}/${toArabicNumeral(eveningRoutines.length)}` : '—',
-        '/dailycare'
-      )}
-    </div>
+    ${smallRings}
 
     ${chips.length ? `
       <div class="remaining-today">
@@ -298,13 +374,22 @@ async function renderHome(params, view, renderToken) {
 
   const goodHabits = (await getActiveHabitsByType('good')).filter(isHabitVisibleOnHome).slice(0, 3);
   const badHabits = (await getActiveHabitsByType('bad')).filter(isHabitVisibleOnHome).slice(0, 3);
+
+  // The guard above only covered the FIRST write. Everything below does
+  // more awaiting and then writes into elements that a newer navigation
+  // may already have torn out of the DOM — so re-check before touching it
+  // again, or those writes land on null.
+  if (renderToken != null && !isCurrentRenderToken(renderToken)) return;
+
   const refreshHomeRing = () => renderHomeRingSection(document.getElementById('home-ring-section'));
   await renderHabitCards(document.getElementById('home-good-habits'), goodHabits, { onChange: refreshHomeRing, emptyText: 'ما في عادات جيدة بعد.' });
   await renderHabitCards(document.getElementById('home-bad-habits'), badHabits, { onChange: refreshHomeRing, emptyText: 'ما في عادات للإقلاع عنها بعد.' });
 
+  if (renderToken != null && !isCurrentRenderToken(renderToken)) return;
   await renderFixedTaskList(document.getElementById('home-fixed-tasks'), today, { editable: true, limit: 3, showManage: true, onChange: rescheduleHomeReminders });
   await renderTodoList(document.getElementById('home-custom-todos'), { limit: 3, onlyOpen: true, showManage: true });
 
+  if (renderToken != null && !isCurrentRenderToken(renderToken)) return;
   await renderGoalsList(document.getElementById('home-goals-preview'), { limit: 2 });
 
   await rescheduleHomeReminders();
@@ -441,6 +526,7 @@ function registerAllYearlyStatsProviders() {
   registerYearlyStatsProvider(sleepYearlyProvider);
   registerYearlyStatsProvider(qadaYearlyProvider);
   registerYearlyStatsProvider(dailyCareYearlyProvider);
+  registerYearlyStatsProvider(recipesYearlyProvider);
 }
 
 async function renderBottomBar() {

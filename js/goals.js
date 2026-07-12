@@ -13,7 +13,7 @@ function computeGoalDirection(startValue, targetValue) {
   return startValue > targetValue ? 'down' : 'up';
 }
 
-async function createGoal({ title, progressType, targetValue, unit, notes, currentValue }) {
+async function createGoal({ title, progressType, targetValue, unit, notes, currentValue, targetDate }) {
   const cv = currentValue ?? 0;
   const isNumeric = progressType === 'numeric' && targetValue != null;
   return db.goals.add({
@@ -25,6 +25,7 @@ async function createGoal({ title, progressType, targetValue, unit, notes, curre
     targetValue: progressType === 'percentage' ? 100 : (targetValue ?? null),
     unit: progressType === 'percentage' ? '%' : (unit || ''),
     notes: notes || '',
+    targetDate: targetDate || null,
     done: false,
     archived: false,
     createdAt: Date.now()
@@ -97,35 +98,71 @@ function isGoalDone(goal) {
 function goalRowHtml(goal) {
   const type = effectiveProgressType(goal);
   const done = isGoalDone(goal);
-  let progressHtml;
+  const frac = type === 'checkbox' ? (goal.done ? 1 : 0) : (goalProgressFraction(goal) ?? 0);
+  const pct = Math.round(frac * 100);
+
+  const ring = renderRing({
+    size: 48, strokeWidth: 6,
+    segments: [{ frac, color: done ? 'var(--success-strong)' : 'var(--btn-color, var(--pink-deep))' }]
+  });
+
+  let controlHtml;
   if (type === 'percentage') {
-    progressHtml = `
+    controlHtml = `
       <input type="range" class="goal-slider" min="0" max="100" value="${goal.currentValue}" data-action="slide">
-      <span class="mini-progress-text goal-slider-label">${goal.currentValue}%</span>`;
+      <span class="mini-progress-text goal-slider-label">${toArabicNumeral(goal.currentValue)}%</span>`;
   } else if (type === 'numeric' && goal.targetValue != null) {
-    const frac = goalProgressFraction(goal) || 0;
-    progressHtml = `
-      <div class="mini-progress-track" data-action="tap-progress"><div class="mini-progress-fill" style="width:${frac * 100}%"></div></div>
-      <span class="mini-progress-text">${goal.currentValue}/${goal.targetValue} ${escapeHtml(goal.unit || '')}</span>`;
+    // A stepper beats a prompt(): logging progress is something you do
+    // repeatedly, and a dialog every time makes you stop bothering.
+    controlHtml = `
+      <div class="goal-numeric-row">
+        <div class="exercise-stepper">
+          <button class="exercise-step-btn" data-action="goal-dec" aria-label="أنقص">−</button>
+          <span class="exercise-step-val">${toArabicNumeral(goal.currentValue)}</span>
+          <button class="exercise-step-btn" data-action="goal-inc" aria-label="زد">+</button>
+        </div>
+        <button class="link-btn goal-set-btn" data-action="tap-progress">تعيين رقم</button>
+        <span class="goal-target-label">من ${toArabicNumeral(goal.targetValue)} ${escapeHtml(goal.unit || '')}</span>
+      </div>`;
   } else {
-    // checkbox, or a numeric goal somehow missing its target — never show raw "null" text
-    progressHtml = `<label class="checkbox-row"><input type="checkbox" data-action="toggle-done" ${goal.done ? 'checked' : ''}><span>تم تحقيق الهدف</span></label>`;
+    controlHtml = `<label class="checkbox-row"><input type="checkbox" data-action="toggle-done" ${goal.done ? 'checked' : ''}><span>تم تحقيق الهدف</span></label>`;
   }
+
+  // Deadline: a goal with no date is a wish. If she set one, it should be
+  // visible and it should get louder as it approaches.
+  let deadlineHtml = '';
+  if (goal.targetDate && !done) {
+    const daysLeft = daysBetween(todayStr(), goal.targetDate);
+    const overdue = daysLeft < 0;
+    const tone = overdue ? 'danger' : daysLeft <= 7 ? 'warning' : 'neutral';
+    deadlineHtml = `<span class="goal-deadline goal-deadline-${tone}">
+      ${overdue ? `⚠️ تأخّر ${toArabicNumeral(Math.abs(daysLeft))} يوم` : `🎯 ${toArabicNumeral(daysLeft)} يوم`}
+    </span>`;
+  }
+
   return `
-    <div class="goal-row" data-goal-id="${goal.id}">
+    <div class="goal-row ${done ? 'goal-done' : ''}" data-goal-id="${goal.id}">
       <div class="goal-row-top">
-        <span class="goal-title ${done ? 'done' : ''}">${done ? '✅ ' : ''}${escapeHtml(goal.title)}</span>
+        <div class="goal-ring">
+          ${ring}
+          <span class="goal-ring-pct">${toArabicNumeral(pct)}</span>
+        </div>
+        <div class="goal-title-block">
+          <span class="goal-title ${done ? 'done' : ''}">${done ? '✅ ' : ''}${escapeHtml(goal.title)}</span>
+          ${deadlineHtml}
+        </div>
         ${kebabMenuHtml(String(goal.id), [
           { key: 'edit', label: 'تعديل' },
           { key: 'delete', label: 'حذف', danger: true }
         ])}
       </div>
-      ${progressHtml}
+      ${controlHtml}
       ${goal.notes ? `<p class="goal-notes">${escapeHtml(goal.notes)}</p>` : ''}
     </div>`;
 }
 
-async function renderGoalsList(container, { limit } = {}) {
+async function renderGoalsList(container, { limit, onChange } = {}) {
+  if (!container) return; // page was replaced mid-render
   let goals = await getActiveGoals();
   if (limit) goals = goals.slice(0, limit);
   if (goals.length === 0) {
@@ -137,23 +174,41 @@ async function renderGoalsList(container, { limit } = {}) {
   wireKebabMenus(container, async (rowId, action) => {
     const id = Number(rowId);
     if (action === 'edit') {
-      openGoalModal({ existingId: id, onSaved: () => renderGoalsList(container, { limit }) });
+      openGoalModal({ existingId: id, onSaved: async () => { await renderGoalsList(container, { limit, onChange }); if (onChange) await onChange(); } });
     } else if (action === 'delete') {
       if (!confirm('حذف هذا الهدف؟')) return;
       await archiveGoal(id);
-      await renderGoalsList(container, { limit });
+      await renderGoalsList(container, { limit, onChange });
+      if (onChange) await onChange();
     }
   });
 
   container.querySelectorAll('.goal-row').forEach(row => {
     const id = Number(row.dataset.goalId);
+
+    const incBtn = row.querySelector('[data-action="goal-inc"]');
+    if (incBtn) incBtn.addEventListener('click', async () => {
+      const goal = await db.goals.get(id);
+      await updateGoal(id, { currentValue: (goal.currentValue || 0) + 1 });
+      await renderGoalsList(container, { limit, onChange });
+      if (onChange) await onChange();
+    });
+    const decBtn = row.querySelector('[data-action="goal-dec"]');
+    if (decBtn) decBtn.addEventListener('click', async () => {
+      const goal = await db.goals.get(id);
+      await updateGoal(id, { currentValue: Math.max(0, (goal.currentValue || 0) - 1) });
+      await renderGoalsList(container, { limit, onChange });
+      if (onChange) await onChange();
+    });
+
     const progressBar = row.querySelector('[data-action="tap-progress"]');
     if (progressBar) progressBar.addEventListener('click', async () => {
       const goal = (await db.goals.toArray()).find(g => g.id === id);
       const input = prompt(`القيمة الحالية (${goal.unit || ''}):`, String(goal.currentValue));
       if (input === null) return;
       const n = parseNumericInput(input);
-      if (n !== null && n >= 0) { await updateGoal(id, { currentValue: n }); await renderGoalsList(container, { limit }); }
+      if (n !== null && n >= 0) { await updateGoal(id, { currentValue: n }); await renderGoalsList(container, { limit, onChange });
+      if (onChange) await onChange(); }
     });
 
     const slider = row.querySelector('[data-action="slide"]');
@@ -162,14 +217,16 @@ async function renderGoalsList(container, { limit } = {}) {
       slider.addEventListener('input', () => { label.textContent = `${slider.value}%`; });
       slider.addEventListener('change', async () => {
         await updateGoal(id, { currentValue: Number(slider.value) });
-        await renderGoalsList(container, { limit });
+        await renderGoalsList(container, { limit, onChange });
+      if (onChange) await onChange();
       });
     }
 
     const checkbox = row.querySelector('[data-action="toggle-done"]');
     if (checkbox) checkbox.addEventListener('change', async () => {
       await updateGoal(id, { done: checkbox.checked });
-      await renderGoalsList(container, { limit });
+      await renderGoalsList(container, { limit, onChange });
+      if (onChange) await onChange();
     });
   });
 }
@@ -205,6 +262,9 @@ async function openGoalModal({ existingId, onSaved }) {
       </div>
 
       <label class="field-label">ملاحظات (اختياري)</label>
+      <label class="field-label">موعد مستهدف (اختياري)</label>
+      <input class="text-input" type="date" id="goal-date-input" value="${existing?.targetDate || ''}">
+      <label class="field-label">ملاحظات</label>
       <textarea class="mood-note-input" id="goal-notes-input" placeholder="تفاصيل، خطوات، تحديثات...">${escapeHtml(existing?.notes || '')}</textarea>
 
       <div class="modal-actions">
@@ -236,6 +296,7 @@ async function openGoalModal({ existingId, onSaved }) {
     const title = document.getElementById('goal-title-input').value.trim();
     if (!title) return;
     const notes = document.getElementById('goal-notes-input').value.trim();
+    const targetDate = document.getElementById('goal-date-input').value || null;
 
     let targetValue = null, currentValue = existing?.currentValue ?? 0, unit = '';
     if (selectedType === 'numeric') {
@@ -252,7 +313,7 @@ async function openGoalModal({ existingId, onSaved }) {
     }
 
     if (existing) {
-      const fields = { title, notes, progressType: selectedType, targetValue, currentValue, unit };
+      const fields = { title, notes, targetDate, progressType: selectedType, targetValue, currentValue, unit };
       if (selectedType === 'numeric') {
         const startValue = existing.startValue ?? existing.currentValue ?? currentValue;
         fields.startValue = startValue;
@@ -260,7 +321,7 @@ async function openGoalModal({ existingId, onSaved }) {
       }
       await updateGoal(existing.id, fields);
     } else {
-      await createGoal({ title, progressType: selectedType, targetValue, unit, notes, currentValue });
+      await createGoal({ title, progressType: selectedType, targetValue, unit, notes, currentValue, targetDate });
     }
     overlay.remove();
     if (onSaved) onSaved();
@@ -269,12 +330,60 @@ async function openGoalModal({ existingId, onSaved }) {
 
 // ---------- full Goals page ----------
 
+// Overall goals summary — the page previously opened straight into a list,
+// so with six goals there was no way to see how you were doing overall
+// without reading every row.
+async function renderGoalsSummary(container) {
+  if (!container) return;
+  const goals = await getActiveGoals();
+  if (goals.length === 0) {
+    container.innerHTML = `
+      <h2 class="card-title">🎯 أهدافك</h2>
+      <p class="mini-progress-text">أضيفي هدفك الأول لتبدأ</p>`;
+    return;
+  }
+  const done = goals.filter(isGoalDone).length;
+  const fracs = goals.map(g => effectiveProgressType(g) === 'checkbox'
+    ? (g.done ? 1 : 0)
+    : (goalProgressFraction(g) ?? 0));
+  const avg = fracs.reduce((s, f) => s + f, 0) / fracs.length;
+
+  // Deadlines worth worrying about.
+  const today = todayStr();
+  const soon = goals.filter(g => !isGoalDone(g) && g.targetDate && daysBetween(today, g.targetDate) >= 0 && daysBetween(today, g.targetDate) <= 7);
+  const overdue = goals.filter(g => !isGoalDone(g) && g.targetDate && daysBetween(today, g.targetDate) < 0);
+
+  container.innerHTML = `
+    <h2 class="card-title">🎯 أهدافك</h2>
+    <div class="goals-summary">
+      <div class="ring-wrap">
+        ${renderRing({ size: 92, strokeWidth: 10, segments: [{ frac: avg, color: avg >= 1 ? 'var(--success-strong)' : 'var(--btn-color, var(--pink-deep))' }] })}
+        <div class="ring-center-text">${toArabicNumeral(Math.round(avg * 100))}٪</div>
+      </div>
+      <div class="goals-summary-side">
+        <div class="diary-stat-row goals-stat-row">
+          <div class="diary-stat">
+            <span class="diary-stat-num">${toArabicNumeral(done)}/${toArabicNumeral(goals.length)}</span>
+            <span class="diary-stat-label">مكتمل</span>
+          </div>
+          <div class="diary-stat">
+            <span class="diary-stat-num">${toArabicNumeral(goals.length - done)}</span>
+            <span class="diary-stat-label">قيد العمل</span>
+          </div>
+        </div>
+        ${overdue.length ? `<p class="goals-alert goals-alert-danger">⚠️ ${toArabicNumeral(overdue.length)} ${overdue.length === 1 ? 'هدف تأخّر' : 'أهداف تأخّرت'}</p>` : ''}
+        ${soon.length ? `<p class="goals-alert goals-alert-warning">🎯 ${toArabicNumeral(soon.length)} ${soon.length === 1 ? 'هدف' : 'أهداف'} خلال أسبوع</p>` : ''}
+      </div>
+    </div>`;
+}
+
 async function renderGoalsPage(params, view) {
   view.innerHTML = `
     <div class="page-header">
       <button class="icon-btn" aria-label="رجوع" id="goals-back">→</button>
       <h1>الأهداف</h1>
     </div>
+    <div class="card" id="goals-summary"></div>
     <div class="card">
       <div id="goals-list"></div>
       <button class="btn btn-secondary btn-block" id="add-goal-btn">+ هدف جديد</button>
@@ -282,10 +391,14 @@ async function renderGoalsPage(params, view) {
   `;
   document.getElementById('goals-back').addEventListener('click', () => history.back());
   const listEl = document.getElementById('goals-list');
-  await renderGoalsList(listEl);
-  document.getElementById('add-goal-btn').addEventListener('click', () => {
-    openGoalModal({ onSaved: () => renderGoalsList(listEl) });
-  });
+  const summaryEl = document.getElementById('goals-summary');
+
+  async function refreshAll() {
+    await renderGoalsList(listEl, { onChange: () => renderGoalsSummary(summaryEl) });
+    await renderGoalsSummary(summaryEl);
+  }
+  await refreshAll();
+  document.getElementById('add-goal-btn').addEventListener('click', () => openGoalModal({ onSaved: refreshAll }));
 }
 
 function goalsGlanceText(goals) {
@@ -314,10 +427,31 @@ async function goalsYearlyProvider(year) {
     else if (effectiveProgressType(g) === 'checkbox') inProgress++;
     else notStarted++;
   });
+
+  const fracs = active.map(g => effectiveProgressType(g) === 'checkbox'
+    ? (g.done ? 1 : 0)
+    : (goalProgressFraction(g) ?? 0));
+  const avg = fracs.reduce((s, f) => s + f, 0) / fracs.length;
+  const today = todayStr();
+  const overdue = active.filter(g => !isGoalDone(g) && g.targetDate && daysBetween(today, g.targetDate) < 0).length;
+
+  // Per-goal detail, collapsed — the counts alone don't tell you WHICH
+  // goal is stalling, which is the only actionable part.
+  const rows = active.map((g, i) => {
+    const pct = Math.round(fracs[i] * 100);
+    return `<div class="yearly-row"><span>${isGoalDone(g) ? '✅' : '🔄'} ${escapeHtml(g.title)}</span><span>${toArabicNumeral(pct)}٪</span></div>`;
+  }).join('');
+
   const html = `
-    <div class="yearly-row"><span>✅ منجزة</span><span>${done}</span></div>
-    <div class="yearly-row"><span>🔄 قيد التقدم</span><span>${inProgress}</span></div>
-    <div class="yearly-row"><span>⏳ لم تبدأ</span><span>${notStarted}</span></div>
+    <div class="yearly-row"><span>متوسط التقدّم</span><span>${toArabicNumeral(Math.round(avg * 100))}٪</span></div>
+    <div class="yearly-row"><span>✅ منجزة</span><span>${toArabicNumeral(done)}</span></div>
+    <div class="yearly-row"><span>🔄 قيد التقدم</span><span>${toArabicNumeral(inProgress)}</span></div>
+    <div class="yearly-row"><span>⏳ لم تبدأ</span><span>${toArabicNumeral(notStarted)}</span></div>
+    ${overdue > 0 ? `<div class="yearly-row"><span>⚠️ تجاوزت موعدها</span><span>${toArabicNumeral(overdue)}</span></div>` : ''}
+    <details class="yearly-pain-details">
+      <summary>كل هدف على حدة</summary>
+      ${rows}
+    </details>
   `;
   return { title: 'الأهداف (الحالة الحالية)', html, count: null };
 }

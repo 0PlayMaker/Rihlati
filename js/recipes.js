@@ -227,3 +227,36 @@ async function renderRecipesPage(params, view) {
 
   await refresh();
 }
+
+// ---------- Yearly stats provider ----------
+// Recipes had no yearly section at all, so a year of collecting them
+// simply didn't appear in the review. There's no cook-log in this model,
+// so what's honestly reportable is the collection itself: how it grew,
+// and how much of it is actually usable (has a method written down)
+// rather than just a title she meant to fill in later.
+async function recipesYearlyProvider(year) {
+  const all = await db.recipes.toArray();
+  const added = all.filter(r => new Date(r.createdAt).getFullYear() === year);
+  if (added.length === 0 && all.length === 0) return null;
+
+  const withMethod = all.filter(r => (r.methodText || '').trim()).length;
+  const withVideo = all.filter(r => (r.youtubeLink || '').trim()).length;
+
+  const rows = added
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .map(r => `<div class="yearly-row"><span>🍳 ${escapeHtml(r.title)}</span><span>${formatDateArabic(new Date(r.createdAt).toISOString().slice(0, 10), { weekday: false })}</span></div>`)
+    .join('');
+
+  const html = `
+    <div class="yearly-row"><span>وصفات أضفتِها هذا العام</span><span>${toArabicNumeral(added.length)}</span></div>
+    <div class="yearly-row"><span>إجمالي وصفاتك</span><span>${toArabicNumeral(all.length)}</span></div>
+    <div class="yearly-row"><span>مكتملة الطريقة</span><span>${toArabicNumeral(withMethod)} من ${toArabicNumeral(all.length)}</span></div>
+    ${withVideo > 0 ? `<div class="yearly-row"><span>مع فيديو</span><span>${toArabicNumeral(withVideo)}</span></div>` : ''}
+    ${rows ? `
+      <details class="yearly-pain-details">
+        <summary>الوصفات المضافة هذا العام</summary>
+        ${rows}
+      </details>` : ''}
+  `;
+  return { title: 'الوصفات', html, count: added.length };
+}

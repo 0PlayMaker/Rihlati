@@ -137,7 +137,7 @@ function compareCourseTodos(a, b) {
   return b.createdAt - a.createdAt;
 }
 
-async function renderCourseTodoList(container, courseId) {
+async function renderCourseTodoList(container, courseId, onChange) {
   const all = (await db.courseTodos.where('courseId').equals(courseId).toArray()).sort(compareCourseTodos);
   if (all.length === 0) {
     container.innerHTML = `<div class="empty-state"><p>ما في مهام لهذه الدورة بعد.</p></div>`;
@@ -154,17 +154,22 @@ async function renderCourseTodoList(container, courseId) {
   container.querySelectorAll('[data-course-todo-id]').forEach(cb => {
     cb.addEventListener('change', async () => {
       await toggleCourseTodo(Number(cb.dataset.courseTodoId));
-      await renderCourseTodoList(container, courseId);
+      await renderCourseTodoList(container, courseId, onChange);
+      if (onChange) await onChange(); // hero ring must move with the checkbox
     });
   });
   wireKebabMenus(container, async (rowId, action) => {
     const id = Number(rowId);
     if (action === 'edit') {
-      openCourseTodoModal({ courseId, existingId: id, onSaved: () => renderCourseTodoList(container, courseId) });
+      openCourseTodoModal({ courseId, existingId: id, onSaved: async () => {
+        await renderCourseTodoList(container, courseId, onChange);
+        if (onChange) await onChange();
+      }});
     } else if (action === 'delete') {
       if (!confirm('حذف هذه المهمة؟')) return;
       await deleteCourseTodo(id);
-      await renderCourseTodoList(container, courseId);
+      await renderCourseTodoList(container, courseId, onChange);
+      if (onChange) await onChange();
     }
   });
 }
@@ -460,96 +465,172 @@ function formatStudyMinutes(mins) {
   return `${toArabicNumeral(h)} س ${toArabicNumeral(m)} د`;
 }
 
-function renderPomodoroCard(container, onSessionLogged) {
+const POMO_WORK_PRESETS = [15, 25, 50];
+const POMO_BREAK_PRESETS = [5, 10, 15];
+
+// The old card put a native <select> (which borrowed .text-input, so it was
+// width:100%) directly above two 100px-wide number fields — the dropdown
+// ballooned across the whole card while the inputs stayed tiny, and their
+// labels crowded into them. Rebuilt around a progress ring (so you can SEE
+// the phase draining), preset chips instead of fiddly number spinners on a
+// phone, and the course picker as chips rather than a full-width dropdown.
+function renderPomodoroCard(container, onSessionLogged, lockedCourseId = null) {
   (async () => {
     const { workMinutes, breakMinutes } = await getPomodoroSettings();
-    const courses = await getActiveCourses();
+    // On a course page the session already belongs to that course, so the
+    // picker would just be noise.
+    const courses = lockedCourseId ? [] : await getActiveCourses();
     let isBreak = false;
-    let remaining = workMinutes * 60; // seconds left while paused/idle
-    let endsAt = null;                // absolute ms timestamp while running
+    let workMin = workMinutes;
+    let breakMin = breakMinutes;
+    let remaining = workMin * 60;
+    let endsAt = null;
     let intervalId = null;
-    let paused = false; // distinguishes "resuming a pause" from "starting fresh"
+    let paused = false;
+    let selectedCourseId = lockedCourseId;
+
+    const RING_R = 74;
+    const CIRC = 2 * Math.PI * RING_R;
 
     container.innerHTML = `
-      <h2 class="card-title">🍅 مؤقّت بومودورو</h2>
-      <div class="timer-display" id="pomo-display">${formatTimer(remaining)}</div>
-      <p class="settings-note" id="pomo-phase-label">وقت التركيز</p>
-      ${courses.length ? `
-        <label class="field-label">لأي دورة؟ (اختياري)</label>
-        <select class="text-input" id="pomo-course-select">
-          <option value="">بدون دورة</option>
-          ${courses.map(c => `<option value="${c.id}">${escapeHtml(c.title)}</option>`).join('')}
-        </select>` : ''}
-      <div class="timer-duration-row">
-        <label class="field-label">تركيز (د)</label>
-        <input class="text-input" type="number" min="1" id="pomo-work-input" value="${workMinutes}">
-        <label class="field-label">راحة (د)</label>
-        <input class="text-input" type="number" min="1" id="pomo-break-input" value="${breakMinutes}">
+      <div class="section-header">
+        <h2 class="card-title">🍅 بومودورو</h2>
+        <span class="pomo-phase-chip" id="pomo-phase-label">وقت التركيز</span>
       </div>
-      <div class="modal-actions timer-controls">
-        <button class="btn btn-secondary" id="pomo-reset">إعادة</button>
+
+      <div class="pomo-ring-wrap">
+        <svg class="pomo-ring" viewBox="0 0 170 170" aria-hidden="true">
+          <circle class="pomo-ring-track" cx="85" cy="85" r="${RING_R}"/>
+          <circle class="pomo-ring-fill" id="pomo-ring-fill" cx="85" cy="85" r="${RING_R}"/>
+        </svg>
+        <div class="pomo-center">
+          <span class="pomo-time" id="pomo-display">${formatTimer(remaining)}</span>
+          <span class="pomo-sub" id="pomo-sub"></span>
+        </div>
+      </div>
+
+      <div class="pomo-controls">
+        <button class="btn btn-secondary btn-sm" id="pomo-reset">إعادة</button>
         <button class="btn btn-primary" id="pomo-toggle">ابدأ</button>
       </div>
+
+      <details class="pomo-settings">
+        <summary>الإعدادات</summary>
+        ${courses.length ? `
+          <label class="field-label">لأي دورة؟</label>
+          <div class="pomo-chip-row" id="pomo-course-chips">
+            <button class="pomo-chip active" data-course="">بدون دورة</button>
+            ${courses.map(c => `<button class="pomo-chip" data-course="${c.id}">${c.emoji || '🎓'} ${escapeHtml(c.title)}</button>`).join('')}
+          </div>` : ''}
+
+        <label class="field-label">مدّة التركيز</label>
+        <div class="pomo-chip-row" id="pomo-work-chips">
+          ${POMO_WORK_PRESETS.map(m => `<button class="pomo-chip ${m === workMin ? 'active' : ''}" data-min="${m}">${toArabicNumeral(m)} د</button>`).join('')}
+          <input class="pomo-num" type="text" inputmode="numeric" id="pomo-work-input" value="${workMin}" aria-label="مدّة التركيز بالدقائق">
+        </div>
+
+        <label class="field-label">مدّة الراحة</label>
+        <div class="pomo-chip-row" id="pomo-break-chips">
+          ${POMO_BREAK_PRESETS.map(m => `<button class="pomo-chip ${m === breakMin ? 'active' : ''}" data-min="${m}">${toArabicNumeral(m)} د</button>`).join('')}
+          <input class="pomo-num" type="text" inputmode="numeric" id="pomo-break-input" value="${breakMin}" aria-label="مدّة الراحة بالدقائق">
+        </div>
+      </details>
     `;
 
     const display = document.getElementById('pomo-display');
+    const subEl = document.getElementById('pomo-sub');
     const phaseLabel = document.getElementById('pomo-phase-label');
     const toggleBtn = document.getElementById('pomo-toggle');
     const workInput = document.getElementById('pomo-work-input');
     const breakInput = document.getElementById('pomo-break-input');
+    const ringFill = document.getElementById('pomo-ring-fill');
+    ringFill.style.strokeDasharray = String(CIRC);
 
-    // Arabic-numeral-safe reads of the two minute fields.
     const readWork = () => parseNumericInput(workInput.value, { int: true, min: 1 }) ?? 25;
     const readBreak = () => parseNumericInput(breakInput.value, { int: true, min: 1 }) ?? 5;
 
+    function paintRing(left, total) {
+      const frac = total > 0 ? Math.max(0, Math.min(1, left / total)) : 0;
+      ringFill.style.strokeDashoffset = String(CIRC * (1 - frac));
+      ringFill.classList.toggle('pomo-ring-break', isBreak);
+    }
     function stopInterval() {
       if (intervalId) { clearInterval(intervalId); intervalId = null; }
     }
 
     function tick() {
       if (endsAt === null) return;
-      let left = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
+      const total = (isBreak ? breakMin : workMin) * 60;
+      const left = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
       if (left > 0) {
         display.textContent = formatTimer(left);
+        paintRing(left, total);
         return;
       }
-      // Phase ended. Flip and start the next one from the moment the
-      // previous one actually expired, so a phase boundary crossed while
-      // backgrounded doesn't silently shift everything later.
       playBeepSequence(3);
       if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
 
-      // A completed FOCUS phase is real study time — record it. (A break
-      // isn't, so nothing is logged when the break ends.)
+      // A completed FOCUS phase is real study time. A break isn't, so
+      // nothing is logged when a break ends.
       if (!isBreak) {
-        const sel = document.getElementById('pomo-course-select');
-        const courseId = sel && sel.value ? Number(sel.value) : null;
-        logStudySession(readWork(), courseId).then(() => {
+        logStudySession(workMin, selectedCourseId).then(() => {
           if (typeof onSessionLogged === 'function') onSessionLogged();
         });
       }
 
       const finishedAt = endsAt;
       isBreak = !isBreak;
-      const nextSeconds = (isBreak ? readBreak() : readWork()) * 60;
+      workMin = readWork();
+      breakMin = readBreak();
+      const nextSeconds = (isBreak ? breakMin : workMin) * 60;
       endsAt = finishedAt + nextSeconds * 1000;
-      // If the tab was asleep long enough to blow through the next phase
-      // entirely, don't leave a negative clock — restart it from now.
       if (endsAt <= Date.now()) endsAt = Date.now() + nextSeconds * 1000;
       phaseLabel.textContent = isBreak ? 'وقت الراحة' : 'وقت التركيز';
-      display.classList.toggle('timer-done', false);
-      display.textContent = formatTimer(Math.max(0, Math.round((endsAt - Date.now()) / 1000)));
+      phaseLabel.classList.toggle('pomo-phase-break', isBreak);
+      const left2 = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
+      display.textContent = formatTimer(left2);
+      paintRing(left2, nextSeconds);
     }
 
-    // Live preview while stopped/fresh — typing "1" should show 01:00
-    // immediately, not silently wait until start is pressed.
-    function livePreviewIfIdle() {
-      if (!intervalId && !paused) {
-        remaining = readWork() * 60;
-        display.textContent = formatTimer(remaining);
-      }
+    function refreshIdleDisplay() {
+      if (intervalId || paused) return;
+      workMin = readWork();
+      breakMin = readBreak();
+      remaining = (isBreak ? breakMin : workMin) * 60;
+      display.textContent = formatTimer(remaining);
+      paintRing(remaining, remaining);
     }
-    workInput.addEventListener('input', livePreviewIfIdle);
+
+    // Preset chips and the free-text field stay in sync both ways.
+    function wireChipRow(rowId, input) {
+      const row = document.getElementById(rowId);
+      if (!row) return;
+      row.querySelectorAll('.pomo-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          input.value = chip.dataset.min;
+          row.querySelectorAll('.pomo-chip').forEach(c => c.classList.toggle('active', c === chip));
+          refreshIdleDisplay();
+        });
+      });
+      input.addEventListener('input', () => {
+        const v = parseNumericInput(input.value, { int: true, min: 1 });
+        row.querySelectorAll('.pomo-chip').forEach(c => c.classList.toggle('active', Number(c.dataset.min) === v));
+        refreshIdleDisplay();
+      });
+    }
+    wireChipRow('pomo-work-chips', workInput);
+    wireChipRow('pomo-break-chips', breakInput);
+
+    const courseChips = document.getElementById('pomo-course-chips');
+    if (courseChips) {
+      courseChips.querySelectorAll('.pomo-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          selectedCourseId = chip.dataset.course ? Number(chip.dataset.course) : null;
+          courseChips.querySelectorAll('.pomo-chip').forEach(c => c.classList.toggle('active', c === chip));
+          subEl.textContent = selectedCourseId ? chip.textContent.trim() : '';
+        });
+      });
+    }
 
     toggleBtn.addEventListener('click', async () => {
       if (intervalId) {
@@ -561,18 +642,19 @@ function renderPomodoroCard(container, onSessionLogged) {
         toggleBtn.textContent = 'استئناف';
       } else {
         unlockAudioContext();
-        await savePomodoroSettings(readWork(), readBreak());
+        workMin = readWork();
+        breakMin = readBreak();
+        await savePomodoroSettings(workMin, breakMin);
         if (!paused) {
-          // Fresh start (never started, or just finished a phase) — use
-          // whatever is currently typed, not the value saved when this
-          // card was first rendered.
-          remaining = readWork() * 60;
+          remaining = workMin * 60;
           isBreak = false;
           phaseLabel.textContent = 'وقت التركيز';
+          phaseLabel.classList.remove('pomo-phase-break');
         }
         paused = false;
         endsAt = Date.now() + remaining * 1000;
         display.textContent = formatTimer(remaining);
+        paintRing(remaining, (isBreak ? breakMin : workMin) * 60);
         intervalId = setInterval(tick, 250);
         toggleBtn.textContent = 'إيقاف';
       }
@@ -582,15 +664,16 @@ function renderPomodoroCard(container, onSessionLogged) {
       endsAt = null;
       paused = false;
       isBreak = false;
-      remaining = readWork() * 60;
+      workMin = readWork();
+      remaining = workMin * 60;
       phaseLabel.textContent = 'وقت التركيز';
+      phaseLabel.classList.remove('pomo-phase-break');
       display.textContent = formatTimer(remaining);
+      paintRing(remaining, remaining);
       toggleBtn.textContent = 'ابدأ';
     });
 
-    // Without this the interval outlives the page: navigate away and
-    // back five times and five pomodoros keep ticking (and beeping)
-    // against DOM nodes that no longer exist.
+    paintRing(remaining, remaining);
     registerCleanup(stopInterval);
   })();
 }
@@ -733,6 +816,103 @@ async function renderStudyPage(params, view) {
   });
 }
 
+// The course hero: everything you'd actually want to know the moment you
+// open a course. Previously this page opened with just a title and two
+// lists, which told you nothing about how the course was going.
+async function renderCourseHero(container, course) {
+  const courseId = course.id;
+  const [progress, focusMins, materials] = await Promise.all([
+    getCourseTodoProgress(courseId),
+    getStudyMinutesForCourse(courseId),
+    db.courseMaterials.where('courseId').equals(courseId).toArray()
+  ]);
+  const sessions = (await getStudySessions()).filter(s => s.courseId === courseId);
+  const frac = progress.total > 0 ? progress.done / progress.total : 0;
+  const complete = progress.total > 0 && progress.done === progress.total;
+  const pct = Math.round(frac * 100);
+
+  const ring = renderRing({
+    size: 92, strokeWidth: 10,
+    segments: [{ frac, color: complete ? 'var(--success-strong)' : 'var(--btn-color, var(--pink-deep))' }]
+  });
+
+  // Deadline: how long left, and — more usefully — whether the remaining
+  // work actually fits in the remaining time at her current pace.
+  let deadlineBlock = '';
+  if (course.endDate) {
+    const daysLeft = daysBetween(todayStr(), course.endDate);
+    const overdue = daysLeft < 0;
+    const remainingTodos = progress.total - progress.done;
+
+    let paceNote = '';
+    if (!complete && remainingTodos > 0 && daysLeft > 0) {
+      const perDay = remainingTodos / daysLeft;
+      paceNote = perDay <= 1
+        ? `بمعدّل مهمة كل ${toArabicNumeral(Math.max(1, Math.round(1 / perDay)))} ${Math.round(1 / perDay) === 1 ? 'يوم' : 'أيام'} تصلين في الموعد.`
+        : `تحتاجين ~${toArabicNumeral(Math.ceil(perDay))} مهام يومياً للوصول في الموعد.`;
+    } else if (complete) {
+      paceNote = 'أنهيتِ كل المهام 🎉';
+    }
+
+    const tone = complete ? 'success' : overdue ? 'danger' : daysLeft <= 7 ? 'warning' : 'neutral';
+    deadlineBlock = `
+      <div class="course-deadline course-deadline-${tone}">
+        <span class="course-deadline-main">
+          ${complete ? '✅ مكتملة' : overdue ? `⚠️ تجاوزتِ الموعد بـ ${toArabicNumeral(Math.abs(daysLeft))} يوم` : `🎯 باقي ${toArabicNumeral(daysLeft)} ${daysLeft === 1 ? 'يوم' : 'يوم'}`}
+        </span>
+        <span class="course-deadline-date">${formatDateArabic(course.endDate, { weekday: false })}</span>
+      </div>
+      ${paceNote ? `<p class="course-pace">${paceNote}</p>` : ''}`;
+  }
+
+  // Next thing to actually do — the soonest-due open todo.
+  const todos = (await db.courseTodos.where('courseId').equals(courseId).toArray())
+    .filter(t => !t.done).sort(compareCourseTodos);
+  const next = todos[0];
+
+  container.innerHTML = `
+    <div class="course-hero">
+      <div class="course-hero-ring">
+        ${ring}
+        <div class="course-hero-emoji">${course.emoji || '🎓'}</div>
+      </div>
+      <div class="course-hero-info">
+        <h2 class="course-hero-title">${escapeHtml(course.title)}</h2>
+        ${course.description ? `<p class="course-hero-desc">${escapeHtml(course.description)}</p>` : ''}
+        <div class="course-hero-pct">${progress.total > 0 ? `${toArabicNumeral(pct)}٪ مكتمل` : 'لا مهام بعد'}</div>
+      </div>
+    </div>
+
+    <div class="course-stat-row">
+      <div class="course-stat">
+        <span class="course-stat-num">${toArabicNumeral(progress.done)}/${toArabicNumeral(progress.total)}</span>
+        <span class="course-stat-label">مهام</span>
+      </div>
+      <div class="course-stat">
+        <span class="course-stat-num">${focusMins > 0 ? formatStudyMinutes(focusMins) : '—'}</span>
+        <span class="course-stat-label">وقت تركيز</span>
+      </div>
+      <div class="course-stat">
+        <span class="course-stat-num">${toArabicNumeral(sessions.length)}</span>
+        <span class="course-stat-label">جلسة</span>
+      </div>
+      <div class="course-stat">
+        <span class="course-stat-num">${toArabicNumeral(materials.length)}</span>
+        <span class="course-stat-label">مادة</span>
+      </div>
+    </div>
+
+    ${deadlineBlock}
+
+    ${next ? `
+      <div class="course-next">
+        <span class="course-next-label">التالي</span>
+        <span class="course-next-title">${escapeHtml(next.title)}</span>
+        ${next.dueDate ? `<span class="course-next-due">${formatDateArabic(next.dueDate, { weekday: false })}</span>` : ''}
+      </div>` : ''}
+  `;
+}
+
 async function renderCoursePage(params, view) {
   const courseId = Number(params[0]);
   const course = await db.courses.get(courseId);
@@ -744,8 +924,9 @@ async function renderCoursePage(params, view) {
       <h1>${escapeHtml(course.title)}</h1>
       ${kebabMenuHtml('course-' + courseId, [{ key: 'edit', label: 'تعديل الدورة' }, { key: 'delete', label: 'حذف الدورة', danger: true }])}
     </div>
-    ${course.description ? `<p class="settings-note">${escapeHtml(course.description)}</p>` : ''}
-    ${course.endDate ? `<p class="settings-note">🎯 تاريخ الانتهاء المتوقع: ${formatDateArabic(course.endDate, { weekday: false })}${daysBetween(todayStr(), course.endDate) >= 0 ? ` (بعد ${daysBetween(todayStr(), course.endDate)} يوم)` : ' (تجاوزتِ الموعد)'}</p>` : ''}
+
+    <div class="card" id="course-hero-card"></div>
+
     <div class="card">
       <div class="section-header">
         <h2 class="card-title">المهام</h2>
@@ -753,6 +934,7 @@ async function renderCoursePage(params, view) {
       </div>
       <div id="course-todos-list"></div>
     </div>
+
     <div class="card">
       <div class="section-header">
         <h2 class="card-title">المواد</h2>
@@ -760,6 +942,8 @@ async function renderCoursePage(params, view) {
       </div>
       <div id="course-materials-list"></div>
     </div>
+
+    <div class="card" id="course-pomodoro"></div>
   `;
   document.getElementById('course-back').addEventListener('click', () => goTo('/study'));
   wireKebabMenus(view, async (rowId, action) => {
@@ -771,17 +955,36 @@ async function renderCoursePage(params, view) {
     }
   });
 
+  const heroEl = document.getElementById('course-hero-card');
   const todosEl = document.getElementById('course-todos-list');
-  await renderCourseTodoList(todosEl, courseId);
+  const materialsEl = document.getElementById('course-materials-list');
+
+  async function refreshHero() { await renderCourseHero(heroEl, course); }
+  async function refreshTodos() {
+    await renderCourseTodoList(todosEl, courseId, refreshHero);
+    await refreshHero();
+  }
+
+  await refreshHero();
+  await renderCourseTodoList(todosEl, courseId, refreshHero);
   document.getElementById('add-ctodo-btn').addEventListener('click', () => {
-    openCourseTodoModal({ courseId, onSaved: () => renderCourseTodoList(todosEl, courseId) });
+    openCourseTodoModal({ courseId, onSaved: refreshTodos });
   });
 
-  const materialsEl = document.getElementById('course-materials-list');
   await renderMaterialsList(materialsEl, courseId);
   document.getElementById('add-material-btn').addEventListener('click', () => {
-    openMaterialModal({ courseId, onSaved: () => renderMaterialsList(materialsEl, courseId) });
+    openMaterialModal({ courseId, onSaved: async () => { await renderMaterialsList(materialsEl, courseId); await refreshHero(); } });
   });
+
+  // Focus on THIS course without having to go back to Study and pick it
+  // from a list — the session is pre-attributed.
+  renderCoursePomodoro(document.getElementById('course-pomodoro'), courseId, refreshHero);
+}
+
+// The same timer, but locked to this course so every completed session
+// counts toward it automatically.
+function renderCoursePomodoro(container, courseId, onSessionLogged) {
+  renderPomodoroCard(container, onSessionLogged, courseId);
 }
 
 function studyGlanceText(courseCount, openTodoCount) {

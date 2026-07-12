@@ -77,21 +77,52 @@ async function renderWaterCard(container) {
   const today = todayStr();
   const [liters, target] = await Promise.all([getWaterForDate(today), getWaterTarget()]);
   const frac = Math.min(1, liters / target);
+  const reached = liters >= target;
+
+  // Glasses, not a bar: a row of cups you can SEE filling is far more
+  // legible at a glance than "1.75 من 2 لتر", and it makes the remaining
+  // amount countable rather than something you have to compute.
+  const glassCount = Math.max(1, Math.round(target / 0.25));
+  const filled = Math.floor(liters / 0.25);
+  const partial = (liters / 0.25) - filled;
+  const glasses = Array.from({ length: Math.min(glassCount, 12) }, (_, i) => {
+    if (i < filled) return `<span class="water-glass water-glass-full">💧</span>`;
+    if (i === filled && partial > 0.15) return `<span class="water-glass water-glass-part">💧</span>`;
+    return `<span class="water-glass">💧</span>`;
+  }).join('');
+
   container.innerHTML = `
     <div class="section-header">
       <h2 class="card-title">💧 الماء</h2>
-      <button class="capsule-btn" id="water-edit-target">الهدف: ${target}ل</button>
+      <button class="capsule-btn" id="water-edit-target">الهدف: ${toArabicNumeral(target)} ل</button>
     </div>
-    <div class="mini-progress-track"><div class="mini-progress-fill water-fill" style="width:${frac * 100}%"></div></div>
-    <p class="period-status-sub">${liters.toFixed(2)} من ${target} لتر</p>
-    <div class="water-actions">
-      <button class="btn btn-secondary btn-sm" id="water-add-cup">+ كوب ٢٥٠ ملي (ربع لتر)</button>
-      <button class="btn btn-secondary btn-sm" id="water-edit-exact">تعديل يدوي</button>
+
+    <div class="water-glasses">${glasses}</div>
+
+    <div class="mini-progress-track"><div class="mini-progress-fill ${reached ? 'water-reached' : 'water-fill'}" style="width:${frac * 100}%"></div></div>
+    <p class="water-amount">
+      <strong>${toArabicNumeral(liters.toFixed(2))}</strong> من ${toArabicNumeral(target)} لتر
+      ${reached ? '<span class="water-done">✨ بلغتِ هدفك</span>' : `<span class="water-left">متبقّي ${toArabicNumeral((target - liters).toFixed(2))} ل</span>`}
+    </p>
+
+    <div class="water-quick-row">
+      <button class="water-quick" data-add="0.2">☕ ٢٠٠</button>
+      <button class="water-quick" data-add="0.25">🥛 ٢٥٠</button>
+      <button class="water-quick" data-add="0.5">🍶 ٥٠٠</button>
+      <button class="water-quick water-quick-minus" data-add="-0.25">−</button>
+      <button class="water-quick" id="water-edit-exact">✏️</button>
     </div>
   `;
-  document.getElementById('water-add-cup').addEventListener('click', async () => {
-    await addWater(today, 0.25);
-    renderWaterCard(container);
+
+  container.querySelectorAll('.water-quick[data-add]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const delta = Number(btn.dataset.add);
+      const current = await getWaterForDate(today);
+      const next = Math.max(0, current + delta);
+      await setWaterExact(today, Math.round(next * 100) / 100);
+      if (navigator.vibrate && delta > 0) navigator.vibrate(10);
+      renderWaterCard(container);
+    });
   });
   document.getElementById('water-edit-exact').addEventListener('click', async () => {
     const current = await getWaterForDate(today);
@@ -326,34 +357,59 @@ async function renderFoodPage(params, view) {
     const stats = await getFoodTodayStats();
     const { mealsGoal, caloriesGoal } = await getFoodGoals();
     const summaryEl = document.getElementById('food-summary-card');
+    const logs = await getFoodLogsForDate(today);
 
-    if (!mealsGoal && !caloriesGoal) {
-      summaryEl.innerHTML = `<p class="period-status-text">${foodGlanceText(stats)}</p>`;
-    } else {
-      const calFrac = caloriesGoal ? Math.min(1, stats.totalCal / caloriesGoal) : 0;
-      const calRemaining = caloriesGoal ? Math.max(0, caloriesGoal - (stats.totalCal || 0)) : null;
-      const ringSvg = caloriesGoal ? renderRing({
-        size: 110, strokeWidth: 12,
-        segments: [{ frac: calFrac, color: calFrac >= 1 ? 'var(--rose-deep)' : 'var(--mint-deep)' }]
-      }) : '';
-      const mealsRemaining = mealsGoal ? Math.max(0, mealsGoal - stats.count) : null;
-      const mealDots = mealsGoal ? Array.from({ length: mealsGoal }, (_, i) => i < stats.count ? '🟢' : '⚪').join(' ') : '';
+    // Which meal types she's actually had today. This is useful with or
+    // without a goal — the old card showed nothing but a sentence unless a
+    // goal existed, which is the less common case.
+    const hadTypes = new Set(logs.map(l => l.mealType));
+    const typeStrip = MEAL_TYPES.map(m => `
+      <div class="food-type-pill ${hadTypes.has(m.key) ? 'food-type-had' : ''}">
+        <span class="food-type-icon">${m.icon}</span>
+        <span class="food-type-label">${m.label}</span>
+      </div>`).join('');
 
-      summaryEl.innerHTML = `
-        <div class="food-goals-visual">
-          ${caloriesGoal ? `
+    const calFrac = caloriesGoal ? Math.min(1, (stats.totalCal || 0) / caloriesGoal) : 0;
+    const mealFrac = mealsGoal ? Math.min(1, stats.count / mealsGoal) : 0;
+    const overCal = caloriesGoal && (stats.totalCal || 0) > caloriesGoal;
+
+    summaryEl.innerHTML = `
+      <div class="food-rings-row">
+        ${mealsGoal ? `
+          <div class="food-ring-item">
             <div class="ring-wrap">
-              ${ringSvg}
-              <div class="ring-center-text">${stats.totalCal || 0}/${caloriesGoal}</div>
-            </div>` : ''}
-          <div class="food-goals-side">
-            ${caloriesGoal ? `<p class="mini-progress-text">متبقّي ${calRemaining} سعرة</p>` : `<p class="mini-progress-text">${stats.count} ${stats.count === 1 ? 'وجبة' : 'وجبات'}${stats.totalCal != null ? ` · ${stats.totalCal} سعرة` : ''}</p>`}
-            ${mealsGoal ? `
-              <p class="food-meal-dots">${mealDots}</p>
-              <p class="mini-progress-text">${mealsRemaining > 0 ? `متبقّي ${mealsRemaining} ${mealsRemaining === 1 ? 'وجبة' : 'وجبات'}` : 'أكملتِ وجباتك اليوم ✨'}</p>` : ''}
-          </div>
-        </div>`;
-    }
+              ${renderRing({ size: 78, strokeWidth: 9, segments: [{ frac: mealFrac, color: mealFrac >= 1 ? 'var(--success-strong)' : 'var(--btn-color, var(--pink-deep))' }] })}
+              <div class="ring-center-text">${toArabicNumeral(stats.count)}/${toArabicNumeral(mealsGoal)}</div>
+            </div>
+            <span class="food-ring-label">وجبات</span>
+          </div>` : `
+          <div class="food-ring-item">
+            <div class="ring-wrap">
+              ${renderRing({ size: 78, strokeWidth: 9, segments: [{ frac: stats.count > 0 ? 1 : 0, color: 'var(--btn-color, var(--pink-deep))' }] })}
+              <div class="ring-center-text">${toArabicNumeral(stats.count)}</div>
+            </div>
+            <span class="food-ring-label">وجبات</span>
+          </div>`}
+
+        ${caloriesGoal ? `
+          <div class="food-ring-item">
+            <div class="ring-wrap">
+              ${renderRing({ size: 78, strokeWidth: 9, segments: [{ frac: calFrac, color: overCal ? 'var(--warning-strong)' : 'var(--success-strong)' }] })}
+              <div class="ring-center-text food-cal-center">${toArabicNumeral(stats.totalCal || 0)}</div>
+            </div>
+            <span class="food-ring-label">${overCal ? `+${toArabicNumeral((stats.totalCal || 0) - caloriesGoal)} سعرة` : `من ${toArabicNumeral(caloriesGoal)}`}</span>
+          </div>` : (stats.totalCal ? `
+          <div class="food-ring-item">
+            <div class="ring-wrap">
+              ${renderRing({ size: 78, strokeWidth: 9, segments: [{ frac: 1, color: 'var(--capsule-color, var(--pink))' }] })}
+              <div class="ring-center-text food-cal-center">${toArabicNumeral(stats.totalCal)}</div>
+            </div>
+            <span class="food-ring-label">سعرة</span>
+          </div>` : '')}
+      </div>
+
+      <div class="food-type-strip">${typeStrip}</div>
+    `;
     await renderFoodList(document.getElementById('food-list'), today, { onChange: refresh });
   }
 
@@ -430,13 +486,32 @@ async function foodYearlyProvider(year) {
   const totalCal = yearLogs.filter(l => l.calories != null).reduce((s, l) => s + l.calories, 0);
   const byType = {};
   yearLogs.forEach(l => { byType[l.mealType] = (byType[l.mealType] || 0) + 1; });
-  const typeRows = MEAL_TYPES.filter(m => byType[m.key]).map(m => `<div class="yearly-row"><span>${m.icon} ${m.label}</span><span>${byType[m.key]}</span></div>`).join('');
+  const typeRows = MEAL_TYPES.filter(m => byType[m.key]).map(m => `<div class="yearly-row"><span>${m.icon} ${m.label}</span><span>${toArabicNumeral(byType[m.key])}</span></div>`).join('');
+
+  // Averages and adherence: a big total tells you nothing about a typical
+  // day, which is the thing worth knowing.
+  const foodDays = new Set(yearLogs.map(l => l.date));
+  const waterDays = yearWater.filter(w => w.liters > 0);
+  const avgWater = waterDays.length ? totalWaterL / waterDays.length : 0;
+  const target = await getWaterTarget();
+  const daysHitTarget = waterDays.filter(w => w.liters >= target).length;
+  const calDays = new Set(yearLogs.filter(l => l.calories != null).map(l => l.date));
+  const avgCalPerDay = calDays.size ? Math.round(totalCal / calDays.size) : 0;
 
   const html = `
-    <div class="yearly-row"><span>إجمالي الوجبات</span><span>${yearLogs.length}</span></div>
-    ${typeRows}
-    ${totalCal > 0 ? `<div class="yearly-row"><span>إجمالي السعرات</span><span>${totalCal}</span></div>` : ''}
-    <div class="yearly-row"><span>💧 إجمالي الماء</span><span>${totalWaterL.toFixed(1)} لتر</span></div>
+    <div class="yearly-row"><span>إجمالي الوجبات</span><span>${toArabicNumeral(yearLogs.length)}</span></div>
+    <div class="yearly-row"><span>أيام سجّلتِ فيها طعامك</span><span>${toArabicNumeral(foodDays.size)} يوم</span></div>
+    ${avgCalPerDay > 0 ? `<div class="yearly-row"><span>متوسط السعرات يومياً</span><span>${toArabicNumeral(avgCalPerDay)}</span></div>` : ''}
+    <div class="yearly-row"><span>💧 إجمالي الماء</span><span>${toArabicNumeral(totalWaterL.toFixed(1))} لتر</span></div>
+    ${waterDays.length ? `
+      <div class="yearly-row"><span>💧 متوسط الماء يومياً</span><span>${toArabicNumeral(avgWater.toFixed(2))} لتر</span></div>
+      <div class="yearly-row"><span>💧 أيام بلغتِ فيها هدفك</span><span>${toArabicNumeral(daysHitTarget)} من ${toArabicNumeral(waterDays.length)}</span></div>` : ''}
+    ${typeRows ? `
+      <details class="yearly-pain-details">
+        <summary>تفصيل الوجبات</summary>
+        ${typeRows}
+        ${totalCal > 0 ? `<div class="yearly-row"><span>إجمالي السعرات</span><span>${toArabicNumeral(totalCal)}</span></div>` : ''}
+      </details>` : ''}
   `;
   return { title: 'الطعام والماء', html, count: yearLogs.length };
 }

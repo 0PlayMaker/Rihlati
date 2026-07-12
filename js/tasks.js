@@ -79,6 +79,7 @@ async function getFixedTasksDoneSet(tasks, dateStr) {
 }
 
 async function renderFixedTaskList(container, dateStr, { editable, limit, onChange, showManage } = {}) {
+  if (!container) return; // page was replaced mid-render
   const tasks = await getActiveFixedTasks();
   const shown = limit ? tasks.slice(0, limit) : tasks;
   if (shown.length === 0) {
@@ -222,6 +223,7 @@ function todoRowHtml(todo, showManage) {
 }
 
 async function renderTodoList(container, { limit, onlyOpen, showManage } = {}) {
+  if (!container) return; // page was replaced mid-render
   let all = await db.customTodos.toArray();
   all.sort((a, b) => (a.done - b.done) || (b.createdAt - a.createdAt));
   if (onlyOpen) all = all.filter(t => !t.done);

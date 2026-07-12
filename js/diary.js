@@ -270,8 +270,14 @@ async function renderDiaryPage(params, view) {
       const entryRows = await Promise.all(monthEntries.map(async e => {
         const photoRow = await getDiaryPhoto(e.id);
         const photoUrl = photoRow ? trackDiaryPhotoUrl(photoRow.photoBlob) : null;
-        const isLong = e.text.length > 140;
+        const text = e.text || ''; // photo-only entries have no text
+        const isLong = text.length > 140;
         const showFullPhoto = photoUrl && (e.photoDisplayMode || 'thumb_and_detail') === 'thumb_and_detail';
+        const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
+        // The mood she logged that same day — context the entry itself
+        // doesn't carry, and it costs nothing to surface.
+        const moodLog = await getMoodLog(e.date);
+        const dayMood = moodLog ? moodLog.emoji : null;
         return `
           <div class="card diary-entry-card" data-date="${e.date}">
             <div class="diary-entry-top">
@@ -286,8 +292,14 @@ async function renderDiaryPage(params, view) {
               ])}
             </div>
             ${showFullPhoto ? `<img class="diary-entry-photo" src="${photoUrl}" alt="">` : ''}
-            <p class="diary-entry-text ${isLong ? 'diary-entry-text-clamped' : ''}">${escapeHtml(e.text)}</p>
+            ${e.text ? `<p class="diary-entry-text ${isLong ? 'diary-entry-text-clamped' : ''}">${escapeHtml(e.text)}</p>` : ''}
             ${isLong ? `<button class="link-btn diary-expand-btn" data-expand="${e.date}">عرض المزيد ↓</button>` : ''}
+            ${(wordCount > 0 || dayMood) ? `
+              <div class="diary-entry-meta-row">
+                ${dayMood ? `<span class="diary-entry-meta">${dayMood}</span>` : ''}
+                ${wordCount > 0 ? `<span class="diary-entry-meta">${toArabicNumeral(wordCount)} ${wordCount === 1 ? 'كلمة' : 'كلمة'}</span>` : ''}
+                ${photoUrl ? `<span class="diary-entry-meta">📷</span>` : ''}
+              </div>` : ''}
           </div>`;
       }));
       return `

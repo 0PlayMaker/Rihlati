@@ -27,6 +27,79 @@ async function getAllTransactions() {
   const all = await db.economyTransactions.toArray();
   return all.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
 }
+
+// ---------- analytics ----------
+// The page used to show a balance and nothing else, which tells you what
+// you HAVE but nothing about where it's going. These are the numbers that
+// actually change behaviour.
+
+function monthKeyOf(dateStr) { return dateStr.slice(0, 7); } // YYYY-MM
+
+async function getMonthSummary(monthKey) {
+  const all = await getAllTransactions();
+  const inMonth = all.filter(t => monthKeyOf(t.date) === monthKey);
+  const income = inMonth.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0);
+  const expense = inMonth.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0);
+  return { income, expense, net: income - expense, count: inMonth.length, transactions: inMonth };
+}
+
+// Last N months of income/expense, oldest -> newest, for the trend bars.
+async function getMonthlyTrend(months = 6) {
+  const all = await getAllTransactions();
+  const out = [];
+  const now = new Date();
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const inMonth = all.filter(t => monthKeyOf(t.date) === key);
+    out.push({
+      key,
+      label: ARABIC_MONTHS[d.getMonth()],
+      income: inMonth.filter(t => t.amount > 0).reduce((s, t) => s + t.amount, 0),
+      expense: inMonth.filter(t => t.amount < 0).reduce((s, t) => s + Math.abs(t.amount), 0)
+    });
+  }
+  return out;
+}
+
+// Group expenses by their note — the closest thing to a category this
+// model has, and in practice recurring spends reuse the same wording
+// ("قهوة", "بنزين"), so it surfaces real patterns without forcing her to
+// maintain a category list she never asked for.
+async function getExpenseGroups(monthKey) {
+  const { transactions } = await getMonthSummary(monthKey);
+  const groups = {};
+  transactions.filter(t => t.amount < 0).forEach(t => {
+    const key = (t.note || 'بدون وصف').trim();
+    if (!groups[key]) groups[key] = { total: 0, count: 0 };
+    groups[key].total += Math.abs(t.amount);
+    groups[key].count += 1;
+  });
+  return Object.entries(groups)
+    .map(([note, g]) => ({ note, ...g }))
+    .sort((a, b) => b.total - a.total);
+}
+
+// Simple themed bar pair per month — income up, expense down.
+function trendBarsHtml(trend, currency) {
+  const max = Math.max(1, ...trend.flatMap(m => [m.income, m.expense]));
+  return `
+    <div class="econ-trend">
+      ${trend.map(m => `
+        <div class="econ-trend-col">
+          <div class="econ-trend-bars">
+            <div class="econ-bar econ-bar-in" style="height:${(m.income / max) * 100}%" title="دخل: ${m.income.toFixed(0)}"></div>
+            <div class="econ-bar econ-bar-out" style="height:${(m.expense / max) * 100}%" title="صرف: ${m.expense.toFixed(0)}"></div>
+          </div>
+          <span class="econ-trend-label">${m.label.slice(0, 4)}</span>
+        </div>`).join('')}
+    </div>
+    <div class="econ-trend-legend">
+      <span><i class="econ-dot econ-dot-in"></i> دخل</span>
+      <span><i class="econ-dot econ-dot-out"></i> صرف</span>
+    </div>`;
+}
+
 async function deleteTransaction(id) {
   await db.economyTransactions.delete(id);
 }
@@ -73,11 +146,23 @@ async function renderTransactionsList(container, { limit } = {}) {
 // income/expense totals before the detailed list — for the full
 // transactions page specifically (the hub page's "recent" preview
 // stays a simple flat list, which is all it needs at 3 items).
-async function renderTransactionsGroupedByMonth(container) {
+async function renderTransactionsGroupedByMonth(container, { filter = 'all', search = '' } = {}) {
   const currency = await getCurrencyLabel();
-  const all = await getAllTransactions(); // newest first already
+  let all = await getAllTransactions(); // newest first already
   if (all.length === 0) {
     container.innerHTML = `<div class="empty-state"><p>ما في معاملات مسجلة بعد.</p></div>`;
+    return;
+  }
+  // Filtering matters here: "show me everything I spent" is a completely
+  // different question from "what came in", and scrolling a mixed list
+  // hunting for one of them is how you give up on tracking money.
+  if (filter === 'income') all = all.filter(t => t.amount > 0);
+  else if (filter === 'expense') all = all.filter(t => t.amount < 0);
+  const q = (search || '').trim();
+  if (q) all = all.filter(t => (t.note || '').includes(q));
+
+  if (all.length === 0) {
+    container.innerHTML = `<div class="empty-state"><p>لا نتائج مطابقة.</p></div>`;
     return;
   }
   const months = {};
@@ -748,16 +833,43 @@ async function renderTransactionsPage(params, view) {
     </div>
     <div class="card">
       <button class="btn btn-primary btn-block" id="txn-add-btn">+ معاملة جديدة</button>
+      <div class="habit-type-chips txn-filter-row" id="txn-filters">
+        <button class="chip active" data-filter="all">الكل</button>
+        <button class="chip" data-filter="income">دخل</button>
+        <button class="chip" data-filter="expense">صرف</button>
+      </div>
+      <input class="text-input" type="search" id="txn-search" placeholder="🔎 بحث في الوصف...">
       <div id="txn-list"></div>
     </div>
   `;
   document.getElementById('txn-page-back').addEventListener('click', () => history.back());
+
+  let filter = 'all';
+  let search = '';
+
   async function refresh() {
     const balance = await getEconomyBalance();
-    document.getElementById('txn-balance-text').textContent = `${balance.toFixed(2)} ${currency}`;
-    await renderTransactionsGroupedByMonth(document.getElementById('txn-list'));
+    document.getElementById('txn-balance-text').textContent = `${toArabicNumeral(balance.toFixed(2))} ${currency}`;
+    await renderTransactionsGroupedByMonth(document.getElementById('txn-list'), { filter, search });
   }
   document.getElementById('txn-add-btn').addEventListener('click', () => openAddTransactionModal(refresh));
+
+  const filterRow = document.getElementById('txn-filters');
+  filterRow.querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', async () => {
+      filter = chip.dataset.filter;
+      filterRow.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c === chip));
+      await refresh();
+    });
+  });
+  let searchTimer = null;
+  document.getElementById('txn-search').addEventListener('input', (e) => {
+    // Debounced: re-rendering the whole grouped list on every keystroke is
+    // wasteful, and on a long history it stutters.
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => { search = e.target.value; await refresh(); }, 200);
+  });
+
   await refresh();
 }
 
@@ -772,14 +884,10 @@ async function renderEconomyPage(params, view) {
       <button class="btn btn-primary btn-sm economy-shopping-btn" id="shopping-link">🛒 قوائم التسوق</button>
     </div>
 
-    <div class="card">
-      <p class="ring-label">رصيدك</p>
-      <p class="period-status-text" id="economy-balance-text">${balance.toFixed(2)} ${currency}</p>
-      <div class="modal-actions">
-        <button class="btn btn-secondary btn-sm" id="economy-set-balance">تعديل الرصيد</button>
-        <button class="btn btn-primary btn-sm" id="economy-add-txn">+ معاملة</button>
-      </div>
-    </div>
+    <div class="card" id="economy-balance-card"></div>
+    <div class="card" id="economy-month-card"></div>
+    <div class="card" id="economy-trend-card"></div>
+    <div class="card" id="economy-groups-card"></div>
 
     <div class="card">
       <div class="section-header">
@@ -825,15 +933,100 @@ async function renderEconomyPage(params, view) {
   document.getElementById('economy-back').addEventListener('click', () => history.back());
   document.getElementById('shopping-link').addEventListener('click', () => goTo('/shopping-lists'));
 
-  async function refreshBalance() {
+  const thisMonth = todayStr().slice(0, 7);
+
+  async function refreshAnalytics() {
     const b = await getEconomyBalance();
-    document.getElementById('economy-balance-text').textContent = `${b.toFixed(2)} ${currency}`;
+    const month = await getMonthSummary(thisMonth);
+    const trend = await getMonthlyTrend(6);
+    const groups = await getExpenseGroups(thisMonth);
+
+    // Balance hero
+    document.getElementById('economy-balance-card').innerHTML = `
+      <p class="ring-label">رصيدك</p>
+      <div class="econ-balance">
+        <span class="econ-balance-num ${b < 0 ? 'econ-negative' : ''}">${toArabicNumeral(b.toFixed(2))}</span>
+        <span class="econ-balance-cur">${currency}</span>
+      </div>
+      <div class="econ-actions">
+        <button class="btn btn-secondary btn-sm" id="economy-set-balance">تعديل الرصيد</button>
+        <button class="btn btn-primary btn-sm" id="economy-add-txn">+ معاملة</button>
+      </div>`;
+    document.getElementById('economy-set-balance').addEventListener('click', () => openSetBalanceModal(refreshAll));
+    document.getElementById('economy-add-txn').addEventListener('click', () => openAddTransactionModal(refreshAll));
+
+    // This month
+    const monthCard = document.getElementById('economy-month-card');
+    if (month.count === 0) {
+      monthCard.innerHTML = `
+        <h2 class="card-title">هذا الشهر</h2>
+        <p class="mini-progress-text">لا معاملات هذا الشهر بعد.</p>`;
+    } else {
+      const spentPct = month.income > 0 ? Math.min(100, (month.expense / month.income) * 100) : (month.expense > 0 ? 100 : 0);
+      monthCard.innerHTML = `
+        <h2 class="card-title">هذا الشهر</h2>
+        <div class="econ-month-row">
+          <div class="econ-month-stat">
+            <span class="econ-month-num econ-in">+${toArabicNumeral(month.income.toFixed(0))}</span>
+            <span class="econ-month-label">دخل</span>
+          </div>
+          <div class="econ-month-stat">
+            <span class="econ-month-num econ-out">−${toArabicNumeral(month.expense.toFixed(0))}</span>
+            <span class="econ-month-label">صرف</span>
+          </div>
+          <div class="econ-month-stat">
+            <span class="econ-month-num ${month.net < 0 ? 'econ-out' : 'econ-in'}">${month.net >= 0 ? '+' : '−'}${toArabicNumeral(Math.abs(month.net).toFixed(0))}</span>
+            <span class="econ-month-label">الصافي</span>
+          </div>
+        </div>
+        ${month.income > 0 ? `
+          <div class="mini-progress-track econ-spend-track">
+            <div class="mini-progress-fill ${month.expense > month.income ? 'econ-over' : ''}" style="width:${spentPct}%"></div>
+          </div>
+          <p class="settings-note">${month.expense > month.income
+            ? `⚠️ صرفتِ أكثر من دخلك هذا الشهر بـ ${toArabicNumeral((month.expense - month.income).toFixed(0))} ${currency}`
+            : `صرفتِ ${toArabicNumeral(Math.round(spentPct))}٪ من دخل هذا الشهر`}</p>` : ''}`;
+    }
+
+    // Trend
+    const trendCard = document.getElementById('economy-trend-card');
+    const hasTrend = trend.some(m => m.income > 0 || m.expense > 0);
+    if (hasTrend) {
+      trendCard.innerHTML = `
+        <h2 class="card-title">آخر ٦ أشهر</h2>
+        ${trendBarsHtml(trend, currency)}`;
+      trendCard.style.display = '';
+    } else {
+      trendCard.style.display = 'none';
+    }
+
+    // Top spends
+    const groupsCard = document.getElementById('economy-groups-card');
+    if (groups.length > 0) {
+      const maxG = groups[0].total;
+      groupsCard.innerHTML = `
+        <h2 class="card-title">أكثر ما صرفتِ عليه هذا الشهر</h2>
+        ${groups.slice(0, 5).map(g => `
+          <div class="econ-group">
+            <div class="econ-group-head">
+              <span class="econ-group-name">${escapeHtml(g.note)}${g.count > 1 ? ` <span class="econ-group-count">×${toArabicNumeral(g.count)}</span>` : ''}</span>
+              <span class="econ-group-total">${toArabicNumeral(g.total.toFixed(0))} ${currency}</span>
+            </div>
+            <div class="econ-group-track"><div class="econ-group-fill" style="width:${(g.total / maxG) * 100}%"></div></div>
+          </div>`).join('')}`;
+      groupsCard.style.display = '';
+    } else {
+      groupsCard.style.display = 'none';
+    }
+  }
+
+  async function refreshAll() {
+    await refreshAnalytics();
     await renderTransactionsList(document.getElementById('economy-recent-txns'), { limit: 3 });
   }
-  document.getElementById('economy-set-balance').addEventListener('click', () => openSetBalanceModal(refreshBalance));
-  document.getElementById('economy-add-txn').addEventListener('click', () => openAddTransactionModal(refreshBalance));
+  const refreshBalance = refreshAll; // other sections call this name
 
-  await renderTransactionsList(document.getElementById('economy-recent-txns'), { limit: 3 });
+  await refreshAll();
 
   await renderPurchasesList('edibles', document.getElementById('economy-recent-edibles'), { limit: 2, onBalanceChange: refreshBalance });
   document.getElementById('economy-add-edible').addEventListener('click', () => {
