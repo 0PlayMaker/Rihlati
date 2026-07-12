@@ -241,30 +241,50 @@ async function openGoalModal({ existingId, onSaved }) {
   overlay.innerHTML = `
     <div class="modal modal-lg">
       <h2 class="modal-title">${existing ? 'تعديل الهدف' : 'هدف جديد'}</h2>
-      <label class="field-label">العنوان</label>
+
+      <label class="field-label">ما هو هدفك؟</label>
       <input class="text-input" id="goal-title-input" value="${escapeHtml(existing?.title || '')}" placeholder="مثلاً: قراءة القرآن كاملاً" autofocus>
 
-      <label class="field-label">نوع التتبع</label>
-      <div class="habit-type-chips" id="goal-type-chips">
-        <button class="chip ${selectedType === 'checkbox' ? 'active' : ''}" data-type="checkbox">✅ بسيط</button>
-        <button class="chip ${selectedType === 'numeric' ? 'active' : ''}" data-type="numeric">🔢 رقمي</button>
-        <button class="chip ${selectedType === 'percentage' ? 'active' : ''}" data-type="percentage">🎚️ نسبة</button>
+      <label class="field-label">كيف تتابعينه؟</label>
+      <div class="goal-type-grid" id="goal-type-chips">
+        <button class="goal-type-card ${selectedType === 'checkbox' ? 'active' : ''}" data-type="checkbox">
+          <span class="goal-type-icon">✅</span>
+          <span class="goal-type-name">بسيط</span>
+          <span class="goal-type-desc">تمّ / لم يتمّ</span>
+        </button>
+        <button class="goal-type-card ${selectedType === 'numeric' ? 'active' : ''}" data-type="numeric">
+          <span class="goal-type-icon">🔢</span>
+          <span class="goal-type-name">رقمي</span>
+          <span class="goal-type-desc">٢٠ من ٥٠ كتاب</span>
+        </button>
+        <button class="goal-type-card ${selectedType === 'percentage' ? 'active' : ''}" data-type="percentage">
+          <span class="goal-type-icon">🎚️</span>
+          <span class="goal-type-name">نسبة</span>
+          <span class="goal-type-desc">٪٠ إلى ٪١٠٠</span>
+        </button>
       </div>
 
-      <div id="goal-numeric-fields" class="${selectedType === 'numeric' ? '' : 'hidden'}">
-        <label class="field-label">الحالي</label>
-        <input class="text-input" type="number" id="goal-current-input" value="${existing?.currentValue ?? 0}">
-        <label class="field-label">الهدف</label>
-        <input class="text-input" type="number" id="goal-target-input" value="${existing?.targetValue ?? ''}">
-        <p class="settings-note">إذا كان هدفك إنقاص رقم (مثل الوزن)، اكتبي رقماً أقل من الحالي — بيفهم تلقائياً إنك تنقصين.</p>
+      <div id="goal-numeric-fields" class="goal-numeric-block ${selectedType === 'numeric' ? '' : 'hidden'}">
+        <div class="goal-num-pair">
+          <div class="goal-num-field">
+            <label class="field-label">الآن</label>
+            <input class="text-input" type="text" inputmode="decimal" id="goal-current-input" value="${existing?.currentValue ?? 0}">
+          </div>
+          <span class="goal-num-arrow">←</span>
+          <div class="goal-num-field">
+            <label class="field-label">الهدف</label>
+            <input class="text-input" type="text" inputmode="decimal" id="goal-target-input" value="${existing?.targetValue ?? ''}">
+          </div>
+        </div>
         <label class="field-label">الوحدة (اختياري)</label>
         <input class="text-input" id="goal-unit-input" value="${escapeHtml(existing?.unit || '')}" placeholder="مثلاً: كتاب، صفحة، كغ">
+        <p class="settings-note">إن كان هدفك إنقاص رقم (كالوزن)، اكتبي هدفاً أقل من الحالي — سيُفهم تلقائياً أنّك تنقصين.</p>
       </div>
 
-      <label class="field-label">ملاحظات (اختياري)</label>
       <label class="field-label">موعد مستهدف (اختياري)</label>
       <input class="text-input" type="date" id="goal-date-input" value="${existing?.targetDate || ''}">
-      <label class="field-label">ملاحظات</label>
+
+      <label class="field-label">ملاحظات (اختياري)</label>
       <textarea class="mood-note-input" id="goal-notes-input" placeholder="تفاصيل، خطوات، تحديثات...">${escapeHtml(existing?.notes || '')}</textarea>
 
       <div class="modal-actions">
@@ -275,10 +295,10 @@ async function openGoalModal({ existingId, onSaved }) {
     </div>`;
   document.body.appendChild(overlay);
 
-  overlay.querySelectorAll('#goal-type-chips .chip').forEach(chip => {
+  overlay.querySelectorAll('#goal-type-chips .goal-type-card').forEach(chip => {
     chip.addEventListener('click', () => {
       selectedType = chip.dataset.type;
-      overlay.querySelectorAll('#goal-type-chips .chip').forEach(c => c.classList.toggle('active', c.dataset.type === selectedType));
+      overlay.querySelectorAll('#goal-type-chips .goal-type-card').forEach(c => c.classList.toggle('active', c.dataset.type === selectedType));
       document.getElementById('goal-numeric-fields').classList.toggle('hidden', selectedType !== 'numeric');
     });
   });
@@ -357,22 +377,17 @@ async function renderGoalsSummary(container) {
     <h2 class="card-title">🎯 أهدافك</h2>
     <div class="goals-summary">
       <div class="ring-wrap">
-        ${renderRing({ size: 92, strokeWidth: 10, segments: [{ frac: avg, color: avg >= 1 ? 'var(--success-strong)' : 'var(--btn-color, var(--pink-deep))' }] })}
+        ${renderRing({ size: 88, strokeWidth: 10, segments: [{ frac: avg, color: avg >= 1 ? 'var(--success-strong)' : 'var(--btn-color, var(--pink-deep))' }] })}
         <div class="ring-center-text">${toArabicNumeral(Math.round(avg * 100))}٪</div>
       </div>
       <div class="goals-summary-side">
-        <div class="diary-stat-row goals-stat-row">
-          <div class="diary-stat">
-            <span class="diary-stat-num">${toArabicNumeral(done)}/${toArabicNumeral(goals.length)}</span>
-            <span class="diary-stat-label">مكتمل</span>
-          </div>
-          <div class="diary-stat">
-            <span class="diary-stat-num">${toArabicNumeral(goals.length - done)}</span>
-            <span class="diary-stat-label">قيد العمل</span>
-          </div>
+        <p class="ring-label">متوسط التقدّم</p>
+        <div class="goals-chip-row">
+          <span class="goals-chip goals-chip-done">✅ ${toArabicNumeral(done)} مكتمل</span>
+          <span class="goals-chip goals-chip-active">🔄 ${toArabicNumeral(goals.length - done)} قيد العمل</span>
         </div>
-        ${overdue.length ? `<p class="goals-alert goals-alert-danger">⚠️ ${toArabicNumeral(overdue.length)} ${overdue.length === 1 ? 'هدف تأخّر' : 'أهداف تأخّرت'}</p>` : ''}
-        ${soon.length ? `<p class="goals-alert goals-alert-warning">🎯 ${toArabicNumeral(soon.length)} ${soon.length === 1 ? 'هدف' : 'أهداف'} خلال أسبوع</p>` : ''}
+        ${overdue.length ? `<span class="goals-alert goals-alert-danger">⚠️ ${toArabicNumeral(overdue.length)} ${overdue.length === 1 ? 'هدف تأخّر' : 'أهداف تأخّرت'}</span>` : ''}
+        ${soon.length ? `<span class="goals-alert goals-alert-warning">🎯 ${toArabicNumeral(soon.length)} ${soon.length === 1 ? 'هدف' : 'أهداف'} خلال أسبوع</span>` : ''}
       </div>
     </div>`;
 }

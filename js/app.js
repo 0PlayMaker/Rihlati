@@ -13,11 +13,22 @@ async function rescheduleHomeReminders() {
 
 // Small ring used for the routine circles — same visual language as the
 // big ones, just sized down so two fit side by side under them.
+// Ring colour comes from a CSS variable per tone, never a literal — so the
+// whole grid retunes with the theme (and the custom theme editor reaches
+// it) instead of a handful of hardcoded hues quietly opting out.
+const RING_TONE_VARS = {
+  care: 'var(--ring-care)',
+  worship: 'var(--ring-worship)',
+  period: 'var(--ring-period)',
+  health: 'var(--ring-health)',
+  success: 'var(--success-strong)',
+  late: 'var(--warning-strong)',
+  muted: 'var(--track)'
+};
+
 function smallRingHtml(frac, label, centerText, path, tone) {
-  const color = tone === 'period' ? 'var(--pink-deep)'
-    : tone === 'late' ? 'var(--warning-strong)'
-    : 'var(--btn-color, var(--pink-deep))';
-  const svg = renderRing({ size: 62, strokeWidth: 8, segments: [{ frac, color }] });
+  const color = RING_TONE_VARS[tone] || 'var(--btn-color, var(--pink-deep))';
+  const svg = renderRing({ size: 58, strokeWidth: 7, segments: [{ frac, color }] });
   return `
     <button class="small-ring-item small-ring-item-tappable" data-path="${path}" aria-label="${label}">
       <div class="ring-wrap small-ring-wrap">
@@ -46,7 +57,7 @@ async function buildPeriodRingData() {
     };
   }
   if (status.state === 'unknown' || !status.stats || status.stats.cycleSamples === 0) {
-    return { frac: 0, center: '—', label: '🌸 الدورة', tone: 'neutral' };
+    return { frac: 0, center: '—', label: '🌸 الدورة', tone: 'muted' };
   }
   if (status.state === 'late') {
     return { frac: 1, center: `+${toArabicNumeral(status.daysLate)}`, label: '🌸 متأخرة', tone: 'late' };
@@ -62,7 +73,7 @@ async function buildPeriodRingData() {
     frac: Math.min(1, elapsed / cycleLen),
     center: toArabicNumeral(days),
     label: `🌸 ${toArabicNumeral(days)} ${days === 1 ? 'يوم للدورة' : 'يوم للدورة'}`,
-    tone: 'neutral'
+    tone: 'period'
   };
 }
 
@@ -94,6 +105,57 @@ async function buildHealthRingData() {
   };
 }
 
+// Prayers ring — how many of the five are done today.
+async function buildPrayersRingData() {
+  const stats = await getWorshipTodayStats();
+  if (stats.paused) {
+    return { frac: 0, center: '🌸', label: '🕌 موقوف', tone: 'muted', path: '/worship' };
+  }
+  return {
+    frac: stats.total ? stats.done / stats.total : 0,
+    center: `${toArabicNumeral(stats.done)}/${toArabicNumeral(stats.total)}`,
+    label: '🕌 الصلوات',
+    tone: stats.done === stats.total ? 'success' : 'worship',
+    path: '/worship'
+  };
+}
+
+// Wird ring — position within the current khatm, not just done/not-done,
+// so the ring itself shows how far through the Quran she is.
+async function buildWirdRingData() {
+  const plan = await getWirdPlan();
+  if (!plan) {
+    return { frac: 0, center: '—', label: '📖 الورد', tone: 'muted', path: '/worship' };
+  }
+  const { progressPages, khatmCount } = await getWirdProgress();
+  const loggedToday = await isWirdLoggedToday();
+  return {
+    frac: progressPages / QURAN_TOTAL_PAGES,
+    center: loggedToday ? '✓' : toArabicNumeral(Math.round((progressPages / QURAN_TOTAL_PAGES) * 100)) + '٪',
+    label: khatmCount > 0 ? `📖 ${toArabicNumeral(khatmCount)} ختمة` : '📖 الورد',
+    tone: loggedToday ? 'success' : 'worship',
+    path: '/worship'
+  };
+}
+
+// Adhkar ring — morning + evening as a single 0/1/2 signal, since they're
+// two halves of the same daily habit.
+async function buildAdhkarRingData() {
+  const today = todayStr();
+  const [m, e] = await Promise.all([
+    isDailyAdhkarDone('morning', today),
+    isDailyAdhkarDone('evening', today)
+  ]);
+  const done = (m ? 1 : 0) + (e ? 1 : 0);
+  return {
+    frac: done / 2,
+    center: `${toArabicNumeral(done)}/٢`,
+    label: '🤲 الأذكار',
+    tone: done === 2 ? 'success' : 'worship',
+    path: '/worship'
+  };
+}
+
 async function renderHomeSmallRings() {
   const today = todayStr();
   const [morningRoutines, eveningRoutines] = await Promise.all([
@@ -103,27 +165,35 @@ async function renderHomeSmallRings() {
     countCareRoutinesDone(morningRoutines, today),
     countCareRoutinesDone(eveningRoutines, today)
   ]);
-  const period = await buildPeriodRingData();
-  const health = await buildHealthRingData();
+  const [period, health, prayers, wird, adhkar] = await Promise.all([
+    buildPeriodRingData(),
+    buildHealthRingData(),
+    buildPrayersRingData(),
+    buildWirdRingData(),
+    buildAdhkarRingData()
+  ]);
+
+  // A 4-across grid rather than stacked pairs: two lonely rings under two
+  // big ones left the row visually lopsided, with dead space either side.
+  const items = [
+    { frac: morningRoutines.length ? morningDone / morningRoutines.length : 0,
+      label: '🌅 صباحي',
+      center: morningRoutines.length ? `${toArabicNumeral(morningDone)}/${toArabicNumeral(morningRoutines.length)}` : '—',
+      path: '/dailycare', tone: 'care' },
+    { frac: eveningRoutines.length ? eveningDone / eveningRoutines.length : 0,
+      label: '🌙 مسائي',
+      center: eveningRoutines.length ? `${toArabicNumeral(eveningDone)}/${toArabicNumeral(eveningRoutines.length)}` : '—',
+      path: '/dailycare', tone: 'care' },
+    { ...prayers },
+    { ...adhkar },
+    { ...wird },
+    { frac: period.frac, label: period.label, center: period.center, path: '/period', tone: period.tone },
+    { frac: health.frac, label: health.label, center: health.center, path: '/body', tone: 'health' }
+  ];
 
   return `
-    <div class="small-rings-row">
-      ${smallRingHtml(
-        morningRoutines.length ? morningDone / morningRoutines.length : 0,
-        '🌅 صباحي',
-        morningRoutines.length ? `${toArabicNumeral(morningDone)}/${toArabicNumeral(morningRoutines.length)}` : '—',
-        '/dailycare'
-      )}
-      ${smallRingHtml(
-        eveningRoutines.length ? eveningDone / eveningRoutines.length : 0,
-        '🌙 مسائي',
-        eveningRoutines.length ? `${toArabicNumeral(eveningDone)}/${toArabicNumeral(eveningRoutines.length)}` : '—',
-        '/dailycare'
-      )}
-    </div>
-    <div class="small-rings-row">
-      ${smallRingHtml(period.frac, period.label, period.center, '/period', period.tone)}
-      ${smallRingHtml(health.frac, health.label, health.center, '/body')}
+    <div class="small-rings-grid">
+      ${items.map(i => smallRingHtml(i.frac, i.label, i.center, i.path, i.tone)).join('')}
     </div>`;
 }
 async function buildRemainingTodayChips() {

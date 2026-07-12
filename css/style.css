@@ -93,6 +93,17 @@
   --info-strong: var(--blue-deep);
   /* Chart accents that must stay distinguishable from the main accent. */
   --chart-secondary: #E8833E;
+
+  /* ---- ring tones ----
+     The home rings each represent a different area of life, so they need
+     to be TELLABLE APART at a glance — but they must still be theme-owned
+     rather than hardcoded, or a custom theme can't reach them. Each is
+     derived from the existing pastel family, and every one of them can be
+     retuned in a single place (including per-mode, below). */
+  --ring-care: var(--pink-deep);
+  --ring-worship: var(--mint-deep);
+  --ring-period: var(--rose-deep);
+  --ring-health: var(--blue-deep);
   --title-color: var(--ink);
   --btn-color: var(--pink-deep);
   --capsule-color: var(--pink-deep);
@@ -258,21 +269,56 @@ a { color: var(--pink-deep); text-decoration: none; }
    ============================================================ */
 
 .quick-actions-row, .glance-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+
+/* The six section cards. Each carries its own accent (--tile-accent, set
+   per-card below) rather than all six being identical grey boxes — a
+   coloured icon disc plus a matching top rule makes them scannable
+   instead of interchangeable. The accent is always a token, never a
+   literal, so the whole set retunes with the theme. */
 .quick-action-card, .glance-card {
+  position: relative; overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
-  padding: var(--space-4);
-  display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
+  padding: var(--space-3) var(--space-2) var(--space-3);
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
   box-shadow: var(--shadow-soft);
   cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.2s ease;
+  --tile-accent: var(--btn-color, var(--pink-deep));
+  --tile-tint: var(--capsule-color, var(--pink));
+}
+/* A thin accent rule across the top — enough to identify the tile without
+   flooding the card with colour. */
+.quick-action-card::before, .glance-card::before {
+  content: ''; position: absolute; inset-block-start: 0; inset-inline: 0;
+  height: 3px; background: var(--tile-accent);
 }
 .quick-action-card.soon, .glance-card.soon { opacity: 0.82; }
-.quick-action-card:active, .glance-card:active { transform: scale(0.97); }
-.quick-action-icon, .glance-icon { font-size: 28px; }
-.quick-action-label, .glance-label { font-size: 14px; font-weight: 700; }
+.quick-action-card:active, .glance-card:active { transform: scale(0.96); box-shadow: none; }
+
+/* The icon sits in a tinted disc so it reads as a badge, not loose emoji. */
+.quick-action-icon, .glance-icon {
+  font-size: 20px; width: 42px; height: 42px; border-radius: var(--radius-round);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--tile-tint);
+}
+.quick-action-label, .glance-label { font-size: 12px; font-weight: 700; color: var(--ink); text-align: center; }
 .soon-badge { font-size: 11px; color: var(--pink-deep); background: var(--pink); border-radius: var(--radius-round); padding: 2px 10px; margin-top: 2px; }
-.quick-action-stat { font-size: 12px; color: var(--mint-deep); background: var(--mint); border-radius: var(--radius-round); padding: 2px 10px; margin-top: 2px; font-weight: 700; }
+.quick-action-stat {
+  font-size: 11px; font-weight: 800; color: var(--tile-accent);
+  border-radius: var(--radius-round); padding: 2px 8px;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Per-tile identity. Tokens only — a custom theme can retune all six by
+   retuning the palette, and no tile can quietly opt out of the theme. */
+#food-action    { --tile-accent: var(--yellow-deep); --tile-tint: var(--yellow); }
+#worship-action { --tile-accent: var(--mint-deep);   --tile-tint: var(--mint); }
+#diary-action   { --tile-accent: var(--lavender-deep, var(--pink-deep)); --tile-tint: var(--lavender, var(--pink)); }
+#period-action  { --tile-accent: var(--rose-deep);   --tile-tint: var(--rose); }
+#economy-action { --tile-accent: var(--mint-deep);   --tile-tint: var(--mint); }
+#body-action    { --tile-accent: var(--blue-deep);   --tile-tint: var(--blue); }
 
 /* ============================================================
    Calendar
@@ -612,13 +658,20 @@ a { color: var(--pink-deep); text-decoration: none; }
    Goals
    ============================================================ */
 
-.goal-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--track); }
-.goal-row:last-child { border-bottom: none; }
-.goal-row-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
-.goal-title { font-size: 15px; font-weight: 500; }
-.goal-title.done { color: var(--ink-soft); }
-.goal-notes { font-size: 13px; color: var(--ink-faint); margin-top: var(--space-2); }
-.goal-slider { width: 100%; accent-color: var(--pink-deep); margin: var(--space-2) 0 4px; }
+/* Goals are CARDS, not divider-separated rows. A goal is a thing you're
+   working on — it deserves to look like an object, not a table row.
+   (The old .goal-row-top here also fought the newer flex layout further
+   down the file: two rules, same selector, opposite intent.) */
+.goal-row {
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-soft);
+  padding: var(--space-3); margin-bottom: var(--space-3);
+}
+.goal-row:last-child { margin-bottom: 0; }
+.goal-title { font-size: 15px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+.goal-title.done { color: var(--ink-soft); text-decoration: line-through; text-decoration-color: var(--success-strong); }
+.goal-notes { font-size: 12px; color: var(--ink-faint); margin-top: var(--space-2); line-height: 1.6; }
+.goal-slider { width: 100%; accent-color: var(--btn-color, var(--pink-deep)); margin: var(--space-3) 0 4px; }
 
 /* ============================================================
    Bottom nav bar
@@ -720,10 +773,7 @@ body.theme-glass-dark .kebab-item {
 .streak-chip { font-size: 11px; font-weight: 700; color: var(--pink-deep); background: var(--pink); border-radius: var(--radius-round); padding: 3px 10px; }
 .home-goals-summary { margin-bottom: var(--space-2); color: var(--ink-soft); font-size: 13px; }
 .quick-actions-row-3 { grid-template-columns: repeat(3, 1fr); }
-.quick-actions-row-3 .quick-action-icon { font-size: 22px; }
-.quick-actions-row-3 .quick-action-label { font-size: 12px; }
 .glance-row-3 { grid-template-columns: repeat(3, 1fr); }
-.glance-row-3 .glance-icon { font-size: 22px; }
 .glance-row-3 .glance-label { font-size: 12px; }
 
 /* ============================================================
@@ -1142,13 +1192,20 @@ body.theme-dark-ish .food-photo-placeholder {
 .checkbox-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--btn-color, var(--pink-deep)); flex-shrink: 0; }
 
 /* ---------- Home hero: small routine rings + "remaining today" ---------- */
-.small-rings-row {
-  display: flex; justify-content: center; gap: var(--space-5);
+/* A grid, not stacked pairs: two lonely rings sitting under two big ones
+   left dead space on both sides and made the card look unbalanced. Four
+   across fills the row and scales down gracefully on narrow screens. */
+.small-rings-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3) var(--space-2);
   margin-top: var(--space-3); padding-top: var(--space-3);
   border-top: 1px solid var(--track);
 }
-.small-rings-row + .small-rings-row { border-top: none; padding-top: 0; margin-top: var(--space-3); }
-.small-ring-label { max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 340px) { .small-rings-grid { grid-template-columns: repeat(3, 1fr); } }
+.small-ring-label {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 10px; text-align: center;
+}
 .small-ring-item { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .small-ring-wrap { position: relative; }
 .small-ring-text { font-size: 12px; font-weight: 800; }
@@ -1526,10 +1583,19 @@ body.theme-dark-ish .food-photo-placeholder {
 .water-quick-minus { flex: 0 0 44px; color: var(--danger-ink); }
 
 /* ---------- Goals: rings, steppers, deadlines ---------- */
-.goals-summary { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-2); }
-.goals-summary-side { flex: 1; min-width: 0; }
-.goals-stat-row { margin: 0 0 var(--space-2); padding: 0 0 var(--space-2); border-top: none; }
-.goals-alert { font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: var(--radius-round); margin-bottom: 4px; display: inline-block; }
+/* Goals summary: the big ring carries the headline, and the numbers sit
+   beside it as chips rather than a bordered stat table that fought the
+   card it lived in. */
+.goals-summary { display: flex; align-items: center; gap: var(--space-4); margin-top: var(--space-3); }
+.goals-summary-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.goals-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.goals-chip {
+  font-size: 11px; font-weight: 800; padding: 5px 11px; border-radius: var(--radius-round);
+  background: var(--track); color: var(--ink-soft);
+}
+.goals-chip-done { background: var(--success); color: var(--success-ink); }
+.goals-chip-active { background: var(--capsule-color, var(--pink)); color: var(--ink-on-pastel); }
+.goals-alert { font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: var(--radius-round); display: inline-block; align-self: flex-start; }
 .goals-alert-danger { background: var(--danger); color: var(--danger-ink); }
 .goals-alert-warning { background: var(--warning); color: var(--warning-ink); }
 
@@ -1537,14 +1603,18 @@ body.theme-dark-ish .food-photo-placeholder {
 .goal-row-top { display: flex; align-items: center; gap: var(--space-3); }
 .goal-ring { position: relative; width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 .goal-ring-pct { position: absolute; font-size: 11px; font-weight: 800; color: var(--title-color); }
-.goal-title-block { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.goal-title-block { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .goal-deadline { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: var(--radius-round); align-self: flex-start; }
 .goal-deadline-neutral { background: var(--track); color: var(--ink-soft); }
 .goal-deadline-warning { background: var(--warning); color: var(--warning-ink); }
 .goal-deadline-danger { background: var(--danger); color: var(--danger-ink); }
-.goal-numeric-row { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
-.goal-target-label { font-size: 11px; color: var(--ink-faint); }
+.goal-numeric-row {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px dashed var(--track);
+}
+.goal-target-label { font-size: 11px; color: var(--ink-faint); margin-inline-start: auto; }
 .goal-set-btn { font-size: 11px; }
+.goal-slider-label { display: block; text-align: center; font-weight: 800; color: var(--btn-color, var(--pink-deep)); }
 
 /* ---------- Worship top card ---------- */
 .worship-top { display: flex; align-items: center; gap: var(--space-3); }
@@ -1578,3 +1648,31 @@ body.theme-dark-ish .food-photo-placeholder {
 .habit-highlight { font-size: 12px; color: var(--ink-soft); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .habit-highlight strong { color: var(--ink); font-weight: 700; }
 .habit-hidden-count { font-size: 10px; font-weight: 700; color: var(--ink-faint); }
+
+/* ---------- Goal modal: type picker + numeric block ---------- */
+.goal-type-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: var(--space-2); }
+.goal-type-card {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 10px 4px; border-radius: var(--radius-md);
+  border: 1.5px solid var(--track); background: var(--surface);
+  cursor: pointer; transition: all 0.15s ease;
+}
+.goal-type-card.active {
+  border-color: var(--btn-color, var(--pink-deep));
+  background: var(--capsule-color, var(--pink));
+}
+.goal-type-icon { font-size: 18px; }
+.goal-type-name { font-size: 12px; font-weight: 800; color: var(--ink); }
+.goal-type-card.active .goal-type-name { color: var(--ink-on-pastel); }
+/* The description is the point: "رقمي" alone doesn't tell you what you get. */
+.goal-type-desc { font-size: 9px; color: var(--ink-faint); text-align: center; }
+.goal-type-card.active .goal-type-desc { color: var(--ink-on-pastel); opacity: 0.8; }
+
+.goal-numeric-block {
+  background: var(--track); border-radius: var(--radius-md);
+  padding: var(--space-3); margin-bottom: var(--space-2);
+}
+.goal-num-pair { display: flex; align-items: flex-end; gap: var(--space-2); }
+.goal-num-field { flex: 1; min-width: 0; }
+.goal-num-field .text-input { text-align: center; font-weight: 800; }
+.goal-num-arrow { font-size: 18px; color: var(--ink-faint); padding-bottom: 10px; flex-shrink: 0; }
