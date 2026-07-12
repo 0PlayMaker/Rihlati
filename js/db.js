@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v44 · ١١ يوليو ٢٠٢٦';
+const APP_VERSION = 'v45 · ١٢ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -301,6 +301,21 @@ db.version(17).stores({
 // outside a tracked period, e.g. premenstrual cramps).
 db.version(18).stores({
   periodReadings: '++id, dateStr, periodId'
+});
+
+// ---------- Phase 19 — per-item adhkar counters (مسبحة) ----------
+// Each morning/evening dhikr item now gets its OWN daily count, so a
+// dhikr with "repeat 33x" can actually be counted rather than just
+// read-and-ticked. Same shape as customAdhkarLogs (one row per item per
+// day, unique so a double-tap can't fork it into two rows).
+//
+// Everything else added this phase (trackedOnHome on fixed tasks,
+// deleteWhenDone on todos, hiddenFromHome on habits, benefit/goalCount
+// on adhkar) are plain unindexed fields on tables that already exist —
+// Dexie stores those without needing a version bump, and every reader
+// treats "missing" as the sensible default, so old rows keep working.
+db.version(19).stores({
+  dailyAdhkarItemLogs: '++id, &[itemId+date], itemId'
 });
 
 // ---------- date helpers (used everywhere) ----------

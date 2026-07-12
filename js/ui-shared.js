@@ -270,3 +270,119 @@ function wireThreeStateRows(container, onAction) {
     });
   });
 }
+
+// ---------- المسبحة: a big, tappable counter ----------
+// The whole point is that it's HARD TO MISS with a thumb — the old
+// approach (a small "+" chip next to the name) is fine for logging
+// "I did it", but it's the wrong tool for actually counting a dhikr
+// 33 or 100 times while your eyes are elsewhere. So: one large target,
+// a progress ring that closes as you approach the goal, and a reset.
+//
+// It's deliberately generic (getCount/setCount are injected) so the
+// exact same component drives the standalone custom adhkar AND the
+// individual morning/evening dhikr items, which store their counts in
+// different tables.
+function openTasbeehModal({ title, benefit, goal, getCount, setCount, onClose }) {
+  let count = 0;
+  const hasGoal = typeof goal === 'number' && goal > 0;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay tasbeeh-overlay';
+  overlay.innerHTML = `
+    <div class="tasbeeh-modal">
+      <button class="icon-btn tasbeeh-close" id="tasbeeh-close" aria-label="إغلاق">✕</button>
+      <h2 class="tasbeeh-title">${escapeHtml(title)}</h2>
+      ${benefit ? `<p class="tasbeeh-benefit">${escapeHtml(benefit)}</p>` : ''}
+
+      <button class="tasbeeh-circle" id="tasbeeh-tap" aria-label="عدّ">
+        <svg class="tasbeeh-ring" viewBox="0 0 200 200" aria-hidden="true">
+          <circle class="tasbeeh-ring-track" cx="100" cy="100" r="92"/>
+          <circle class="tasbeeh-ring-fill" id="tasbeeh-ring-fill" cx="100" cy="100" r="92"/>
+        </svg>
+        <span class="tasbeeh-count" id="tasbeeh-count">٠</span>
+        ${hasGoal ? `<span class="tasbeeh-goal" id="tasbeeh-goal-text"></span>` : ''}
+      </button>
+
+      <p class="tasbeeh-hint">اضغطي على الدائرة للعدّ</p>
+      <div class="tasbeeh-actions">
+        <button class="btn btn-text" id="tasbeeh-minus">− واحد</button>
+        <button class="btn btn-text tasbeeh-reset" id="tasbeeh-reset">↺ تصفير</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const countEl = overlay.querySelector('#tasbeeh-count');
+  const goalEl = overlay.querySelector('#tasbeeh-goal-text');
+  const fillEl = overlay.querySelector('#tasbeeh-ring-fill');
+  const tapEl = overlay.querySelector('#tasbeeh-tap');
+  const CIRCUMFERENCE = 2 * Math.PI * 92;
+  fillEl.style.strokeDasharray = String(CIRCUMFERENCE);
+
+  function paint() {
+    countEl.textContent = toArabicNumeral(count);
+    if (hasGoal) {
+      goalEl.textContent = `من ${toArabicNumeral(goal)}`;
+      const frac = Math.min(1, count / goal);
+      fillEl.style.strokeDashoffset = String(CIRCUMFERENCE * (1 - frac));
+      const reached = count >= goal;
+      tapEl.classList.toggle('tasbeeh-complete', reached);
+    } else {
+      // No goal set: the ring cycles every 33 so there's still a sense of
+      // rhythm and progress rather than a dead, permanently-empty circle.
+      const frac = (count % 33) / 33;
+      fillEl.style.strokeDashoffset = String(CIRCUMFERENCE * (1 - frac));
+    }
+  }
+
+  let lastMilestone = 0;
+  async function bump(delta) {
+    const next = Math.max(0, count + delta);
+    if (next === count) return;
+    count = next;
+    paint();
+    await setCount(count);
+    // Haptic + tone only at meaningful moments, not on every single tap —
+    // a buzz per tap while counting to 100 would be maddening.
+    const milestone = hasGoal ? (count === goal) : (count > 0 && count % 33 === 0);
+    if (milestone && count !== lastMilestone) {
+      lastMilestone = count;
+      if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+      if (typeof playBeepSequence === 'function') { unlockAudioContext(); playBeepSequence(2); }
+    } else if (delta > 0 && navigator.vibrate) {
+      navigator.vibrate(12); // a whisper of feedback per tap
+    }
+  }
+
+  tapEl.addEventListener('click', () => bump(1));
+  overlay.querySelector('#tasbeeh-minus').addEventListener('click', () => bump(-1));
+  overlay.querySelector('#tasbeeh-reset').addEventListener('click', async () => {
+    if (count === 0) return;
+    if (!confirm('تصفير العدّاد؟')) return;
+    count = 0;
+    lastMilestone = 0;
+    paint();
+    await setCount(0);
+  });
+
+  function close() {
+    overlay.remove();
+    if (onClose) onClose();
+  }
+  overlay.querySelector('#tasbeeh-close').addEventListener('click', close);
+  // Tapping the dim area outside the sheet closes it, but taps INSIDE
+  // must not bubble out and close it mid-count.
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  (async () => {
+    count = (await getCount()) || 0;
+    lastMilestone = count;
+    paint();
+  })();
+}
+
+// Arabic-Indic digits for display. (Kept here so ui-shared has no
+// dependency on period-pain.js, which defines its own copy for its
+// own charts.)
+function toArabicNumeral(n) {
+  return String(n).replace(/[0-9]/g, d => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
+}

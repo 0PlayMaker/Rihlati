@@ -17,7 +17,7 @@ function getHabitType(habit) {
 async function createHabit(name, emoji, type) {
   const all = await db.habits.toArray();
   const color = HABIT_COLORS[all.length % HABIT_COLORS.length];
-  await db.habits.add({
+  return db.habits.add({
     name, emoji: emoji || '🌟', color, type: type === 'bad' ? 'bad' : 'good',
     archived: false, order: all.length, createdAt: Date.now()
   });
@@ -33,6 +33,22 @@ async function getActiveHabits() {
 async function getActiveHabitsByType(type) {
   const all = await getActiveHabits();
   return all.filter(h => getHabitType(h) === type);
+}
+
+// Home shows only the habits she hasn't marked private — but "private"
+// means her NAME for it doesn't appear on a screen someone might read
+// over her shoulder. The ring still counts it: the ring is just numbers,
+// so it gives nothing away, and a hidden habit should still be tracked
+// like any other. Absent field means visible, so existing habits keep
+// behaving exactly as before.
+function isHabitVisibleOnHome(habit) {
+  return !habit.hiddenFromHome;
+}
+async function getHomeVisibleHabits() {
+  return (await getActiveHabits()).filter(isHabitVisibleOnHome);
+}
+async function setHabitHiddenFromHome(id, hidden) {
+  await db.habits.update(id, { hiddenFromHome: !!hidden });
 }
 
 async function archiveHabit(id) {
@@ -77,10 +93,51 @@ async function undoLastHabitEvent(habitId) {
 async function getHabitEvents(habitId) {
   return db.habitEvents.where('habitId').equals(habitId).toArray();
 }
+
+// An "attempt" is one clean run: from the habit's start (or the last
+// relapse / manual reset) up to the next relapse, or up to now if it's
+// the run she's currently on. Slicing the event log this way is what
+// lets a relapse ZERO the visible mishap counter without destroying
+// anything — the events keep their timestamps, so every past attempt
+// can still be replayed with its own mishap count in the yearly view.
+async function getHabitAttempts(habit) {
+  const events = (await getHabitEvents(habit.id)).sort((a, b) => a.timestamp - b.timestamp);
+  const relapses = events.filter(e => e.type === 'relapse');
+  const mishaps = events.filter(e => e.type === 'mishap');
+
+  const attempts = [];
+  let start = habit.createdAt;
+  for (const r of relapses) {
+    attempts.push({
+      startMs: start,
+      endMs: r.timestamp,
+      endedByRelapse: true,
+      mishaps: mishaps.filter(m => m.timestamp >= start && m.timestamp < r.timestamp).length
+    });
+    start = r.timestamp;
+  }
+  // The run she's on right now. manualResetAt can push its start later
+  // than the last relapse (the "restart without calling it a relapse"
+  // escape hatch), so honour whichever is more recent.
+  const liveStart = (habit.manualResetAt && habit.manualResetAt > start) ? habit.manualResetAt : start;
+  attempts.push({
+    startMs: liveStart,
+    endMs: null,
+    endedByRelapse: false,
+    mishaps: mishaps.filter(m => m.timestamp >= liveStart).length
+  });
+  return attempts;
+}
+
+// Counts shown on the habit itself: mishaps are for the CURRENT attempt
+// only (a relapse wipes the slate), relapses stay cumulative.
 async function getHabitEventCounts(habitId) {
+  const habit = await db.habits.get(habitId);
   const events = await getHabitEvents(habitId);
+  const attempts = await getHabitAttempts(habit);
+  const current = attempts[attempts.length - 1];
   return {
-    mishaps: events.filter(e => e.type === 'mishap').length,
+    mishaps: current.mishaps,
     relapses: events.filter(e => e.type === 'relapse').length
   };
 }
@@ -165,7 +222,9 @@ function startHabitClockTicker() {
 // summary. Returns null if there are no habits of that type, or if
 // none currently has a streak going.
 async function getTopHabitStreak(type) {
-  const habits = await getActiveHabitsByType(type);
+  // Home-visible only: a habit she chose to hide must not leak back onto
+  // Home through the streak chip.
+  const habits = (await getActiveHabitsByType(type)).filter(isHabitVisibleOnHome);
   let best = null;
   for (const h of habits) {
     const stats = await getHabitStats(h.id);
@@ -180,6 +239,11 @@ async function getHabitsRingData() {
   // Combined across both types on purpose — the Home ring is a single
   // "how am I doing today" signal; the full Habits page is where the
   // good/bad breakdown actually matters.
+  //
+  // Deliberately includes habits hidden from Home: the ring is only ever
+  // numbers, so it reveals nothing, and a habit she keeps private should
+  // still be tracked and still count toward her day. Only the things that
+  // would show its NAME (the habit cards, the streak chips) are filtered.
   const habits = await getActiveHabits();
   const today = todayStr();
   let done = 0, missed = 0;
@@ -249,9 +313,10 @@ function habitCardHtml(habit, stats, refMs) {
     <div class="habit-card" data-row-id="${habit.id}">
       <div class="habit-card-top">
         <span class="habit-card-icon">${habit.emoji}</span>
-        <span class="habit-card-name">${escapeHtml(habit.name)}</span>
+        <span class="habit-card-name">${escapeHtml(habit.name)}${habit.hiddenFromHome ? ' <span class="habit-hidden-badge" title="مخفية من الصفحة الرئيسية">🙈</span>' : ''}</span>
         ${kebabMenuHtml(String(habit.id), [
           { key: 'edit', label: 'تعديل' },
+          { key: 'toggle-hidden', label: habit.hiddenFromHome ? '👁️ إظهارها في الرئيسية' : '🙈 إخفاؤها من الرئيسية' },
           { key: 'undo', label: 'التراجع عن آخر حدث' },
           { key: 'reset-clock', label: 'إعادة تعيين العداد' },
           { key: 'delete', label: 'حذف', danger: true }
@@ -305,6 +370,11 @@ async function renderHabitCards(container, habits, { onChange, emptyText } = {})
     const habitId = Number(rowId);
     if (action === 'edit') {
       openHabitModal({ existingId: habitId, onSaved: refresh });
+    } else if (action === 'toggle-hidden') {
+      const habit = habits.find(h => h.id === habitId);
+      await setHabitHiddenFromHome(habitId, !habit.hiddenFromHome);
+      toast(habit.hiddenFromHome ? '👁️ ستظهر في الرئيسية' : '🙈 أُخفيت من الرئيسية (لا تزال تُحتسب)');
+      await refresh();
     } else if (action === 'undo') {
       await undoLastHabitEvent(habitId);
       await refresh();
@@ -340,6 +410,11 @@ function openHabitModal({ existingId, onSaved } = {}) {
       <input class="text-input" id="new-habit-name" placeholder="مثلاً: شرب الماء" autofocus>
       <label class="field-label">إيموجي (اختياري)</label>
       <input class="text-input emoji-input" id="new-habit-emoji" placeholder="🌟" maxlength="2">
+      <label class="checkbox-row">
+        <input type="checkbox" id="new-habit-hidden">
+        <span>🙈 إخفاؤها من الصفحة الرئيسية</span>
+      </label>
+      <p class="settings-note">تبقى في صفحة العادات وتُحسب طبيعياً — فقط لا تظهر لمن ينظر إلى شاشتك الرئيسية.</p>
       <div class="modal-actions">
         ${existingId ? `<button class="btn btn-danger btn-sm" id="habit-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="new-habit-cancel">إلغاء</button>
@@ -356,6 +431,7 @@ function openHabitModal({ existingId, onSaved } = {}) {
     document.getElementById('habit-modal-title').textContent = 'تعديل العادة';
     document.getElementById('new-habit-name').value = existing.name;
     document.getElementById('new-habit-emoji').value = existing.emoji;
+    document.getElementById('new-habit-hidden').checked = !!existing.hiddenFromHome;
     overlay.querySelectorAll('#habit-type-chips .chip').forEach(c => c.classList.toggle('active', c.dataset.type === selectedType));
   }
 
@@ -378,8 +454,14 @@ function openHabitModal({ existingId, onSaved } = {}) {
     const name = document.getElementById('new-habit-name').value.trim();
     if (!name) return;
     const emoji = document.getElementById('new-habit-emoji').value.trim();
-    if (existingId) await updateHabit(existingId, { name, emoji, type: selectedType });
-    else await createHabit(name, emoji, selectedType);
+    const hiddenFromHome = document.getElementById('new-habit-hidden').checked;
+    if (existingId) {
+      await updateHabit(existingId, { name, emoji, type: selectedType });
+      await setHabitHiddenFromHome(existingId, hiddenFromHome);
+    } else {
+      const id = await createHabit(name, emoji, selectedType);
+      if (hiddenFromHome && id) await setHabitHiddenFromHome(id, true);
+    }
     overlay.remove();
     if (onSaved) onSaved();
   });
@@ -494,7 +576,31 @@ async function habitsYearlyProvider(year) {
       const relapses = events.filter(e => e.type === 'relapse').length;
       const eventsLine = (mishaps + relapses) > 0 ? ` · 💔${mishaps} · ⛔${relapses}` : '';
 
-      return done + missed + mishaps + relapses > 0 ? `<div class="yearly-row"><span>${h.emoji} ${escapeHtml(h.name)}</span><span>${done} ❤️${eventsLine}</span></div>` : '';
+      // Per-attempt breakdown. A relapse zeroes the LIVE mishap counter,
+      // so this is where those counts go — each try preserved with its own
+      // duration and its own mishaps, which is the only way to see whether
+      // the attempts are actually getting longer and cleaner over time.
+      const attempts = await getHabitAttempts(h);
+      const attemptRows = attempts.map((a, i) => {
+        const endMs = a.endMs ?? Date.now();
+        const durationMs = Math.max(0, endMs - a.startMs);
+        const ongoing = a.endMs === null;
+        const label = ongoing ? 'المحاولة الحالية' : `المحاولة ${toArabicNumeral(i + 1)}`;
+        return `<div class="yearly-row habit-attempt-row">
+          <span>${ongoing ? '▶️' : '⛔'} ${label}</span>
+          <span>${formatHabitClock(durationMs)}${a.mishaps > 0 ? ` · 💔${toArabicNumeral(a.mishaps)}` : ''}</span>
+        </div>`;
+      }).join('');
+      const attemptsBlock = attempts.length > 1
+        ? `<details class="habit-attempts-details">
+             <summary>محاولات "${escapeHtml(h.name)}" (${toArabicNumeral(attempts.length)})</summary>
+             ${attemptRows}
+           </details>`
+        : '';
+
+      return done + missed + mishaps + relapses > 0
+        ? `<div class="yearly-row"><span>${h.emoji} ${escapeHtml(h.name)}</span><span>${done} ❤️${eventsLine}</span></div>${attemptsBlock}`
+        : '';
     }));
     return { html: rows.join(''), total };
   }

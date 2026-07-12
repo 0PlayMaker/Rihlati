@@ -298,11 +298,7 @@ async function getPainContextFlags(dateStr) {
   return flags;
 }
 
-function toArabicNumeral(n) {
-  return (typeof normalizeArabicNumerals === 'function')
-    ? String(n).replace(/[0-9]/g, d => '٠١٢٣٤٥٦٧٨٩'[Number(d)])
-    : String(n);
-}
+// toArabicNumeral now lives in ui-shared.js (single definition).
 
 // ============================ UI ============================
 

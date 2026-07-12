@@ -236,7 +236,8 @@ a { color: var(--pink-deep); text-decoration: none; }
    ============================================================ */
 
 .rings-card { padding: var(--space-4) var(--space-5); }
-.rings-row { display: flex; align-items: center; gap: var(--space-5); }
+.rings-row { display: flex; align-items: flex-start; justify-content: space-around; gap: var(--space-4); }
+.ring-item { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .ring-wrap { position: relative; flex-shrink: 0; }
 .food-goals-visual { display: flex; align-items: center; gap: var(--space-4); }
 .food-goals-side { flex: 1; display: flex; flex-direction: column; gap: 4px; }
@@ -247,7 +248,7 @@ a { color: var(--pink-deep); text-decoration: none; }
   font-size: 18px; font-weight: 800;
 }
 .ring-label-block { flex: 1; }
-.ring-label { font-size: 14px; font-weight: 700; margin-bottom: var(--space-2); color: var(--ink-soft); }
+.ring-label { font-size: 13px; font-weight: 700; color: var(--ink-soft); }
 .mini-progress-track { background: var(--track); border-radius: var(--radius-round); height: 8px; overflow: hidden; }
 .mini-progress-fill { background: var(--blue-deep); height: 100%; border-radius: var(--radius-round); transition: width 0.4s ease; }
 .mini-progress-text { font-size: 12px; color: var(--ink-soft); display: block; margin-top: var(--space-1); }
@@ -1051,3 +1052,96 @@ body.theme-dark-ish .food-photo-placeholder {
 .period-pain-score { font-size: 12px; font-weight: 700; color: var(--pink-deep); }
 .yearly-pain-details { margin-top: var(--space-2); }
 .yearly-pain-details summary { cursor: pointer; font-size: 13px; color: var(--pink-deep); font-weight: 600; padding: 4px 0; }
+
+/* ---------- المسبحة (tasbeeh counter) ---------- */
+.tasbeeh-overlay { align-items: center; justify-content: center; }
+.tasbeeh-modal {
+  background: var(--modal-bg); border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-3) var(--space-3);
+  width: min(94vw, 380px); text-align: center; position: relative;
+  box-shadow: var(--shadow-soft); border: 1px solid var(--card-border);
+}
+.tasbeeh-close { position: absolute; inset-inline-end: 8px; inset-block-start: 8px; }
+.tasbeeh-title { font-size: 19px; font-weight: 800; color: var(--title-color); margin-bottom: 4px; padding-inline: var(--space-4); }
+.tasbeeh-benefit { font-size: 13px; color: var(--ink-soft); line-height: 1.6; margin-bottom: var(--space-3); }
+
+/* The tap target itself: as large as the sheet allows. */
+.tasbeeh-circle {
+  position: relative; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  width: min(72vw, 260px); height: min(72vw, 260px);
+  margin: var(--space-2) auto var(--space-3);
+  border: none; background: none; padding: 0; cursor: pointer;
+  border-radius: var(--radius-round);
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.08s ease;
+}
+.tasbeeh-circle:active { transform: scale(0.96); }
+.tasbeeh-ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.tasbeeh-ring-track { fill: var(--capsule-color, var(--pink)); fill-opacity: 0.18; stroke: var(--track); stroke-width: 10; }
+.tasbeeh-ring-fill {
+  fill: none; stroke: var(--btn-color, var(--pink-deep)); stroke-width: 10;
+  stroke-linecap: round; transition: stroke-dashoffset 0.25s ease;
+}
+.tasbeeh-count { position: relative; font-size: 58px; font-weight: 800; color: var(--title-color); line-height: 1; }
+.tasbeeh-goal { position: relative; font-size: 14px; font-weight: 600; color: var(--ink-soft); margin-top: 6px; }
+/* Goal reached: the ring completes and the whole disc warms up. */
+.tasbeeh-circle.tasbeeh-complete .tasbeeh-ring-track { fill: var(--success); fill-opacity: 0.5; }
+.tasbeeh-circle.tasbeeh-complete .tasbeeh-ring-fill { stroke: var(--success-strong); }
+.tasbeeh-hint { font-size: 12px; color: var(--ink-faint); margin-bottom: var(--space-2); }
+.tasbeeh-actions { display: flex; justify-content: center; gap: var(--space-3); }
+.tasbeeh-reset { color: var(--danger-ink); }
+
+/* Adhkar rows become tappable cards that OPEN the tasbeeh. */
+.adhkar-tap-row {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; gap: var(--space-2); text-align: start;
+  padding: var(--space-3) 0; border-bottom: 1px solid var(--track);
+  background: none; border-left: none; border-right: none; border-top: none;
+  cursor: pointer; color: var(--ink);
+}
+.adhkar-tap-row:last-child { border-bottom: none; }
+.adhkar-tap-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.adhkar-tap-text { font-weight: 600; font-size: 15px; line-height: 1.6; }
+.adhkar-tap-benefit { font-size: 12px; color: var(--ink-faint); }
+.adhkar-tap-count {
+  flex-shrink: 0; font-size: 13px; font-weight: 800;
+  background: var(--capsule-color, var(--pink)); color: var(--ink-on-pastel);
+  border-radius: var(--radius-round); padding: 5px 12px; min-width: 44px;
+}
+.adhkar-tap-count.adhkar-goal-met { background: var(--success); color: var(--success-ink); }
+.habit-hidden-badge { font-size: 12px; opacity: 0.7; }
+.habit-attempts-details { margin: 4px 0 var(--space-2); }
+.habit-attempts-details summary { cursor: pointer; font-size: 12px; color: var(--btn-color, var(--pink-deep)); font-weight: 600; padding: 4px 0; }
+.habit-attempt-row { font-size: 12px; color: var(--ink-soft); padding-inline-start: var(--space-3); }
+.todo-burn-badge { font-size: 11px; opacity: 0.8; }
+.checkbox-row { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3) 0 4px; font-size: 14px; font-weight: 600; color: var(--ink); cursor: pointer; }
+.checkbox-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--btn-color, var(--pink-deep)); flex-shrink: 0; }
+
+/* ---------- Home hero: small routine rings + "remaining today" ---------- */
+.small-rings-row {
+  display: flex; justify-content: center; gap: var(--space-5);
+  margin-top: var(--space-3); padding-top: var(--space-3);
+  border-top: 1px solid var(--track);
+}
+.small-ring-item { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.small-ring-wrap { position: relative; }
+.small-ring-text { font-size: 12px; font-weight: 800; }
+.small-ring-label { font-size: 11px; font-weight: 600; color: var(--ink-soft); }
+
+/* The actionable part: what's still undone, tap to go do it. */
+.remaining-today { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--track); }
+.remaining-today-label { display: block; font-size: 11px; font-weight: 700; color: var(--ink-faint); margin-bottom: 6px; }
+.remaining-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.remaining-chip {
+  font-size: 12px; font-weight: 700; padding: 6px 12px;
+  border-radius: var(--radius-round); cursor: pointer;
+  background: var(--capsule-color, var(--pink)); color: var(--ink-on-pastel);
+  border: none; box-shadow: 0 1px 4px rgba(var(--capsule-color-rgb, 232, 143, 174), 0.28);
+}
+.remaining-chip:active { transform: scale(0.96); }
+.remaining-done {
+  margin-top: var(--space-3); padding-top: var(--space-3);
+  border-top: 1px solid var(--track);
+  font-size: 13px; font-weight: 600; color: var(--success-ink); text-align: center;
+}

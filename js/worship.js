@@ -180,19 +180,32 @@ async function getDailyAdhkarStats() {
 
 // ---------- her own list of adhkar texts to read through, per kind ----------
 
-async function addDailyAdhkarItem(kind, text) {
+async function addDailyAdhkarItem(kind, text, benefit = '', goalCount = null) {
   const all = await getDailyAdhkarItems(kind);
-  await db.dailyAdhkarItems.add({ kind, text, order: all.length, createdAt: Date.now() });
+  await db.dailyAdhkarItems.add({ kind, text, benefit, goalCount, order: all.length, createdAt: Date.now() });
 }
-async function updateDailyAdhkarItemText(id, text) {
-  await db.dailyAdhkarItems.update(id, { text });
+async function updateDailyAdhkarItem(id, { text, benefit, goalCount }) {
+  await db.dailyAdhkarItems.update(id, { text, benefit: benefit || '', goalCount: goalCount ?? null });
 }
 async function deleteDailyAdhkarItem(id) {
   await db.dailyAdhkarItems.delete(id);
+  // Its counts go with it — leaving orphaned logs behind would quietly
+  // inflate any future "how much did I recite" total.
+  await db.dailyAdhkarItemLogs.where('itemId').equals(id).delete();
 }
 async function getDailyAdhkarItems(kind) {
   const all = await db.dailyAdhkarItems.where('kind').equals(kind).toArray();
   return all.sort((a, b) => a.order - b.order);
+}
+
+// Per-item, per-day counts (the مسبحة for an individual dhikr).
+async function getDailyAdhkarItemCount(itemId, date) {
+  const row = await getLog(db.dailyAdhkarItemLogs, 'itemId', itemId, date);
+  return row ? row.count : 0;
+}
+async function setDailyAdhkarItemCount(itemId, date, count) {
+  if (count <= 0) await deleteLog(db.dailyAdhkarItemLogs, 'itemId', itemId, date);
+  else await upsertLog(db.dailyAdhkarItemLogs, 'itemId', itemId, date, { count });
 }
 
 function dailyAdhkarKindLabel(kind) {
@@ -212,6 +225,37 @@ async function renderDailyAdhkar(container, dateStr) {
     // Opens her actual reading list instead of blindly toggling — she
     // marks done from inside that page, after reading through it.
     btn.addEventListener('click', () => goTo(`/adhkar-detail/${btn.dataset.kind}/${dateStr}`));
+  });
+}
+
+function openDailyAdhkarItemModal(kind, onSaved, existing = null) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2 class="modal-title">${existing ? 'تعديل الذكر' : 'ذكر جديد'}</h2>
+      <label class="field-label">نص الذكر</label>
+      <textarea class="mood-note-input" id="adhkar-item-text" placeholder="اكتبي نص الذكر...">${existing ? escapeHtml(existing.text) : ''}</textarea>
+      <label class="field-label">فضله (اختياري)</label>
+      <textarea class="mood-note-input" id="adhkar-item-benefit" placeholder="مثلاً: من قالها حين يصبح كُفي همّه...">${existing && existing.benefit ? escapeHtml(existing.benefit) : ''}</textarea>
+      <label class="field-label">عدد التكرار المستهدف (اختياري)</label>
+      <input class="text-input" type="text" inputmode="numeric" id="adhkar-item-goal" placeholder="مثلاً: ٣" value="${existing && existing.goalCount ? toArabicNumeral(existing.goalCount) : ''}">
+      <div class="modal-actions">
+        <button class="btn btn-text" id="adhkar-item-cancel">إلغاء</button>
+        <button class="btn btn-primary" id="adhkar-item-save">${existing ? 'حفظ' : 'إضافة'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('adhkar-item-cancel').addEventListener('click', () => overlay.remove());
+  document.getElementById('adhkar-item-save').addEventListener('click', async () => {
+    const text = document.getElementById('adhkar-item-text').value.trim();
+    if (!text) return;
+    const benefit = document.getElementById('adhkar-item-benefit').value.trim();
+    const goalCount = readNumericField('adhkar-item-goal', { int: true, min: 1 });
+    if (existing) await updateDailyAdhkarItem(existing.id, { text, benefit, goalCount });
+    else await addDailyAdhkarItem(kind, text, benefit, goalCount);
+    overlay.remove();
+    if (onSaved) onSaved();
   });
 }
 
@@ -244,22 +288,48 @@ async function renderAdhkarDetailPage(params, view) {
       el.innerHTML = `<div class="empty-state"><p>أضيفي أذكارك هنا لتقرئيها كل يوم.</p></div>`;
       return;
     }
-    el.innerHTML = items.map(i => `
-      <div class="task-row-wrap">
-        <p class="diary-entry-text adhkar-item-text">${escapeHtml(i.text)}</p>
+    el.innerHTML = (await Promise.all(items.map(async i => {
+      const count = await getDailyAdhkarItemCount(i.id, dateStr);
+      const goalMet = i.goalCount && count >= i.goalCount;
+      const countLabel = i.goalCount
+        ? `${toArabicNumeral(count)}/${toArabicNumeral(i.goalCount)}`
+        : toArabicNumeral(count);
+      return `
+      <div class="task-row-wrap" data-item-id="${i.id}">
+        <button class="adhkar-tap-row" data-action="open">
+          <span class="adhkar-tap-main">
+            <span class="adhkar-tap-text">${escapeHtml(i.text)}</span>
+            ${i.benefit ? `<span class="adhkar-tap-benefit">${escapeHtml(i.benefit)}</span>` : ''}
+          </span>
+          <span class="adhkar-tap-count ${goalMet ? 'adhkar-goal-met' : ''}">${countLabel}</span>
+        </button>
         ${kebabMenuHtml(String(i.id), [
           { key: 'edit', label: 'تعديل' },
           { key: 'delete', label: 'حذف', danger: true }
         ])}
-      </div>`).join('');
+      </div>`;
+    }))).join('');
+
+    el.querySelectorAll('[data-item-id]').forEach(row => {
+      const id = Number(row.dataset.itemId);
+      const item = items.find(i => i.id === id);
+      row.querySelector('[data-action="open"]').addEventListener('click', () => {
+        openTasbeehModal({
+          title: item.text,
+          benefit: item.benefit,
+          goal: item.goalCount,
+          getCount: () => getDailyAdhkarItemCount(id, dateStr),
+          setCount: (n) => setDailyAdhkarItemCount(id, dateStr, n),
+          onClose: refreshItems
+        });
+      });
+    });
+
     wireKebabMenus(el, async (rowId, action) => {
       const id = Number(rowId);
       if (action === 'edit') {
         const item = items.find(i => i.id === id);
-        const text = prompt('نص الذكر:', item.text);
-        if (!text || !text.trim()) return;
-        await updateDailyAdhkarItemText(id, text.trim());
-        await refreshItems();
+        openDailyAdhkarItemModal(kind, refreshItems, item);
       } else if (action === 'delete') {
         if (!confirm('حذف هذا الذكر من القائمة؟')) return;
         await deleteDailyAdhkarItem(id);
@@ -268,11 +338,8 @@ async function renderAdhkarDetailPage(params, view) {
     });
   }
   await refreshItems();
-  document.getElementById('add-adhkar-item-btn').addEventListener('click', async () => {
-    const text = prompt('نص الذكر:');
-    if (!text || !text.trim()) return;
-    await addDailyAdhkarItem(kind, text.trim());
-    await refreshItems();
+  document.getElementById('add-adhkar-item-btn').addEventListener('click', () => {
+    openDailyAdhkarItemModal(kind, refreshItems);
   });
 
   async function refreshDoneCard() {
@@ -785,9 +852,12 @@ async function qadaYearlyProvider() {
 
 // ===================== Custom adhkar (name + daily count) =====================
 
-async function createCustomAdhkar(name) {
+async function createCustomAdhkar(name, benefit = '', goalCount = null) {
   const all = await db.customAdhkar.toArray();
-  await db.customAdhkar.add({ name, archived: false, order: all.length, createdAt: Date.now() });
+  await db.customAdhkar.add({ name, benefit, goalCount, archived: false, order: all.length, createdAt: Date.now() });
+}
+async function updateCustomAdhkar(id, { name, benefit, goalCount }) {
+  await db.customAdhkar.update(id, { name, benefit: benefit || '', goalCount: goalCount ?? null });
 }
 async function updateCustomAdhkarName(id, name) {
   await db.customAdhkar.update(id, { name });
@@ -806,10 +876,6 @@ async function setCustomAdhkarCount(adhkarId, date, count) {
   if (count <= 0) await deleteLog(db.customAdhkarLogs, 'adhkarId', adhkarId, date);
   else await upsertLog(db.customAdhkarLogs, 'adhkarId', adhkarId, date, { count });
 }
-async function incrementCustomAdhkarCount(adhkarId, date) {
-  const current = await getCustomAdhkarCount(adhkarId, date);
-  await setCustomAdhkarCount(adhkarId, date, current + 1);
-}
 async function getCustomAdhkarStats(adhkarId) {
   const logs = await db.customAdhkarLogs.where('adhkarId').equals(adhkarId).toArray();
   const dates = logs.filter(l => l.count > 0).map(l => l.date);
@@ -822,73 +888,79 @@ async function renderCustomAdhkarList(container, dateStr, { editable = true, sho
     container.innerHTML = `<div class="empty-state"><p>ما في أذكار مخصصة بعد.</p></div>`;
     return;
   }
+  const refresh = () => renderCustomAdhkarList(container, dateStr, { editable, showStreak });
+
   const rows = await Promise.all(items.map(async a => {
     const count = await getCustomAdhkarCount(a.id, dateStr);
     const statsText = showStreak ? statsLine(await getCustomAdhkarStats(a.id)) : '';
+    const goalMet = a.goalCount && count >= a.goalCount;
+    const countLabel = a.goalCount
+      ? `${toArabicNumeral(count)}/${toArabicNumeral(a.goalCount)}`
+      : toArabicNumeral(count);
     return `
-      <div class="adhkar-counter-row" data-adhkar-id="${a.id}">
-        <div class="adhkar-name-block">
-          <span class="adhkar-name">${escapeHtml(a.name)}</span>
-          ${statsText ? `<span class="tsr-streak">${statsText}</span>` : ''}
-        </div>
-        <div class="adhkar-counter-controls">
-          <button class="adhkar-count-btn" data-action="edit" ${editable ? '' : 'disabled'}>${count}</button>
-          ${editable ? `<button class="adhkar-plus" data-action="inc">+</button>` : ''}
-          ${showStreak ? kebabMenuHtml(String(a.id), [
-            { key: 'rename', label: 'تعديل الاسم' },
-            { key: 'remove', label: 'حذف', danger: true }
-          ]) : ''}
-        </div>
+      <div class="task-row-wrap" data-adhkar-id="${a.id}">
+        <button class="adhkar-tap-row" data-action="open" ${editable ? '' : 'disabled'}>
+          <span class="adhkar-tap-main">
+            <span class="adhkar-tap-text">${escapeHtml(a.name)}</span>
+            ${a.benefit ? `<span class="adhkar-tap-benefit">${escapeHtml(a.benefit)}</span>` : ''}
+            ${statsText ? `<span class="tsr-streak">${statsText}</span>` : ''}
+          </span>
+          <span class="adhkar-tap-count ${goalMet ? 'adhkar-goal-met' : ''}">${countLabel}</span>
+        </button>
+        ${showStreak ? kebabMenuHtml(String(a.id), [
+          { key: 'edit', label: 'تعديل' },
+          { key: 'remove', label: 'حذف', danger: true }
+        ]) : ''}
       </div>`;
   }));
   container.innerHTML = rows.join('');
-  container.querySelectorAll('.adhkar-counter-row').forEach(row => {
+
+  container.querySelectorAll('[data-adhkar-id]').forEach(row => {
     const id = Number(row.dataset.adhkarId);
-    const incBtn = row.querySelector('[data-action="inc"]');
-    if (incBtn) incBtn.addEventListener('click', async () => {
-      await incrementCustomAdhkarCount(id, dateStr);
-      await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
-    });
-    row.querySelector('[data-action="edit"]').addEventListener('click', async () => {
-      if (!editable) return;
-      const current = await getCustomAdhkarCount(id, dateStr);
-      const input = prompt('عدد مرات التكرار:', String(current));
-      if (input === null) return;
-      const n = parseNumericInput(input, { int: true });
-      if (n !== null && n >= 0) {
-        await setCustomAdhkarCount(id, dateStr, n);
-        await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
-      }
+    const item = items.find(a => a.id === id);
+    const openBtn = row.querySelector('[data-action="open"]');
+    if (!openBtn || !editable) return;
+    openBtn.addEventListener('click', () => {
+      openTasbeehModal({
+        title: item.name,
+        benefit: item.benefit,
+        goal: item.goalCount,
+        getCount: () => getCustomAdhkarCount(id, dateStr),
+        setCount: (n) => setCustomAdhkarCount(id, dateStr, n),
+        onClose: refresh
+      });
     });
   });
+
   wireKebabMenus(container, async (rowId, action) => {
     const id = Number(rowId);
-    if (action === 'rename') {
+    if (action === 'edit') {
       const item = items.find(a => a.id === id);
-      const input = prompt('اسم الذكر:', item.name);
-      if (input === null || !input.trim()) return;
-      await updateCustomAdhkarName(id, input.trim());
-      await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
+      openAddCustomAdhkarModal(refresh, item);
     } else if (action === 'remove') {
       const item = items.find(a => a.id === id);
       if (!confirm(`حذف "${item.name}"؟`)) return;
       await archiveCustomAdhkar(id);
-      await renderCustomAdhkarList(container, dateStr, { editable, showStreak });
+      await refresh();
     }
   });
 }
 
-function openAddCustomAdhkarModal(onAdded) {
+function openAddCustomAdhkarModal(onAdded, existing = null) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
-      <h2 class="modal-title">ذكر جديد</h2>
+      <h2 class="modal-title">${existing ? 'تعديل الذكر' : 'ذكر جديد'}</h2>
       <label class="field-label">اسم الذكر</label>
-      <input class="text-input" id="new-adhkar-name" placeholder="مثلاً: سبحان الله" autofocus>
+      <input class="text-input" id="new-adhkar-name" placeholder="مثلاً: سبحان الله وبحمده" value="${existing ? escapeHtml(existing.name) : ''}" autofocus>
+      <label class="field-label">فضله (اختياري)</label>
+      <textarea class="mood-note-input" id="new-adhkar-benefit" placeholder="مثلاً: من قالها مئة مرة حُطّت خطاياه...">${existing && existing.benefit ? escapeHtml(existing.benefit) : ''}</textarea>
+      <label class="field-label">عدد التكرار المستهدف (اختياري)</label>
+      <input class="text-input" type="text" inputmode="numeric" id="new-adhkar-goal" placeholder="مثلاً: ٣٣" value="${existing && existing.goalCount ? toArabicNumeral(existing.goalCount) : ''}">
       <div class="modal-actions">
         <button class="btn btn-text" id="new-adhkar-cancel">إلغاء</button>
-        <button class="btn btn-primary" id="new-adhkar-save">إضافة</button>
+        <button class="btn btn-primary" id="new-adhkar-save">${existing ? 'حفظ' : 'إضافة'}</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -896,7 +968,10 @@ function openAddCustomAdhkarModal(onAdded) {
   document.getElementById('new-adhkar-save').addEventListener('click', async () => {
     const name = document.getElementById('new-adhkar-name').value.trim();
     if (!name) return;
-    await createCustomAdhkar(name);
+    const benefit = document.getElementById('new-adhkar-benefit').value.trim();
+    const goalCount = readNumericField('new-adhkar-goal', { int: true, min: 1 });
+    if (existing) await updateCustomAdhkar(existing.id, { name, benefit, goalCount });
+    else await createCustomAdhkar(name, benefit, goalCount);
     overlay.remove();
     if (onAdded) onAdded();
   });

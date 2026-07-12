@@ -10,20 +10,34 @@
 
 // ===================== Fixed Tasks =====================
 
-async function createFixedTask(title, reminderTime) {
+async function createFixedTask(title, reminderTime, trackedOnHome = true) {
   const all = await db.fixedTasks.toArray();
-  await db.fixedTasks.add({
-    title, reminderTime: reminderTime || null,
+  return db.fixedTasks.add({
+    title, reminderTime: reminderTime || null, trackedOnHome: !!trackedOnHome,
     archived: false, order: all.length, createdAt: Date.now()
   });
 }
-async function updateFixedTask(id, { title, reminderTime }) {
-  await db.fixedTasks.update(id, { title, reminderTime: reminderTime || null });
+async function updateFixedTask(id, { title, reminderTime, trackedOnHome }) {
+  const patch = { title, reminderTime: reminderTime || null };
+  if (trackedOnHome !== undefined) patch.trackedOnHome = !!trackedOnHome;
+  await db.fixedTasks.update(id, patch);
 }
 
 async function getActiveFixedTasks() {
   const all = await db.fixedTasks.toArray();
   return all.filter(t => !t.archived).sort((a, b) => a.order - b.order);
+}
+
+// Only the tasks she chose to count feed the Home ring. Some daily tasks
+// are worth having on the list but not worth having drag the day's score
+// down when skipped (a "nice if I get to it" task), and a ring that counts
+// those is a ring that lies about how the day actually went.
+// Absent field = tracked, so every existing task keeps counting as before.
+function isFixedTaskTracked(task) {
+  return task.trackedOnHome !== false;
+}
+async function getTrackedFixedTasks() {
+  return (await getActiveFixedTasks()).filter(isFixedTaskTracked);
 }
 
 async function archiveFixedTask(id) {
@@ -110,6 +124,11 @@ function openFixedTaskModal({ existingId, onSaved } = {}) {
       <input class="text-input" id="new-task-title" placeholder="مثلاً: الفيتامينات" autofocus>
       <label class="field-label">تذكير (اختياري)</label>
       <input class="text-input" type="time" id="new-task-time">
+      <label class="checkbox-row">
+        <input type="checkbox" id="new-task-tracked" checked>
+        <span>⭕ احتسابها في دائرة الرئيسية</span>
+      </label>
+      <p class="settings-note">إن كانت مهمة لا يهم إن فاتتك يوماً، أزيلي التحديد — تبقى في قائمتك لكن لا تُنقص دائرتك.</p>
       <div class="modal-actions">
         ${existingId ? `<button class="btn btn-danger btn-sm" id="task-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="new-task-cancel">إلغاء</button>
@@ -125,6 +144,7 @@ function openFixedTaskModal({ existingId, onSaved } = {}) {
     document.getElementById('task-modal-title').textContent = 'تعديل المهمة';
     document.getElementById('new-task-title').value = existing.title;
     document.getElementById('new-task-time').value = existing.reminderTime || '';
+    document.getElementById('new-task-tracked').checked = isFixedTaskTracked(existing);
   }
 
   document.getElementById('new-task-cancel').addEventListener('click', () => overlay.remove());
@@ -139,8 +159,9 @@ function openFixedTaskModal({ existingId, onSaved } = {}) {
     const title = document.getElementById('new-task-title').value.trim();
     if (!title) return;
     const time = document.getElementById('new-task-time').value || null;
-    if (existingId) await updateFixedTask(existingId, { title, reminderTime: time });
-    else await createFixedTask(title, time);
+    const trackedOnHome = document.getElementById('new-task-tracked').checked;
+    if (existingId) await updateFixedTask(existingId, { title, reminderTime: time, trackedOnHome });
+    else await createFixedTask(title, time, trackedOnHome);
     overlay.remove();
     if (onSaved) onSaved();
   });
@@ -150,19 +171,33 @@ function openFixedTaskModal({ existingId, onSaved } = {}) {
 
 // ===================== Custom Todos =====================
 
-async function addTodo(title, dueDate) {
-  await db.customTodos.add({ title, dueDate: dueDate || null, done: false, doneAt: null, createdAt: Date.now() });
+async function addTodo(title, dueDate, deleteWhenDone = false) {
+  await db.customTodos.add({ title, dueDate: dueDate || null, deleteWhenDone: !!deleteWhenDone, done: false, doneAt: null, createdAt: Date.now() });
 }
-async function updateTodo(id, { title, dueDate }) {
-  await db.customTodos.update(id, { title, dueDate: dueDate || null });
+async function updateTodo(id, { title, dueDate, deleteWhenDone }) {
+  const patch = { title, dueDate: dueDate || null };
+  if (deleteWhenDone !== undefined) patch.deleteWhenDone = !!deleteWhenDone;
+  await db.customTodos.update(id, patch);
 }
 async function deleteTodo(id) {
   await db.customTodos.delete(id);
 }
 
+// Ticking a "delete when done" todo removes it outright instead of
+// leaving it struck-through forever. Some todos exist only to be crossed
+// off ("call the pharmacy") and keeping them around just grows a
+// graveyard she has to clean up by hand. Returns whether it was deleted,
+// so the caller can toast appropriately.
 async function toggleTodo(id) {
   const t = await db.customTodos.get(id);
-  await db.customTodos.update(id, { done: !t.done, doneAt: !t.done ? Date.now() : null });
+  if (!t) return { deleted: false };
+  const willBeDone = !t.done;
+  if (willBeDone && t.deleteWhenDone) {
+    await db.customTodos.delete(id);
+    return { deleted: true, title: t.title };
+  }
+  await db.customTodos.update(id, { done: willBeDone, doneAt: willBeDone ? Date.now() : null });
+  return { deleted: false };
 }
 
 async function getTodosForDate(dateStr) {
@@ -176,6 +211,7 @@ function todoRowHtml(todo, showManage) {
       <label class="task-row ${todo.done ? 'done' : ''}">
         <input type="checkbox" data-todo-id="${todo.id}" ${todo.done ? 'checked' : ''}>
         <span class="task-title">${escapeHtml(todo.title)}</span>
+        ${todo.deleteWhenDone ? `<span class="todo-burn-badge" title="ستُحذف عند إتمامها">🔥</span>` : ''}
         ${todo.dueDate ? `<span class="task-reminder">📅 ${formatDateArabic(todo.dueDate, { weekday: false })}</span>` : ''}
       </label>
       ${showManage ? kebabMenuHtml(String(todo.id), [
@@ -202,7 +238,8 @@ async function renderTodoList(container, { limit, onlyOpen, showManage } = {}) {
 
   container.querySelectorAll('input[type=checkbox]').forEach(cb => {
     cb.addEventListener('change', async () => {
-      await toggleTodo(Number(cb.dataset.todoId));
+      const res = await toggleTodo(Number(cb.dataset.todoId));
+      if (res.deleted) toast(`🔥 تمّت وحُذفت: ${res.title}`);
       await refresh();
     });
   });
@@ -229,6 +266,11 @@ function openTodoModal({ existingId, onSaved } = {}) {
       <input class="text-input" id="new-todo-title" placeholder="اكتبي المهمة هنا" autofocus>
       <label class="field-label">تاريخ الاستحقاق (اختياري)</label>
       <input class="text-input" type="date" id="new-todo-date">
+      <label class="checkbox-row">
+        <input type="checkbox" id="new-todo-burn">
+        <span>🔥 حذفها تلقائياً عند إتمامها</span>
+      </label>
+      <p class="settings-note">للمهام العابرة التي لا داعي لبقائها في القائمة بعد إنجازها.</p>
       <div class="modal-actions">
         ${existingId ? `<button class="btn btn-danger btn-sm" id="todo-delete-btn">حذف</button>` : ''}
         <button class="btn btn-text" id="new-todo-cancel">إلغاء</button>
@@ -244,6 +286,7 @@ function openTodoModal({ existingId, onSaved } = {}) {
     document.getElementById('todo-modal-title').textContent = 'تعديل المهمة';
     document.getElementById('new-todo-title').value = existing.title;
     document.getElementById('new-todo-date').value = existing.dueDate || '';
+    document.getElementById('new-todo-burn').checked = !!existing.deleteWhenDone;
   }
 
   document.getElementById('new-todo-cancel').addEventListener('click', () => overlay.remove());
@@ -258,8 +301,9 @@ function openTodoModal({ existingId, onSaved } = {}) {
     const title = document.getElementById('new-todo-title').value.trim();
     if (!title) return;
     const date = document.getElementById('new-todo-date').value || null;
-    if (existingId) await updateTodo(existingId, { title, dueDate: date });
-    else await addTodo(title, date);
+    const deleteWhenDone = document.getElementById('new-todo-burn').checked;
+    if (existingId) await updateTodo(existingId, { title, dueDate: date, deleteWhenDone });
+    else await addTodo(title, date, deleteWhenDone);
     overlay.remove();
     if (onSaved) onSaved();
   });
@@ -338,9 +382,14 @@ async function todosDayProvider(dateStr) {
   node.innerHTML = todos.map(t => todoRowHtml(t, false)).join('');
   node.querySelectorAll('input[type=checkbox]').forEach(cb => {
     cb.addEventListener('change', async () => {
-      await toggleTodo(Number(cb.dataset.todoId));
+      const res = await toggleTodo(Number(cb.dataset.todoId));
+      if (res.deleted) toast(`🔥 تمّت وحُذفت: ${res.title}`);
       const fresh = await todosDayProvider(dateStr);
-      node.replaceWith(fresh.node);
+      // A "delete when done" todo can remove the LAST todo for this day,
+      // in which case the provider correctly returns null — reading .node
+      // off it would throw, so swap in an empty state instead.
+      if (fresh && fresh.node) node.replaceWith(fresh.node);
+      else node.innerHTML = `<p class="empty-state-sub">لا مهام لهذا اليوم.</p>`;
     });
   });
   return { title: 'قائمة المهام', node };

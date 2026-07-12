@@ -11,37 +11,127 @@ async function rescheduleHomeReminders() {
   return isDoneToday;
 }
 
+// Small ring used for the routine circles — same visual language as the
+// big ones, just sized down so two fit side by side under them.
+function smallRingHtml(frac, label, centerText, tone = 'accent') {
+  const color = tone === 'accent' ? 'var(--btn-color, var(--pink-deep))' : 'var(--mint-deep)';
+  const svg = renderRing({ size: 62, strokeWidth: 8, segments: [{ frac, color }] });
+  return `
+    <div class="small-ring-item">
+      <div class="ring-wrap small-ring-wrap">
+        ${svg}
+        <div class="ring-center-text small-ring-text">${centerText}</div>
+      </div>
+      <span class="small-ring-label">${label}</span>
+    </div>`;
+}
+
+// "What's actually left today" — the one thing a home screen can do that
+// a list of rings can't: tell her what to DO next. Each chip is a live
+// count of something still undone and taps straight through to it. Chips
+// only appear when there's something outstanding, so a finished day
+// collapses the whole strip rather than showing a row of proud zeros.
+async function buildRemainingTodayChips() {
+  const chips = [];
+  const today = todayStr();
+
+  const trackedTasks = await getTrackedFixedTasks();
+  const taskDone = await getFixedTasksDoneSet(trackedTasks, today);
+  const tasksLeft = trackedTasks.length - taskDone.size;
+  if (tasksLeft > 0) chips.push({ icon: '📋', text: `${toArabicNumeral(tasksLeft)} مهام`, path: '/tasks' });
+
+  const worship = await getWorshipTodayStats();
+  const prayersLeft = 5 - worship.done;
+  if (!worship.paused && prayersLeft > 0) chips.push({ icon: '🕌', text: `${toArabicNumeral(prayersLeft)} صلوات`, path: '/worship' });
+
+  const openTodos = (await db.customTodos.toArray()).filter(t => !t.done).length;
+  if (openTodos > 0) chips.push({ icon: '✅', text: `${toArabicNumeral(openTodos)} من قائمتك`, path: '/tasks' });
+
+  const wirdPlan = await getWirdPlan();
+  if (wirdPlan && !(await isWirdLoggedToday())) chips.push({ icon: '📖', text: 'وردك', path: '/worship' });
+
+  const moodToday = await getMoodLog(today);
+  if (!moodToday) chips.push({ icon: '🙂', text: 'مزاجك', path: '/mood-history' });
+
+  return chips;
+}
+
 async function renderHomeRingSection(container) {
+  const today = todayStr();
   const ringData = await getHabitsRingData();
-  const fixedTasks = await getActiveFixedTasks();
-  const doneSet = await getFixedTasksDoneSet(fixedTasks, todayStr());
-  const doneTaskCount = doneSet.size;
+  // Only the tasks she asked to be counted feed this ring.
+  const trackedTasks = await getTrackedFixedTasks();
+  const taskDoneSet = await getFixedTasksDoneSet(trackedTasks, today);
+  const doneTaskCount = taskDoneSet.size;
+
   const worshipStats = await getWorshipTodayStats();
   const last7DaysMood = await getLast7DaysMood();
   const [goodStreak, badStreak] = await Promise.all([getTopHabitStreak('good'), getTopHabitStreak('bad')]);
+
   const habitDoneFrac = ringData.total ? ringData.done / ringData.total : 0;
   const habitMissedFrac = ringData.total ? ringData.missed / ringData.total : 0;
-  const ringSvg = renderRing({
+  const habitRing = renderRing({
     segments: [
       { frac: habitDoneFrac, color: 'var(--mint-deep)' },
       { frac: habitMissedFrac, color: 'var(--rose-deep)' }
     ]
   });
+  const taskFrac = trackedTasks.length ? doneTaskCount / trackedTasks.length : 0;
+  const taskRing = renderRing({
+    segments: [{ frac: taskFrac, color: 'var(--btn-color, var(--pink-deep))' }]
+  });
+
+  // Morning / evening routine rings.
+  const [morningRoutines, eveningRoutines] = await Promise.all([
+    getCareRoutines('morning'), getCareRoutines('evening')
+  ]);
+  const [morningDone, eveningDone] = await Promise.all([
+    countCareRoutinesDone(morningRoutines, today),
+    countCareRoutinesDone(eveningRoutines, today)
+  ]);
+
+  const chips = await buildRemainingTodayChips();
+
   container.innerHTML = `
     <div class="rings-row">
-      <div class="ring-wrap">
-        ${ringSvg}
-        <div class="ring-center-text">${ringData.total ? `${ringData.done}/${ringData.total}` : '—'}</div>
+      <div class="ring-item">
+        <div class="ring-wrap">
+          ${habitRing}
+          <div class="ring-center-text">${ringData.total ? `${toArabicNumeral(ringData.done)}/${toArabicNumeral(ringData.total)}` : '—'}</div>
+        </div>
+        <span class="ring-label">عاداتك</span>
       </div>
-      <div class="ring-label-block">
-        <p class="ring-label">عاداتك اليوم</p>
-        ${fixedTasks.length ? `
-          <div class="mini-progress">
-            <div class="mini-progress-track"><div class="mini-progress-fill" style="width:${doneTaskCount / fixedTasks.length * 100}%"></div></div>
-            <span class="mini-progress-text">مهامك: ${doneTaskCount}/${fixedTasks.length}</span>
-          </div>` : `<span class="mini-progress-text">أضيفي مهمة ثابتة من قسم المهام 👇</span>`}
+      <div class="ring-item">
+        <div class="ring-wrap">
+          ${taskRing}
+          <div class="ring-center-text">${trackedTasks.length ? `${toArabicNumeral(doneTaskCount)}/${toArabicNumeral(trackedTasks.length)}` : '—'}</div>
+        </div>
+        <span class="ring-label">مهامك</span>
       </div>
     </div>
+
+    <div class="small-rings-row">
+      ${smallRingHtml(
+        morningRoutines.length ? morningDone / morningRoutines.length : 0,
+        '🌅 صباحي',
+        morningRoutines.length ? `${toArabicNumeral(morningDone)}/${toArabicNumeral(morningRoutines.length)}` : '—'
+      )}
+      ${smallRingHtml(
+        eveningRoutines.length ? eveningDone / eveningRoutines.length : 0,
+        '🌙 مسائي',
+        eveningRoutines.length ? `${toArabicNumeral(eveningDone)}/${toArabicNumeral(eveningRoutines.length)}` : '—'
+      )}
+    </div>
+
+    ${chips.length ? `
+      <div class="remaining-today">
+        <span class="remaining-today-label">متبقّي اليوم</span>
+        <div class="remaining-chips">
+          ${chips.map(c => `<button class="remaining-chip" data-path="${c.path}">${c.icon} ${c.text}</button>`).join('')}
+        </div>
+      </div>` : `
+      <p class="remaining-done">✨ أنجزتِ كل شيء اليوم — راحة هانئة</p>`}
+
     <div class="mood-strip-row">
       ${last7DaysMood.map(d => `<span class="mood-strip-emoji" title="${formatDateArabic(d.date, { weekday: false })}">${d.emoji || '·'}</span>`).join('')}
     </div>
@@ -52,6 +142,10 @@ async function renderHomeRingSection(container) {
         ${worshipStats.streak > 0 ? `<span class="streak-chip">🕌 صلوات 🔥${worshipStats.streak}</span>` : ''}
       </div>` : ''}
   `;
+
+  container.querySelectorAll('.remaining-chip').forEach(chip => {
+    chip.addEventListener('click', () => goTo(chip.dataset.path));
+  });
 }
 
 async function renderHome(params, view, renderToken) {
@@ -201,8 +295,8 @@ async function renderHome(params, view, renderToken) {
 
   initHomeCalendar(document.getElementById('home-calendar'));
 
-  const goodHabits = (await getActiveHabitsByType('good')).slice(0, 3);
-  const badHabits = (await getActiveHabitsByType('bad')).slice(0, 3);
+  const goodHabits = (await getActiveHabitsByType('good')).filter(isHabitVisibleOnHome).slice(0, 3);
+  const badHabits = (await getActiveHabitsByType('bad')).filter(isHabitVisibleOnHome).slice(0, 3);
   const refreshHomeRing = () => renderHomeRingSection(document.getElementById('home-ring-section'));
   await renderHabitCards(document.getElementById('home-good-habits'), goodHabits, { onChange: refreshHomeRing, emptyText: 'ما في عادات جيدة بعد.' });
   await renderHabitCards(document.getElementById('home-bad-habits'), badHabits, { onChange: refreshHomeRing, emptyText: 'ما في عادات للإقلاع عنها بعد.' });

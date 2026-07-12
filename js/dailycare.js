@@ -42,6 +42,15 @@ async function getCareRoutineStats(routineId) {
   return computeImplicitStats(logs.map(l => l.date), []);
 }
 
+// How many of a given routine list are ticked on a date. Shared so the
+// Home rings and the Daily Care card can't drift apart on what "done"
+// means.
+async function countCareRoutinesDone(routines, dateStr) {
+  if (!routines.length) return 0;
+  const flags = await Promise.all(routines.map(r => isCareRoutineDone(r.id, dateStr)));
+  return flags.filter(Boolean).length;
+}
+
 // ===================== Modal =====================
 
 function openCareRoutineModal(kind, { existingId, onSaved } = {}) {
