@@ -49,10 +49,20 @@ async function isFixedTaskDone(taskId, date) {
   return !!row;
 }
 
+// All the day's tracked tasks done — the ring just closed.
+async function celebrateIfAllTasksDone(date) {
+  if (date !== todayStr()) return;
+  const tracked = await getTrackedFixedTasks();
+  if (tracked.length === 0) return;
+  const done = await getFixedTasksDoneSet(tracked, date);
+  if (done.size === tracked.length) playEventChime('tasks');
+}
+
 async function toggleFixedTask(taskId, date) {
   const row = await getLog(db.fixedTaskLogs, 'taskId', taskId, date);
-  if (row) await db.fixedTaskLogs.delete(row.id);
-  else await upsertLog(db.fixedTaskLogs, 'taskId', taskId, date, {});
+  if (row) { await db.fixedTaskLogs.delete(row.id); return; }
+  await upsertLog(db.fixedTaskLogs, 'taskId', taskId, date, {});
+  await celebrateIfAllTasksDone(date);
 }
 
 function fixedTaskRowHtml(task, done, editable, showManage) {

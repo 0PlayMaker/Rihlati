@@ -93,13 +93,127 @@ function playTone(freq, startOffset = 0, durationSec = 0.5, peak = 0.22) {
   } catch (e) { /* silent */ }
 }
 
+// ============================================================
+//  Sound & haptics
+// ============================================================
+// Everything audible goes through one gain node so a volume setting can
+// actually do something — previously each tone set its own amplitude and
+// there was no way to turn anything up, down, or off.
+
+let _masterGain = null;
+let _soundPrefs = { volume: 0.7, enabled: true, hapticsEnabled: true, hapticsStrength: 1, sounds: {} };
+
+function loadSoundPrefs(settings) {
+  _soundPrefs = {
+    volume: settings?.soundVolume ?? 0.7,
+    enabled: settings?.soundEnabled !== false,
+    hapticsEnabled: settings?.hapticsEnabled !== false,
+    hapticsStrength: settings?.hapticsStrength ?? 1,
+    sounds: settings?.eventSounds || {}
+  };
+}
+function getSoundPrefs() { return _soundPrefs; }
+
+function audioOut() {
+  if (!_sharedAudioCtx) return null;
+  if (!_masterGain) {
+    _masterGain = _sharedAudioCtx.createGain();
+    _masterGain.connect(_sharedAudioCtx.destination);
+  }
+  _masterGain.gain.value = _soundPrefs.enabled ? _soundPrefs.volume : 0;
+  return _masterGain;
+}
+
+// Haptics, scaled by her setting. A pattern is [ms on, ms off, ...] — the
+// strength multiplier lengthens the pulses, which is the only lever the
+// vibration API actually gives us.
+function haptic(pattern) {
+  if (!_soundPrefs.hapticsEnabled) return;
+  if (!navigator.vibrate) return;
+  const s = _soundPrefs.hapticsStrength;
+  if (s <= 0) return;
+  const scaled = (Array.isArray(pattern) ? pattern : [pattern]).map((v, i) =>
+    i % 2 === 0 ? Math.round(v * s) : v   // scale the "on" pulses, leave gaps
+  );
+  try { navigator.vibrate(scaled); } catch (e) { /* unsupported */ }
+}
+
+function playToneOn(freq, startOffset = 0, durationSec = 0.5, peak = 0.22, type = 'sine') {
+  const out = audioOut();
+  if (!out) return;
+  try {
+    const t0 = _sharedAudioCtx.currentTime + startOffset;
+    const osc = _sharedAudioCtx.createOscillator();
+    const gain = _sharedAudioCtx.createGain();
+    osc.type = type;
+    osc.connect(gain);
+    gain.connect(out);
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t0 + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + durationSec);
+    osc.start(t0);
+    osc.stop(t0 + durationSec + 0.05);
+  } catch (e) { /* silent */ }
+}
+
+// A library of distinct chimes. The point of having several is that
+// finishing your prayers should not sound identical to finishing a meal —
+// after a week you learn what happened without looking at the screen.
+const CHIME_LIBRARY = {
+  chime:   { label: '🔔 نغمة صاعدة',  notes: [523.25, 659.25, 783.99, 1046.50], gap: 0.11, dur: 0.55 },
+  bell:    { label: '🛎️ جرس',         notes: [880, 1108.73, 1318.51],           gap: 0.14, dur: 0.75 },
+  soft:    { label: '☁️ ناعمة',        notes: [392, 523.25, 659.25],             gap: 0.16, dur: 0.9 },
+  triumph: { label: '🎺 انتصار',       notes: [523.25, 523.25, 659.25, 880],     gap: 0.10, dur: 0.5 },
+  water:   { label: '💧 قطرة',         notes: [1046.5, 784, 587.33],             gap: 0.08, dur: 0.4 },
+  none:    { label: '🔇 بلا صوت',      notes: [], gap: 0, dur: 0 }
+};
+
+// Named events that can each have their OWN chime.
+const SOUND_EVENTS = [
+  { key: 'prayers',  label: '🕌 إتمام الصلوات الخمس', def: 'bell' },
+  { key: 'adhkar',   label: '🤲 إتمام الأذكار',       def: 'soft' },
+  { key: 'tasbeeh',  label: '📿 بلوغ هدف الذكر',      def: 'chime' },
+  { key: 'wird',     label: '📖 تسجيل الورد',         def: 'soft' },
+  { key: 'water',    label: '💧 بلوغ هدف الماء',      def: 'water' },
+  { key: 'tasks',    label: '📋 إتمام مهام اليوم',    def: 'chime' },
+  { key: 'habits',   label: '🌱 إتمام عادات اليوم',   def: 'triumph' },
+  { key: 'training', label: '💪 إتمام هدف التمرين',   def: 'triumph' },
+  { key: 'goal',     label: '🎯 تحقيق هدف',           def: 'triumph' },
+  { key: 'routine',  label: '🧴 إتمام روتين',         def: 'soft' },
+  { key: 'chewMeal', label: '🌿 إنهاء وجبة بالمضغ',   def: 'soft' },
+  { key: 'timer',    label: '⏱️ انتهاء مؤقّت',        def: 'bell' }
+];
+
+function chimeKeyFor(eventKey) {
+  const ev = SOUND_EVENTS.find(e => e.key === eventKey);
+  return _soundPrefs.sounds[eventKey] || ev?.def || 'chime';
+}
+
+// Play the chime configured for a named event, plus its haptic.
+function playEventChime(eventKey, { hapticPattern = [90, 50, 90, 50, 160] } = {}) {
+  unlockAudioContext();
+  const key = chimeKeyFor(eventKey);
+  const c = CHIME_LIBRARY[key];
+  if (c && c.notes.length) {
+    c.notes.forEach((f, i) => playToneOn(f, i * c.gap, c.dur, i === c.notes.length - 1 ? 0.30 : 0.20));
+  }
+  haptic(hapticPattern);
+}
+
+// Preview a chime by key (for the settings picker).
+function previewChime(key) {
+  unlockAudioContext();
+  const c = CHIME_LIBRARY[key];
+  if (!c || !c.notes.length) return;
+  c.notes.forEach((f, i) => playToneOn(f, i * c.gap, c.dur, i === c.notes.length - 1 ? 0.30 : 0.20));
+}
+
 // Reaching a goal should SOUND like reaching a goal. A rising major
 // arpeggio (C–E–G–C) reads as "well done" in a way a repeated alert
-// beep simply doesn't.
+// beep simply doesn't. Kept as the generic default.
 function playSuccessChime() {
-  unlockAudioContext();
-  const notes = [523.25, 659.25, 783.99, 1046.50]; // C5 E5 G5 C6
-  notes.forEach((f, i) => playTone(f, i * 0.11, 0.55, i === notes.length - 1 ? 0.26 : 0.18));
+  playEventChime('goal');
 }
 
 // A soft, low, very short "tok" for each chew. This fires roughly twice a
@@ -107,42 +221,44 @@ function playSuccessChime() {
 // stop noticing — anything bright or long would be unbearable by minute
 // three. Low frequency, tiny amplitude, ~60ms.
 function playChewTick() {
-  if (!_sharedAudioCtx) return;
+  const out = audioOut();
+  if (!out) return;
   try {
     const t0 = _sharedAudioCtx.currentTime;
     const osc = _sharedAudioCtx.createOscillator();
     const gain = _sharedAudioCtx.createGain();
     osc.type = 'triangle';
     osc.connect(gain);
-    gain.connect(_sharedAudioCtx.destination);
+    gain.connect(out);
     osc.frequency.setValueAtTime(150, t0);
     osc.frequency.exponentialRampToValueAtTime(90, t0 + 0.06);
     gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.07, t0 + 0.008);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.07);
+    gain.gain.exponentialRampToValueAtTime(0.22, t0 + 0.008); // was 0.07 — far too quiet to hear while eating
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.08);
     osc.start(t0);
-    osc.stop(t0 + 0.09);
+    osc.stop(t0 + 0.1);
   } catch (e) { /* silent */ }
 }
 
 // Swallowing is a DOWNWARD motion, so the sound is a downward glide —
 // a falling pitch is the only thing that actually reads as "gulp".
 function playSwallowSound() {
-  if (!_sharedAudioCtx) return;
+  const out = audioOut();
+  if (!out) return;
   try {
     const t0 = _sharedAudioCtx.currentTime;
     const osc = _sharedAudioCtx.createOscillator();
     const gain = _sharedAudioCtx.createGain();
     osc.type = 'sine';
     osc.connect(gain);
-    gain.connect(_sharedAudioCtx.destination);
+    gain.connect(out);
     osc.frequency.setValueAtTime(420, t0);
     osc.frequency.exponentialRampToValueAtTime(140, t0 + 0.28);
     gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.18, t0 + 0.04);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.34);
+    gain.gain.exponentialRampToValueAtTime(0.45, t0 + 0.04); // was 0.18
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.36);
     osc.start(t0);
-    osc.stop(t0 + 0.4);
+    osc.stop(t0 + 0.42);
   } catch (e) { /* silent */ }
 }
 
@@ -421,10 +537,13 @@ function openTasbeehModal({ title, benefit, goal, getCount, setCount, onClose })
   let count = 0;
   const hasGoal = typeof goal === 'number' && goal > 0;
 
+  // Full-screen, like the chewing pacer — counting a dhikr 100 times is a
+  // thing you do WITH your whole attention, not something you poke at in a
+  // little box with the rest of the app crowding around it.
   const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay tasbeeh-overlay';
+  overlay.className = 'tasbeeh-overlay';
   overlay.innerHTML = `
-    <div class="tasbeeh-modal">
+    <div class="tasbeeh-screen">
       <button class="icon-btn tasbeeh-close" id="tasbeeh-close" aria-label="إغلاق">✕</button>
       <h2 class="tasbeeh-title">${escapeHtml(title)}</h2>
       ${benefit ? `<p class="tasbeeh-benefit">${escapeHtml(benefit)}</p>` : ''}
@@ -484,8 +603,7 @@ function openTasbeehModal({ title, benefit, goal, getCount, setCount, onClose })
     // on every extra tap.
     if (hasGoal && wasBelowGoal && count >= goal && !goalCelebrated) {
       goalCelebrated = true;
-      playSuccessChime();
-      if (navigator.vibrate) navigator.vibrate([90, 50, 90, 50, 160]);
+      playEventChime('tasbeeh');
       return;
     }
     if (hasGoal && count < goal) goalCelebrated = false; // stepped back below: allow it again
@@ -493,11 +611,10 @@ function openTasbeehModal({ title, benefit, goal, getCount, setCount, onClose })
     // Without a goal, every 33 is a natural resting point (a full سبحة).
     if (!hasGoal && count > 0 && count % 33 === 0 && count !== lastMilestone) {
       lastMilestone = count;
-      playSuccessChime();
-      if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+      playEventChime('tasbeeh', { hapticPattern: [120, 60, 120] });
       return;
     }
-    if (delta > 0 && navigator.vibrate) navigator.vibrate(12); // a whisper per tap
+    if (delta > 0) haptic([14]); // a whisper per tap
   }
   // Audio must be unlocked inside a real user gesture, so do it on the
   // very first tap — otherwise the chime at the goal would be blocked.
@@ -541,4 +658,14 @@ function getNumeralMode() { return _useArabicNumerals; }
 function toArabicNumeral(n) {
   if (!_useArabicNumerals) return String(n);
   return String(n).replace(/[0-9]/g, d => '٠١٢٣٤٥٦٧٨٩'[Number(d)]);
+}
+
+// scrollIntoView isn't universally available (and jsdom lacks it entirely),
+// and an exception here would break navigation for the sake of a nicety.
+// Scroll if we can; otherwise just don't.
+function safeScrollIntoView(el, opts = { behavior: 'smooth', block: 'start' }) {
+  if (!el) return;
+  try {
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView(opts);
+  } catch (e) { /* a missing scroll is not worth breaking navigation over */ }
 }

@@ -34,8 +34,19 @@ async function isCareRoutineDone(routineId, date) {
 }
 async function toggleCareRoutine(routineId, date) {
   const existing = await getLog(db.dailyCareLogs, 'routineId', routineId, date);
-  if (existing) await deleteLog(db.dailyCareLogs, 'routineId', routineId, date);
-  else await upsertLog(db.dailyCareLogs, 'routineId', routineId, date, {});
+  if (existing) { await deleteLog(db.dailyCareLogs, 'routineId', routineId, date); return; }
+  await upsertLog(db.dailyCareLogs, 'routineId', routineId, date, {});
+
+  // A finished routine (all of its items ticked) is worth a sound; a single
+  // item within it is not.
+  if (date === todayStr()) {
+    const routine = await db.dailyCareRoutines.get(routineId);
+    if (routine) {
+      const siblings = await getCareRoutines(routine.kind);
+      const done = await countCareRoutinesDone(siblings, date);
+      if (siblings.length > 0 && done === siblings.length) playEventChime('routine');
+    }
+  }
 }
 async function getCareRoutineStats(routineId) {
   const logs = await db.dailyCareLogs.where('routineId').equals(routineId).toArray();

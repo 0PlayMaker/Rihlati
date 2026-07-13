@@ -567,8 +567,7 @@ function renderPomodoroCard(container, onSessionLogged, lockedCourseId = null) {
         paintRing(left, total);
         return;
       }
-      playBeepSequence(3);
-      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+      playEventChime('timer', { hapticPattern: [200, 100, 200, 100, 200] });
 
       // A completed FOCUS phase is real study time. A break isn't, so
       // nothing is logged when a break ends.

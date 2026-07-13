@@ -45,13 +45,18 @@ async function saveChewSettings({ chewSeconds, restSeconds, mealMinutes, soundOn
 
 // ---------- sessions ----------
 
-async function logChewSession({ foodLogId, chewSeconds, restSeconds, mealMinutes, bites, actualSeconds, completed }) {
+async function logChewSession({ foodLogId, chewSeconds, restSeconds, mealMinutes, bites, actualSeconds, completed, avgChewMs, targetChewMs }) {
   return db.chewSessions.add({
     date: todayStr(),
     foodLogId: foodLogId ?? null,
     chewSeconds, restSeconds, mealMinutes,
     bites,
     actualSeconds,
+    // How long she ACTUALLY chewed per bite vs how long she was asked to.
+    // A session where every bite was cut short at 8s out of 30 is not a
+    // slow meal, however long she sat there.
+    avgChewMs: avgChewMs ?? null,
+    targetChewMs: targetChewMs ?? null,
     completed: !!completed,
     createdAt: Date.now()
   });
@@ -93,6 +98,8 @@ const SWALLOW_MS = 1600; // long enough to see the animation and mean it
 function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soundOn, onFinished }) {
   let phase = 'chew';
   let bites = 0;
+  const biteChewMs = [];      // how long each bite was ACTUALLY chewed
+  let chewPhaseStartedAt = Date.now();
   let intervalId = null;
   let chewTickTimer = null;
   let phaseEndsAt = Date.now() + chewSeconds * 1000;
@@ -143,9 +150,12 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
 
       <div class="chew-meal-track"><div class="chew-meal-fill" id="chew-meal-fill"></div></div>
 
+      <button class="btn btn-primary btn-block chew-swallow-btn" id="chew-swallowed">🫗 بلعت</button>
+      <p class="chew-swallow-hint">اضغطي حين تبلعين فعلاً — المؤقّت اقتراح، وفمك هو الحقيقة</p>
+
       <div class="chew-actions">
         <button class="btn btn-text" id="chew-sound-toggle">${soundOn ? '🔊' : '🔇'}</button>
-        <button class="btn btn-secondary" id="chew-finish">إنهاء الآن</button>
+        <button class="btn btn-secondary" id="chew-finish">إنهاء الوجبة</button>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -195,16 +205,20 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
 
     if (next === 'chew') {
       emoji.textContent = '😋';
+      chewPhaseStartedAt = Date.now();
       phaseEndsAt = Date.now() + chewSeconds * 1000;
       startChewTicks();
     } else if (next === 'swallow') {
       emoji.textContent = '😌';
       stopChewTicks();
+      // How long this bite was actually chewed — she may have swallowed
+      // early, and that's the number worth knowing.
+      biteChewMs.push(Math.max(0, Date.now() - chewPhaseStartedAt));
       phaseEndsAt = Date.now() + SWALLOW_MS;
       bites += 1;
       bitesEl.textContent = toArabicNumeral(bites);
       if (sound) playSwallowSound();
-      if (navigator.vibrate) navigator.vibrate([30, 40, 60]);
+      haptic([30, 40, 60]);
       // The droplet slides down: the one motion that reads as "swallow"
       // without needing a caption.
       droplet.classList.remove('chew-droplet-go');
@@ -264,15 +278,18 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
     phaseEl.textContent = CHEW_PHASES.done.label;
     hintEl.textContent = CHEW_PHASES.done.hint;
     countEl.textContent = '';
-    if (completed) {
-      playSuccessChime();
-      if (navigator.vibrate) navigator.vibrate([90, 50, 90, 50, 160]);
-    }
+    if (completed) playEventChime('chewMeal', { hapticPattern: [90, 50, 90, 50, 160] });
 
+    // avgChewMs is the number that actually says whether she chewed, as
+    // opposed to whether she sat in front of a timer for twenty minutes.
+    const avgChewMs = biteChewMs.length
+      ? Math.round(biteChewMs.reduce((s, x) => s + x, 0) / biteChewMs.length)
+      : 0;
     await logChewSession({
       foodLogId: foodLog ? foodLog.id : null,
       chewSeconds, restSeconds, mealMinutes,
-      bites, actualSeconds, completed
+      bites, actualSeconds, completed,
+      avgChewMs, targetChewMs: chewSeconds * 1000
     });
 
     // A short beat so the "done" state is actually seen, rather than the
@@ -288,6 +305,11 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
     e.currentTarget.textContent = sound ? '🔊' : '🔇';
     await saveChewSettings({ soundOn: sound });
     if (sound && phase === 'chew') startChewTicks(); else stopChewTicks();
+  });
+  overlay.querySelector('#chew-swallowed').addEventListener('click', () => {
+    // Only meaningful mid-chew; during rest/swallow it's a no-op.
+    if (phase !== 'chew') return;
+    enterPhase('swallow');
   });
   overlay.querySelector('#chew-finish').addEventListener('click', () => finish(false));
   overlay.querySelector('#chew-close').addEventListener('click', () => finish(false));
@@ -347,7 +369,7 @@ async function openChewSetupModal(onDone) {
           </button>`).join('')
         : '<p class="empty-state-sub">ما في وجبات مسجّلة اليوم.</p>'}
       </div>
-      <button class="link-btn" id="chew-new-meal">+ تسجيل وجبة جديدة</button>
+      <button class="btn btn-secondary btn-block chew-new-meal-btn" id="chew-new-meal">＋ تسجيل وجبة جديدة</button>
 
       <label class="field-label">الإيقاع</label>
       <div class="chew-preset-grid" id="chew-presets">
@@ -472,6 +494,8 @@ async function renderChewCard(container, onChange) {
   const avgSec = allSessions.length
     ? allSessions.reduce((s, x) => s + (x.actualSeconds || 0), 0) / allSessions.length
     : 0;
+  const perf = await getChewPerformance();
+  const tip = chewTip(perf);
 
   container.innerHTML = `
     <div class="section-header">
@@ -501,6 +525,14 @@ async function renderChewCard(container, onChange) {
         </div>
       </div>
       ${completedToday > 0 ? `<p class="settings-note">✨ أكملتِ ${toArabicNumeral(completedToday)} ${completedToday === 1 ? 'وجبة كاملة' : 'وجبات كاملة'} اليوم</p>` : ''}
+      ${tip ? `<p class="chew-tip chew-tip-${tip.tone}">${tip.text}</p>` : ''}
+      ${perf?.avgAdherence != null ? `
+        <div class="chew-adherence">
+          <div class="mini-progress-track">
+            <div class="mini-progress-fill ${perf.avgAdherence >= 0.9 ? 'chew-adherence-good' : ''}" style="width:${Math.min(100, perf.avgAdherence * 100)}%"></div>
+          </div>
+          <span class="mini-progress-text">تمضغين ${toArabicNumeral(Math.round(perf.avgAdherence * 100))}٪ من المدّة المطلوبة</span>
+        </div>` : ''}
     `}
 
     <button class="btn btn-primary btn-block" id="chew-start-btn">🌿 ابدئي وضع المضغ</button>
@@ -557,13 +589,114 @@ async function chewYearlyProvider(year) {
     }
   }
 
+  // Adherence: did she actually CHEW, or just wait? A twenty-minute meal
+  // where every bite was swallowed at eight seconds is not a slow meal.
+  const withAdh = sessions.filter(s => s.avgChewMs && s.targetChewMs);
+  const avgAdh = withAdh.length
+    ? withAdh.reduce((s, x) => s + (x.avgChewMs / x.targetChewMs), 0) / withAdh.length
+    : null;
+
+  // Which meal she rushes most.
+  const byMeal = {};
+  for (const s of withAdh) {
+    if (!s.foodLogId) continue;
+    const meal = await db.foodLogs.get(s.foodLogId);
+    if (!meal) continue;
+    if (!byMeal[meal.mealType]) byMeal[meal.mealType] = [];
+    byMeal[meal.mealType].push(s.avgChewMs / s.targetChewMs);
+  }
+  const mealRows = Object.entries(byMeal)
+    .map(([type, arr]) => ({ type, adh: arr.reduce((a, b) => a + b, 0) / arr.length, n: arr.length }))
+    .sort((a, b) => a.adh - b.adh)
+    .map(m => `<div class="yearly-row"><span>${mealTypeIcon(m.type)} ${mealTypeLabel(m.type)}</span><span>${toArabicNumeral(Math.round(m.adh * 100))}٪ · ${toArabicNumeral(m.n)} مرّة</span></div>`)
+    .join('');
+
   const html = `
     <div class="yearly-row"><span>جلسات المضغ</span><span>${toArabicNumeral(sessions.length)}</span></div>
     <div class="yearly-row"><span>وجبات أكملتِها كاملة</span><span>${toArabicNumeral(completed)}</span></div>
     <div class="yearly-row"><span>أيام تدرّبتِ فيها</span><span>${toArabicNumeral(days)} يوم</span></div>
     <div class="yearly-row"><span>إجمالي اللقمات</span><span>${toArabicNumeral(totalBites)}</span></div>
     <div class="yearly-row"><span>متوسط مدّة الوجبة</span><span>${formatChewDuration(avgSec)}</span></div>
+    ${avgAdh != null ? `<div class="yearly-row"><span>نسبة المضغ الفعلي</span><span>${toArabicNumeral(Math.round(avgAdh * 100))}٪ من المدّة المطلوبة</span></div>` : ''}
     ${trendLine}
+    ${mealRows ? `
+      <details class="yearly-pain-details">
+        <summary>أي وجبة تبلعينها أسرع؟</summary>
+        ${mealRows}
+      </details>` : ''}
   `;
   return { title: 'وضع المضغ', html, count: sessions.length };
+}
+
+
+// ============================================================
+//  Performance: what the numbers actually say
+// ============================================================
+// A long meal isn't the goal; a CHEWED meal is. Someone who sits in front
+// of the timer for twenty minutes but swallows every bite at eight seconds
+// has not eaten slowly — they've waited slowly. avgChewMs vs targetChewMs
+// is the only pair that can tell those two apart.
+
+function chewAdherence(session) {
+  if (!session.avgChewMs || !session.targetChewMs) return null;
+  return session.avgChewMs / session.targetChewMs; // 1.0 = chewed exactly as long as asked
+}
+
+async function getChewPerformance() {
+  const sessions = await getChewSessions();
+  if (sessions.length === 0) return null;
+
+  const withData = sessions.filter(s => s.avgChewMs && s.targetChewMs);
+  const adherences = withData.map(chewAdherence).filter(x => x != null);
+  const avgAdherence = adherences.length
+    ? adherences.reduce((s, x) => s + x, 0) / adherences.length
+    : null;
+
+  const avgSec = sessions.reduce((s, x) => s + (x.actualSeconds || 0), 0) / sessions.length;
+  const completedRate = sessions.filter(s => s.completed).length / sessions.length;
+
+  // Which MEAL she rushes. Grouping by mealType answers a question she can
+  // act on ("I inhale breakfast") in a way an overall average never will.
+  const byMeal = {};
+  for (const s of withData) {
+    if (!s.foodLogId) continue;
+    const meal = await db.foodLogs.get(s.foodLogId);
+    if (!meal) continue;
+    if (!byMeal[meal.mealType]) byMeal[meal.mealType] = [];
+    byMeal[meal.mealType].push(chewAdherence(s));
+  }
+  const mealAvgs = Object.entries(byMeal).map(([type, arr]) => ({
+    type,
+    adherence: arr.reduce((s, x) => s + x, 0) / arr.length,
+    count: arr.length
+  })).sort((a, b) => a.adherence - b.adherence);
+
+  return {
+    sessions: sessions.length,
+    avgSec,
+    avgAdherence,
+    completedRate,
+    fastestMeal: mealAvgs.length && mealAvgs[0].adherence < 0.85 ? mealAvgs[0] : null,
+    mealAvgs
+  };
+}
+
+// One honest sentence about how she's doing — not a scolding, not a
+// meaningless "great job!".
+function chewTip(perf) {
+  if (!perf) return null;
+  if (perf.avgAdherence == null) {
+    return { tone: 'neutral', text: 'أنهي جلسة بزرّ «بلعت» لأعرف كم تمضغين فعلاً.' };
+  }
+  const a = perf.avgAdherence;
+  if (a >= 0.95) {
+    return { tone: 'success', text: '🌿 تمضغين المدّة كاملة تقريباً — هذا بالضبط ما يعطي جسمك وقتاً ليشبع.' };
+  }
+  if (a >= 0.7) {
+    return { tone: 'neutral', text: `تمضغين ~${toArabicNumeral(Math.round(a * 100))}٪ من المدّة المطلوبة. جرّبي إنقاص مدّة المضغ قليلاً بدل إجبار نفسك — الالتزام أهم من الرقم.` };
+  }
+  if (perf.fastestMeal) {
+    return { tone: 'warning', text: `تبلعين مبكراً غالباً، وأسرع وجباتك: ${mealTypeIcon(perf.fastestMeal.type)} ${mealTypeLabel(perf.fastestMeal.type)}. جرّبي مدّة مضغ أقصر لتصلي إليها فعلاً.` };
+  }
+  return { tone: 'warning', text: 'تبلعين قبل انتهاء المدّة غالباً — قلّلي مدّة المضغ حتى تصبح قابلة للالتزام.' };
 }

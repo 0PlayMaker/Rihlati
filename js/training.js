@@ -37,7 +37,18 @@ async function getExerciseSets(exerciseId, date) {
   const row = await getLog(db.exerciseLogs, 'exerciseId', exerciseId, date);
   return row ? row.sets : 0;
 }
+// Hitting an exercise's daily target is a completion — treat it like one.
 async function setExerciseSets(exerciseId, date, sets) {
+  if (date === todayStr()) {
+    const ex = await db.exercises.get(exerciseId);
+    const before = await getExerciseSets(exerciseId, date);
+    if (ex?.targetSets && before < ex.targetSets && sets >= ex.targetSets) {
+      playEventChime('training');
+    }
+  }
+  return _setExerciseSetsRaw(exerciseId, date, sets);
+}
+async function _setExerciseSetsRaw(exerciseId, date, sets) {
   if (sets <= 0) await deleteLog(db.exerciseLogs, 'exerciseId', exerciseId, date);
   else await upsertLog(db.exerciseLogs, 'exerciseId', exerciseId, date, { sets });
 }
@@ -121,8 +132,7 @@ function openTimerModal(exercise) {
     display.textContent = formatTimer(0);
     toggleBtn.textContent = 'ابدأ';
     display.classList.add('timer-done');
-    playBeepSequence(3);
-    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+    playEventChime('timer', { hapticPattern: [200, 100, 200, 100, 200] });
   }
 
   function tick() {

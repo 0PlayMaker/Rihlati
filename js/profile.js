@@ -277,12 +277,21 @@ function renderForgotPin(profile, onUnlock) {
 // ---------- Settings page (registered as a route in app.js) ----------
 
 const REMINDER_CATEGORIES = [
-  { key: 'tasks', label: 'المهام الثابتة', hasTime: false, note: 'كل مهمة تحدّد وقتها بنفسها' },
+  { key: 'tasks', label: '📋 المهام الثابتة', hasTime: false, note: 'كل مهمة تحدّد وقتها بنفسها' },
   { key: 'water', label: '💧 الماء', hasTime: true, defaultTime: '15:00' },
   { key: 'adhkarMorning', label: '🌅 أذكار الصباح', hasTime: true, defaultTime: '06:00' },
   { key: 'adhkarEvening', label: '🌙 أذكار المساء', hasTime: true, defaultTime: '18:00' },
   { key: 'wird', label: '📖 ورد القرآن', hasTime: true, defaultTime: '20:00' },
-  { key: 'sleep', label: '😴 تذكير النوم', hasTime: true, defaultTime: '22:30' }
+  { key: 'reflect', label: '📔 وقفة اليوم (يومية + مزاج)', hasTime: true, defaultTime: '21:00' },
+  { key: 'sleep', label: '😴 تذكير النوم', hasTime: true, defaultTime: '22:30' },
+  { key: 'period', label: '🌸 اقتراب الدورة', hasTime: true, defaultTime: '09:00' },
+  { key: 'periodPain', label: '🩸 تسجيل ألم الدورة', hasTime: true, defaultTime: '20:00' },
+  { key: 'training', label: '💪 التمارين', hasTime: true, defaultTime: '17:00' },
+  { key: 'food', label: '🍽️ تسجيل وجباتك', hasTime: true, defaultTime: '13:00' },
+  { key: 'study', label: '⏳ وقت الدراسة', hasTime: true, defaultTime: '16:00' },
+  { key: 'habits', label: '🌱 مراجعة عاداتك', hasTime: true, defaultTime: '19:00' },
+  { key: 'deadlines', label: '⚠️ مهام ومواعيد اليوم', hasTime: true, defaultTime: '08:00' },
+  { key: 'backup', label: '💾 نسخة احتياطية (شهرياً)', hasTime: true, defaultTime: '20:00', defaultOn: true }
 ];
 
 function renderReminderCategoriesHtml(settings) {
@@ -292,7 +301,7 @@ function renderReminderCategoriesHtml(settings) {
     <div class="reminder-categories">
       ${REMINDER_CATEGORIES.map(cat => `
         <div class="reminder-category-row">
-          <label class="switch"><input type="checkbox" class="reminder-cat-toggle" data-cat="${cat.key}" ${(cat.key === 'tasks' ? enabled.tasks !== false : !!enabled[cat.key]) ? 'checked' : ''}><span class="switch-track"></span></label>
+          <label class="switch"><input type="checkbox" class="reminder-cat-toggle" data-cat="${cat.key}" ${((cat.key === 'tasks' || cat.defaultOn) ? enabled[cat.key] !== false : !!enabled[cat.key]) ? 'checked' : ''}><span class="switch-track"></span></label>
           <span class="reminder-cat-label">${cat.label}</span>
           ${cat.hasTime ? `<input type="time" class="text-input reminder-cat-time" data-cat-time="${cat.key}" value="${times[cat.key] || cat.defaultTime}">` : `<span class="settings-note">${cat.note}</span>`}
         </div>`).join('')}
@@ -318,6 +327,7 @@ async function renderSettingsPage(params, view) {
       <button class="settings-jump-chip" data-jump="sec-look">🎨 المظهر</button>
       <button class="settings-jump-chip" data-jump="sec-account">👤 حسابك</button>
       <button class="settings-jump-chip" data-jump="sec-prefs">⚙️ تفضيلات</button>
+      <button class="settings-jump-chip" data-jump="sec-sound">🔊 الصوت</button>
       <button class="settings-jump-chip" data-jump="sec-notif">🔔 الإشعارات</button>
       <button class="settings-jump-chip" data-jump="sec-data">💾 البيانات</button>
     </div>
@@ -330,7 +340,7 @@ async function renderSettingsPage(params, view) {
 
       <label class="field-label">الدوائر الكبيرة <span class="settings-count" id="big-count">${toArabicNumeral(prefs.big.length)}/${toArabicNumeral(HOME_MAX_BIG)}</span></label>
       <div class="tracker-grid" id="big-trackers">
-        ${HOME_TRACKERS.filter(t => t.size === 'big').map(t => `
+        ${HOME_TRACKERS.map(t => `
           <button class="tracker-chip ${prefs.big.includes(t.key) ? 'active' : ''}" data-size="big" data-key="${t.key}">
             <span class="tracker-chip-icon">${t.icon}</span>
             <span class="tracker-chip-label">${t.label}</span>
@@ -339,7 +349,7 @@ async function renderSettingsPage(params, view) {
 
       <label class="field-label">الدوائر الصغيرة <span class="settings-count" id="small-count">${toArabicNumeral(prefs.small.length)}/${toArabicNumeral(HOME_MAX_SMALL)}</span></label>
       <div class="tracker-grid" id="small-trackers">
-        ${HOME_TRACKERS.filter(t => t.size === 'small').map(t => `
+        ${HOME_TRACKERS.map(t => `
           <button class="tracker-chip ${prefs.small.includes(t.key) ? 'active' : ''}" data-size="small" data-key="${t.key}">
             <span class="tracker-chip-icon">${t.icon}</span>
             <span class="tracker-chip-label">${t.label}</span>
@@ -436,6 +446,35 @@ async function renderSettingsPage(params, view) {
       </details>
     </div>
 
+    <h2 class="settings-group-title" id="sec-sound">🔊 الصوت والاهتزاز</h2>
+
+    <div class="card settings-card">
+      <div class="settings-row">
+        <span>الأصوات</span>
+        <label class="switch"><input type="checkbox" id="sound-enabled" ${settings.soundEnabled !== false ? 'checked' : ''}><span class="switch-track"></span></label>
+      </div>
+      <div id="sound-wrap" class="${settings.soundEnabled !== false ? '' : 'hidden'}">
+        <label class="field-label">مستوى الصوت: <span class="settings-count" id="vol-label">${toArabicNumeral(Math.round((settings.soundVolume ?? 0.7) * 100))}٪</span></label>
+        <input type="range" class="mood-intensity" id="sound-volume" min="0" max="100" value="${Math.round((settings.soundVolume ?? 0.7) * 100)}">
+
+        <label class="field-label">نغمة كل حدث</label>
+        <p class="settings-note">إتمام صلواتك لا يجب أن يبدو كإنهاء وجبة — بعد أسبوع ستعرفين ما حدث دون النظر إلى الشاشة.</p>
+        <div id="sound-events"></div>
+      </div>
+    </div>
+
+    <div class="card settings-card">
+      <div class="settings-row">
+        <span>الاهتزاز</span>
+        <label class="switch"><input type="checkbox" id="haptics-enabled" ${settings.hapticsEnabled !== false ? 'checked' : ''}><span class="switch-track"></span></label>
+      </div>
+      <div id="haptics-wrap" class="${settings.hapticsEnabled !== false ? '' : 'hidden'}">
+        <label class="field-label">قوّة الاهتزاز: <span class="settings-count" id="hap-label"></span></label>
+        <input type="range" class="mood-intensity" id="haptics-strength" min="0" max="200" step="10" value="${Math.round((settings.hapticsStrength ?? 1) * 100)}">
+        <button class="btn btn-secondary btn-sm" id="haptics-test">جرّبي الاهتزاز</button>
+      </div>
+    </div>
+
     <h2 class="settings-group-title" id="sec-notif">🔔 الإشعارات</h2>
 
     <div class="card settings-card">
@@ -445,9 +484,50 @@ async function renderSettingsPage(params, view) {
       </div>
       ${notifStatus !== 'granted' && notifStatus !== 'unsupported' ? `<button class="btn btn-secondary btn-sm" id="settings-enable-notif">تفعيل الإشعارات</button>` : ''}
       ${notifStatus === 'denied' ? `<p class="settings-note">حظرتِ الإشعارات من إعدادات المتصفح أو الجهاز — يلزم السماح بها من هناك أولاً.</p>` : ''}
+      ${notifStatus === 'granted' ? `<button class="btn btn-secondary btn-sm" id="settings-test-notif">🔔 إرسال إشعار تجريبي</button>` : ''}
       <p class="settings-note">التطبيق محلي بالكامل بلا سيرفر، فالتذكيرات تعمل بشكل موثوق أثناء تشغيله، وتظهر الفائتة منها عند فتحه من جديد.</p>
-      ${notifStatus === 'granted' ? renderReminderCategoriesHtml(settings) : ''}
     </div>
+
+    ${notifStatus === 'granted' ? `
+      <div class="card settings-card">
+        <h3 class="card-title">ما الذي يُذكّرك؟</h3>
+        ${renderReminderCategoriesHtml(settings)}
+      </div>
+
+      <div class="card settings-card">
+        <div class="section-header">
+          <h3 class="card-title">🔔 تذكيرات خاصة بك</h3>
+          <button class="link-btn" id="add-custom-reminder">+ إضافة</button>
+        </div>
+        <p class="settings-note">دواء، موعد، أوقات الصلاة إن أردتِ إدخالها بنفسك — أي شيء.</p>
+        <div id="custom-reminders-list"></div>
+      </div>
+
+      <div class="card settings-card">
+        <div class="settings-row">
+          <span>🌙 ساعات الهدوء</span>
+          <label class="switch"><input type="checkbox" id="quiet-hours-toggle" ${settings.quietHoursEnabled ? 'checked' : ''}><span class="switch-track"></span></label>
+        </div>
+        <div id="quiet-hours-wrap" class="${settings.quietHoursEnabled ? '' : 'hidden'}">
+          <div class="quiet-hours-row">
+            <div class="quiet-hours-field">
+              <label class="field-label">من</label>
+              <input class="text-input" type="time" id="quiet-from" value="${settings.quietHoursFrom || '22:30'}">
+            </div>
+            <div class="quiet-hours-field">
+              <label class="field-label">إلى</label>
+              <input class="text-input" type="time" id="quiet-to" value="${settings.quietHoursTo || '07:00'}">
+            </div>
+          </div>
+          <p class="settings-note">لا تُرسَل إشعارات في هذه الفترة. تذكير يوقظك الثالثة فجراً ليس تذكيراً — بل سبب لإطفاء الإشعارات كلّها.</p>
+        </div>
+
+        <div class="settings-row">
+          <span>كتم الإشعارات والتطبيق مفتوح</span>
+          <label class="switch"><input type="checkbox" id="suppress-open-toggle" ${settings.suppressWhenOpen !== false ? 'checked' : ''}><span class="switch-track"></span></label>
+        </div>
+        <p class="settings-note">إشعار عن شيء تنظرين إليه أصلاً هو ضجيج.</p>
+      </div>` : ''}
 
     <h2 class="settings-group-title" id="sec-data">💾 البيانات</h2>
 
@@ -476,7 +556,7 @@ async function renderSettingsPage(params, view) {
   view.querySelectorAll('.settings-jump-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       const target = document.getElementById(chip.dataset.jump);
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      safeScrollIntoView(target);
     });
   });
 
@@ -559,6 +639,141 @@ async function renderSettingsPage(params, view) {
     // Repaint immediately — the whole point is to SEE the difference.
     renderSettingsPage(params, view);
   });
+
+  // ---- sound & haptics ----
+  const soundToggle = document.getElementById('sound-enabled');
+  if (soundToggle) {
+    soundToggle.addEventListener('change', async (e) => {
+      await db.settings.update(1, { soundEnabled: e.target.checked });
+      loadSoundPrefs(await db.settings.get(1));
+      document.getElementById('sound-wrap').classList.toggle('hidden', !e.target.checked);
+    });
+
+    const volEl = document.getElementById('sound-volume');
+    const volLabel = document.getElementById('vol-label');
+    volEl.addEventListener('input', () => { volLabel.textContent = `${toArabicNumeral(volEl.value)}٪`; });
+    volEl.addEventListener('change', async () => {
+      await db.settings.update(1, { soundVolume: Number(volEl.value) / 100 });
+      loadSoundPrefs(await db.settings.get(1));
+      previewChime('chime'); // hear the change immediately
+    });
+
+    // A chime picker per event. Previewing on selection is the whole point —
+    // choosing a sound you can't hear is choosing blind.
+    const evEl = document.getElementById('sound-events');
+    const chosen = settings.eventSounds || {};
+    evEl.innerHTML = SOUND_EVENTS.map(ev => `
+      <div class="sound-event-row">
+        <span class="sound-event-label">${ev.label}</span>
+        <select class="text-input sound-event-select" data-ev="${ev.key}">
+          ${Object.entries(CHIME_LIBRARY).map(([k, c]) =>
+            `<option value="${k}" ${(chosen[ev.key] || ev.def) === k ? 'selected' : ''}>${c.label}</option>`).join('')}
+        </select>
+      </div>`).join('');
+    evEl.querySelectorAll('.sound-event-select').forEach(sel => {
+      sel.addEventListener('change', async () => {
+        const s2 = await db.settings.get(1);
+        const map = { ...(s2.eventSounds || {}), [sel.dataset.ev]: sel.value };
+        await db.settings.update(1, { eventSounds: map });
+        loadSoundPrefs(await db.settings.get(1));
+        previewChime(sel.value);
+      });
+    });
+  }
+
+  const hapToggle = document.getElementById('haptics-enabled');
+  if (hapToggle) {
+    const HAP_LABELS = ['بلا', 'خفيف', 'عادي', 'قوي'];
+    const hapEl = document.getElementById('haptics-strength');
+    const hapLabel = document.getElementById('hap-label');
+    const hapText = (v) => HAP_LABELS[Math.min(3, Math.floor(Number(v) / 60))];
+    hapLabel.textContent = hapText(hapEl.value);
+
+    hapToggle.addEventListener('change', async (e) => {
+      await db.settings.update(1, { hapticsEnabled: e.target.checked });
+      loadSoundPrefs(await db.settings.get(1));
+      document.getElementById('haptics-wrap').classList.toggle('hidden', !e.target.checked);
+    });
+    hapEl.addEventListener('input', () => { hapLabel.textContent = hapText(hapEl.value); });
+    hapEl.addEventListener('change', async () => {
+      await db.settings.update(1, { hapticsStrength: Number(hapEl.value) / 100 });
+      loadSoundPrefs(await db.settings.get(1));
+      haptic([80, 50, 80]);
+    });
+    document.getElementById('haptics-test').addEventListener('click', () => haptic([100, 60, 100, 60, 160]));
+  }
+
+  // ---- notifications ----
+  const testBtn = document.getElementById('settings-test-notif');
+  if (testBtn) testBtn.addEventListener('click', async () => {
+    const ok = await sendTestNotification();
+    toast(ok ? '🔔 أُرسل — تحقّقي من إشعاراتك' : '⚠️ لم يُرسل. تحقّقي من إذن الإشعارات');
+  });
+
+  const quietToggle = document.getElementById('quiet-hours-toggle');
+  if (quietToggle) {
+    quietToggle.addEventListener('change', async (e) => {
+      await db.settings.update(1, { quietHoursEnabled: e.target.checked });
+      document.getElementById('quiet-hours-wrap').classList.toggle('hidden', !e.target.checked);
+    });
+    document.getElementById('quiet-from').addEventListener('change', async (e) => {
+      await db.settings.update(1, { quietHoursFrom: e.target.value });
+    });
+    document.getElementById('quiet-to').addEventListener('change', async (e) => {
+      await db.settings.update(1, { quietHoursTo: e.target.value });
+    });
+  }
+  const suppressToggle = document.getElementById('suppress-open-toggle');
+  if (suppressToggle) suppressToggle.addEventListener('change', async (e) => {
+    await db.settings.update(1, { suppressWhenOpen: e.target.checked });
+  });
+
+  // ---- custom reminders ----
+  async function refreshCustomReminders() {
+    const el = document.getElementById('custom-reminders-list');
+    if (!el) return;
+    const items = await getCustomReminders();
+    if (items.length === 0) {
+      el.innerHTML = `<p class="empty-state-sub">لا تذكيرات خاصة بعد.</p>`;
+      return;
+    }
+    el.innerHTML = items.map(r => `
+      <div class="task-row-wrap custom-reminder-row" data-rem="${r.id}">
+        <label class="switch"><input type="checkbox" data-rem-toggle="${r.id}" ${r.enabled ? 'checked' : ''}><span class="switch-track"></span></label>
+        <div class="custom-reminder-main">
+          <span class="custom-reminder-label">${r.emoji} ${escapeHtml(r.label)}</span>
+          <span class="custom-reminder-sub">${r.time} · ${reminderDaysLabel(r.days)}</span>
+        </div>
+        ${kebabMenuHtml('rem-' + r.id, [
+          { key: 'edit', label: 'تعديل' },
+          { key: 'delete', label: 'حذف', danger: true }
+        ])}
+      </div>`).join('');
+
+    el.querySelectorAll('[data-rem-toggle]').forEach(cb => {
+      cb.addEventListener('change', async () => {
+        await updateCustomReminder(Number(cb.dataset.remToggle), { enabled: cb.checked });
+        await rescheduleHomeReminders();
+      });
+    });
+    wireKebabMenus(el, async (rowId, action) => {
+      const id = Number(rowId.replace('rem-', ''));
+      if (action === 'edit') {
+        const item = items.find(r => r.id === id);
+        openCustomReminderModal(item, refreshCustomReminders);
+      } else if (action === 'delete') {
+        if (!confirm('حذف هذا التذكير؟')) return;
+        await deleteCustomReminder(id);
+        await refreshCustomReminders();
+        await rescheduleHomeReminders();
+      }
+    });
+  }
+  const addRemBtn = document.getElementById('add-custom-reminder');
+  if (addRemBtn) {
+    addRemBtn.addEventListener('click', () => openCustomReminderModal(null, refreshCustomReminders));
+    await refreshCustomReminders();
+  }
 
   wireThemeSection(view);
 
@@ -683,14 +898,41 @@ async function renderSettingsPage(params, view) {
   document.getElementById('settings-import-input').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (!confirm('سيتم استبدال جميع البيانات الحالية بالبيانات من النسخة الاحتياطية. هل أنتِ متأكدة؟')) return;
+    e.target.value = ''; // let the same file be re-picked if she cancels
+
+    // Look inside FIRST. The old flow asked "replace everything?" without
+    // saying what with — so the only way to find out whether you'd grabbed
+    // the right file was to destroy the current one and see.
+    let inspected;
     try {
-      await importBackup(file);
+      inspected = await inspectBackup(file);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'تعذّرت قراءة ملف النسخة الاحتياطية.');
+      return;
+    }
+
+    const when = inspected.exportedAt
+      ? inspected.exportedAt.toLocaleDateString('ar') + ' — ' + inspected.exportedAt.toLocaleTimeString('ar', { hour: '2-digit', minute: '2-digit' })
+      : 'تاريخ غير معروف';
+    const items = summariseBackup(inspected);
+    const ok = confirm(
+      `📦 نسخة احتياطية\n` +
+      `التاريخ: ${when}\n` +
+      (inspected.profileName ? `الاسم: ${inspected.profileName}\n` : '') +
+      `تحتوي: ${toArabicNumeral(inspected.totalRows)} سجلاً · ${toArabicNumeral(inspected.photoCount)} صورة\n` +
+      (items.length ? `\n${items.join('\n')}\n` : '') +
+      `\n⚠️ سيُستبدل كل ما هو موجود الآن بهذه البيانات. متأكدة؟`
+    );
+    if (!ok) return;
+
+    try {
+      await applyBackup(inspected);
       alert('تمت الاستعادة بنجاح. سيُعاد تحميل التطبيق الآن.');
       location.reload();
     } catch (err) {
       console.error(err);
-      alert('تعذّرت قراءة ملف النسخة الاحتياطية. تأكدي أنه الملف الصحيح.');
+      alert('فشلت الاستعادة — لم تتغيّر بياناتك الحالية.');
     }
   });
 

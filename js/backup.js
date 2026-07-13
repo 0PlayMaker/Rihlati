@@ -13,7 +13,7 @@
 const SIMPLE_TABLES = [
   'habits', 'habitLogs', 'fixedTasks', 'fixedTaskLogs', 'customTodos', 'streakPauses',
   'prayerLogs', 'sunnahLogs', 'adhkarAfterLogs', 'dailyAdhkarLogs', 'customAdhkar', 'customAdhkarLogs',
-  'moodLogs', 'periodLogs', 'periodReadings', 'foodLogs', 'chewSessions', 'waterLogs', 'weightLogs', 'bodyMeasurements', 'bodyMeasurementLogs',
+  'moodLogs', 'periodLogs', 'periodReadings', 'foodLogs', 'chewSessions', 'customReminders', 'waterLogs', 'weightLogs', 'bodyMeasurements', 'bodyMeasurementLogs',
   'goals', 'diaryEntries',
   'economyTransactions', 'shoppingLists', 'shoppingListItems',
   'edibles', 'edibleWishlist', 'things', 'thingsWishlist',
@@ -75,11 +75,51 @@ async function exportBackup() {
   toast('تم تنزيل النسخة الاحتياطية 🌸');
 }
 
-async function importBackup(file) {
+const BACKUP_FORMAT_VERSION = 2;
+
+// Read a backup WITHOUT touching the database, so she can see what's in it
+// before deciding. The old flow cleared everything the instant a file was
+// chosen: pick the wrong zip and it was simply gone.
+async function inspectBackup(file) {
   const zip = await JSZip.loadAsync(file);
   const dataFile = zip.file('data.json');
-  if (!dataFile) throw new Error('data.json not found in backup zip');
+  if (!dataFile) throw new Error('هذا ليس ملف نسخة احتياطية صالحاً (data.json مفقود)');
   const data = JSON.parse(await dataFile.async('string'));
+
+  if (typeof data.version !== 'number') {
+    throw new Error('ملف النسخة تالف أو غير مكتمل');
+  }
+  if (data.version > BACKUP_FORMAT_VERSION) {
+    throw new Error(`هذه النسخة من إصدار أحدث من التطبيق (v${data.version}). حدّثي التطبيق أولاً.`);
+  }
+
+  // Count what's actually inside, so the confirmation says something real.
+  const counts = {};
+  let total = 0;
+  for (const t of SIMPLE_TABLES) {
+    const n = data[t]?.length || 0;
+    if (n > 0) { counts[t] = n; total += n; }
+  }
+  let photoCount = 0;
+  for (const p of PHOTO_TABLES) photoCount += (data[p.table + 'Ids']?.length || 0);
+  if (zip.file('photos/profile.jpg')) photoCount += 1;
+
+  return {
+    zip, data,
+    version: data.version,
+    exportedAt: data.exportedAt ? new Date(data.exportedAt) : null,
+    profileName: data.profile?.name || null,
+    totalRows: total,
+    photoCount,
+    counts
+  };
+}
+
+// Apply an already-inspected backup. Split from inspectBackup on purpose:
+// nothing destructive happens until she has seen what she's about to
+// replace her data with.
+async function applyBackup(inspected) {
+  const { zip, data } = inspected;
 
   let pictureBlob = null;
   const picFile = zip.file('photos/profile.jpg');
@@ -114,4 +154,32 @@ async function importBackup(file) {
       await db.settings.put({ ...data.settings, id: 1 });
     }
   });
+}
+
+// Kept for callers that genuinely want the one-shot behaviour.
+async function importBackup(file) {
+  const inspected = await inspectBackup(file);
+  await applyBackup(inspected);
+}
+
+// A human-readable summary of what a table holds, for the restore preview.
+const BACKUP_TABLE_LABELS = {
+  habits: 'عادة', habitLogs: 'سجل عادة', habitEvents: 'حدث عادة',
+  fixedTasks: 'مهمة ثابتة', customTodos: 'مهمة',
+  prayerLogs: 'صلاة', moodLogs: 'مزاج', periodLogs: 'دورة', periodReadings: 'قراءة دورة',
+  foodLogs: 'وجبة', waterLogs: 'ماء', weightLogs: 'وزن',
+  diaryEntries: 'يومية', economyTransactions: 'معاملة',
+  recipes: 'وصفة', exercises: 'تمرين', exerciseLogs: 'سجل تمرين',
+  courses: 'دورة تعلّم', studySessions: 'جلسة تركيز',
+  sleepLogs: 'نومة', goals: 'هدف', chewSessions: 'جلسة مضغ',
+  customAdhkar: 'ذكر', wirdLogs: 'ورد', dailyCareRoutines: 'روتين'
+};
+
+function summariseBackup(inspected) {
+  const rows = Object.entries(inspected.counts)
+    .filter(([t]) => BACKUP_TABLE_LABELS[t])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([t, n]) => `${toArabicNumeral(n)} ${BACKUP_TABLE_LABELS[t]}`);
+  return rows;
 }

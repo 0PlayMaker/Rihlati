@@ -1138,14 +1138,22 @@ body.theme-dark-ish .food-photo-placeholder {
 .yearly-pain-details summary { cursor: pointer; font-size: 13px; color: var(--pink-deep); font-weight: 600; padding: 4px 0; }
 
 /* ---------- المسبحة (tasbeeh counter) ---------- */
-.tasbeeh-overlay { align-items: center; justify-content: center; }
-.tasbeeh-modal {
-  background: var(--modal-bg); border-radius: var(--radius-lg);
-  padding: var(--space-3) var(--space-3) var(--space-3);
-  width: min(96vw, 440px); text-align: center; position: relative;
-  box-shadow: var(--shadow-soft); border: 1px solid var(--card-border);
+/* Full-screen, like the chewing pacer. Counting a dhikr a hundred times is
+   something you do with your whole attention — not something you poke at in
+   a small box with the rest of the app crowding in around it. */
+.tasbeeh-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  animation: chew-fade-in 0.25s ease;
 }
-.tasbeeh-close { position: absolute; inset-inline-end: 8px; inset-block-start: 8px; }
+.tasbeeh-screen {
+  width: 100%; max-width: 480px; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: var(--space-4); text-align: center; position: relative;
+  background: radial-gradient(circle at 50% 42%, var(--capsule-color, var(--pink)) 0%, transparent 60%);
+}
+.tasbeeh-close { position: absolute; inset-inline-end: var(--space-3); inset-block-start: var(--space-3); }
 .tasbeeh-title { font-size: 19px; font-weight: 800; color: var(--title-color); margin-bottom: 4px; padding-inline: var(--space-4); }
 .tasbeeh-benefit { font-size: 13px; color: var(--ink-soft); line-height: 1.6; margin-bottom: var(--space-3); }
 
@@ -1153,8 +1161,8 @@ body.theme-dark-ish .food-photo-placeholder {
 .tasbeeh-circle {
   position: relative; display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  width: min(86vw, 340px); height: min(86vw, 340px);
-  margin: var(--space-2) auto var(--space-3);
+  width: min(80vw, 320px); height: min(80vw, 320px);
+  margin: var(--space-3) auto var(--space-3);
   border: none; background: none; padding: 0; cursor: pointer;
   border-radius: var(--radius-round);
   -webkit-tap-highlight-color: transparent;
@@ -2010,3 +2018,56 @@ body.theme-dark-ish .food-photo-placeholder {
 /* Faint per-slice track for the segmented tasbeeh ring. */
 :root { --ring-slice-track: rgba(0,0,0,0.06); }
 body.theme-dark-ish { --ring-slice-track: rgba(255,255,255,0.10); }
+
+/* ---------- Notifications settings ---------- */
+.quiet-hours-row { display: flex; gap: var(--space-2); margin-bottom: var(--space-2); }
+.quiet-hours-field { flex: 1; }
+.custom-reminder-row { align-items: center; gap: var(--space-2); }
+.custom-reminder-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.custom-reminder-label { font-size: 14px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.custom-reminder-sub { font-size: 10px; color: var(--ink-faint); direction: rtl; }
+.rem-emoji-row { display: flex; gap: var(--space-2); align-items: center; }
+.rem-emoji-row .emoji-input { width: 56px; flex-shrink: 0; text-align: center; }
+.rem-emoji-row .text-input:not(.emoji-input) { flex: 1; }
+.rem-days-row { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: var(--space-2); }
+.rem-day {
+  flex: 1; min-width: 38px; font-size: 10px; font-weight: 700; padding: 8px 2px;
+  border-radius: var(--radius-round); border: 1px solid var(--track);
+  background: var(--surface); color: var(--ink-soft); cursor: pointer;
+}
+.rem-day.active { background: var(--btn-color, var(--pink-deep)); color: #fff; border-color: transparent; }
+
+/* A brief highlight so the section you jumped to announces itself. */
+@keyframes section-flash-anim {
+  0%, 100% { box-shadow: var(--shadow-soft); }
+  30%      { box-shadow: 0 0 0 3px var(--capsule-color, var(--pink)); }
+}
+.section-flash { animation: section-flash-anim 1.2s ease; }
+
+/* ---------- Chewing additions ---------- */
+.chew-swallow-btn { margin-top: var(--space-3); max-width: 300px; }
+.chew-swallow-hint { font-size: 10px; color: var(--ink-faint); margin-top: 4px; }
+.chew-new-meal-btn { margin: var(--space-2) 0 var(--space-3); }
+.chew-tip { font-size: 12px; line-height: 1.7; padding: 10px 12px; border-radius: var(--radius-md); margin-top: var(--space-2); }
+.chew-tip-success { background: var(--success); color: var(--success-ink); }
+.chew-tip-warning { background: var(--warning); color: var(--warning-ink); }
+.chew-tip-neutral { background: var(--track); color: var(--ink-soft); }
+.chew-adherence { margin-top: var(--space-3); }
+.mini-progress-fill.chew-adherence-good { background: var(--success-strong); }
+
+.food-row-wrap { display: flex; align-items: stretch; gap: 6px; margin-bottom: var(--space-2); }
+.food-row-wrap .food-row { flex: 1; margin-bottom: 0; }
+.food-chew-btn {
+  flex-shrink: 0; width: 46px; border-radius: var(--radius-md);
+  border: 1px solid var(--track); background: var(--surface);
+  font-size: 17px; cursor: pointer;
+}
+.food-chew-btn:active { transform: scale(0.94); }
+.food-chew-btn.food-chew-done { background: var(--success); border-color: transparent; }
+/* Goals are cards in their own right — they don't need a card around them,
+   and the add button was butting straight into the last one with no gap. */
+.goals-list-wrap { margin-bottom: var(--space-3); }
+.goals-add-btn { margin-bottom: var(--space-4); }
+.sound-event-row { display: flex; align-items: center; gap: var(--space-2); margin-bottom: 6px; }
+.sound-event-label { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sound-event-select { width: 130px; flex-shrink: 0; font-size: 11px; padding: 6px 8px; }

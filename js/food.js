@@ -63,7 +63,17 @@ async function addWater(date, deltaLiters) {
   if (existing) await db.waterLogs.update(existing.id, { liters: newTotal });
   else await db.waterLogs.add({ date, liters: newTotal, createdAt: Date.now() });
 }
+// Crossing the water target (not merely being at or above it) is the moment
+// worth a sound — otherwise every sip past the line would re-fire it.
 async function setWaterExact(date, liters) {
+  const before = await getWaterForDate(date);
+  const target = await getWaterTarget();
+  if (date === todayStr() && before < target && liters >= target) {
+    playEventChime('water', { hapticPattern: [60, 40, 60, 40, 100] });
+  }
+  return _setWaterExactRaw(date, liters);
+}
+async function _setWaterExactRaw(date, liters) {
   const existing = await db.waterLogs.where('date').equals(date).first();
   if (existing) await db.waterLogs.update(existing.id, { liters });
   else await db.waterLogs.add({ date, liters, createdAt: Date.now() });
@@ -267,17 +277,43 @@ async function renderFoodList(container, date, { onChange } = {}) {
   const rows = await Promise.all(logs.map(async l => {
     const photoRow = await getFoodPhoto(l.id);
     const photoUrl = photoRow ? trackFoodPhotoUrl(photoRow.photoBlob) : null;
+    const chewed = await getChewSessionForMeal(l.id);
     return `
+    <div class="food-row-wrap">
       <button class="food-row" data-food-id="${l.id}">
         ${photoUrl ? `<img class="food-thumb" src="${photoUrl}" alt="">` : `<span class="food-thumb food-thumb-placeholder">${mealTypeIcon(l.mealType)}</span>`}
         <div class="food-row-info">
           <span class="food-row-title">${mealTypeIcon(l.mealType)} ${mealTypeLabel(l.mealType)}${l.mealName ? ' — ' + escapeHtml(l.mealName) : ''}${l.time ? ' · ' + l.time : ''}</span>
           ${l.notes ? `<span class="food-row-notes">${escapeHtml(l.notes)}</span>` : ''}
         </div>
-        ${l.calories != null ? `<span class="food-row-calories">${l.calories} سعرة</span>` : ''}
-      </button>`;
+        ${l.calories != null ? `<span class="food-row-calories">${toArabicNumeral(l.calories)} سعرة</span>` : ''}
+      </button>
+      <button class="food-chew-btn ${chewed ? 'food-chew-done' : ''}" data-chew-meal="${l.id}" aria-label="وضع المضغ">
+        ${chewed ? '🌿' : '🍽️'}
+      </button>
+    </div>`;
   }));
   container.innerHTML = rows.join('');
+
+  // Start the pacer on THIS meal, without going hunting for it in a list.
+  container.querySelectorAll('[data-chew-meal]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const meal = await db.foodLogs.get(Number(btn.dataset.chewMeal));
+      if (!meal) return;
+      const cs = await getChewSettings();
+      openChewingPacer({
+        foodLog: meal,
+        chewSeconds: cs.chewSeconds, restSeconds: cs.restSeconds, mealMinutes: cs.mealMinutes,
+        soundOn: cs.soundOn,
+        onFinished: (r) => {
+          toast(r.completed ? `🌿 ${toArabicNumeral(r.bites)} لقمة` : `تم الحفظ`);
+          if (onChange) onChange();
+        }
+      });
+    });
+  });
+
   container.querySelectorAll('.food-row').forEach(row => {
     row.addEventListener('click', () => {
       openFoodModal({ date, existingId: Number(row.dataset.foodId), onSaved: onChange });

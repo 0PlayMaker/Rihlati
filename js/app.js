@@ -83,25 +83,24 @@ async function buildCustomAdhkarRingData() {
 // `size` is the tracker's natural form: 'big' rings carry a headline the
 // whole day hangs on; 'small' ones are glanceable supporting numbers.
 const HOME_TRACKERS = [
-  { key: 'habits',   size: 'big',   label: 'العادات',        icon: '🌱', path: '/habits' },
-  { key: 'tasks',    size: 'big',   label: 'المهام الثابتة',  icon: '📋', path: '/tasks' },
-  { key: 'goals',    size: 'big',   label: 'الأهداف',         icon: '🎯', path: '/goals' },
-  { key: 'water',    size: 'big',   label: 'الماء',           icon: '💧', path: '/food' },
-  { key: 'calories', size: 'big',   label: 'السعرات',         icon: '🔥', path: '/food' },
-
-  { key: 'morning',  size: 'small', label: 'الروتين الصباحي', icon: '🌅', path: '/dailycare' },
-  { key: 'evening',  size: 'small', label: 'الروتين المسائي', icon: '🌙', path: '/dailycare' },
-  { key: 'prayers',  size: 'small', label: 'الصلوات',         icon: '🕌', path: '/worship' },
-  { key: 'adhkar',   size: 'small', label: 'أذكار الصباح والمساء', icon: '🤲', path: '/worship' },
-  { key: 'tasbeeh',  size: 'small', label: 'المسبحة (أذكار مخصصة)', icon: '📿', path: '/worship' },
-  { key: 'wird',     size: 'small', label: 'ورد القرآن',      icon: '📖', path: '/worship' },
-  { key: 'period',   size: 'small', label: 'الدورة الشهرية',  icon: '🌸', path: '/period' },
-  { key: 'health',   size: 'small', label: 'الوزن والهدف',    icon: '⚖️', path: '/body' },
-  { key: 'sleep',    size: 'small', label: 'النوم',           icon: '😴', path: '/sleep' },
-  { key: 'training', size: 'small', label: 'التمارين',        icon: '💪', path: '/training' },
-  { key: 'study',    size: 'small', label: 'وقت التركيز',     icon: '⏳', path: '/study' },
-  { key: 'mood',     size: 'small', label: 'المزاج',          icon: '🙂', path: '/mood-history' },
-  { key: 'chew',     size: 'small', label: 'وضع المضغ',       icon: '🌿', path: '/food' }
+  { key: 'habits',   label: 'العادات',          icon: '🌱', path: '/habits',        anchor: 'good-habits-list' },
+  { key: 'tasks',    label: 'المهام الثابتة',    icon: '📋', path: '/tasks',         anchor: 'fixed-tasks-list' },
+  { key: 'goals',    label: 'الأهداف',           icon: '🎯', path: '/goals',         anchor: 'goals-list' },
+  { key: 'water',    label: 'الماء',             icon: '💧', path: '/food',          anchor: 'water-card' },
+  { key: 'calories', label: 'السعرات',           icon: '🔥', path: '/food',          anchor: 'food-summary-card' },
+  { key: 'morning',  label: 'الروتين الصباحي',   icon: '🌅', path: '/dailycare',     anchor: 'care-morning-list' },
+  { key: 'evening',  label: 'الروتين المسائي',   icon: '🌙', path: '/dailycare',     anchor: 'care-evening-list' },
+  { key: 'prayers',  label: 'الصلوات',           icon: '🕌', path: '/worship',       anchor: 'fard-list' },
+  { key: 'adhkar',   label: 'أذكار الصباح والمساء', icon: '🤲', path: '/worship',    anchor: 'daily-adhkar-card' },
+  { key: 'tasbeeh',  label: 'المسبحة',           icon: '📿', path: '/worship',       anchor: 'custom-adhkar-card' },
+  { key: 'wird',     label: 'ورد القرآن',        icon: '📖', path: '/worship',       anchor: 'wird-card' },
+  { key: 'period',   label: 'الدورة الشهرية',    icon: '🌸', path: '/period',        anchor: 'period-status-card' },
+  { key: 'health',   label: 'الوزن والهدف',      icon: '⚖️', path: '/body',          anchor: 'weight-glance-card' },
+  { key: 'sleep',    label: 'النوم',             icon: '😴', path: '/sleep',         anchor: null },
+  { key: 'training', label: 'التمارين',          icon: '💪', path: '/training',      anchor: 'training-summary' },
+  { key: 'study',    label: 'وقت التركيز',       icon: '⏳', path: '/study',         anchor: 'study-focus-card' },
+  { key: 'mood',     label: 'المزاج',            icon: '🙂', path: '/mood-history',  anchor: 'mood-today-widget' },
+  { key: 'chew',     label: 'وضع المضغ',         icon: '🌿', path: '/food',          anchor: 'chew-card' }
 ];
 
 const HOME_MAX_BIG = 2;
@@ -288,11 +287,21 @@ async function buildRemainingTodayChips() {
 // rather than hardcoded.
 
 async function buildTrackerData(key) {
+  const data = await buildTrackerDataRaw(key);
+  if (!data) return null;
+  // Every ring gets its registry anchor, so tapping it can land on the
+  // actual section rather than dumping you at the top of a long page.
+  const meta = HOME_TRACKERS.find(t => t.key === key);
+  return { ...data, key, anchor: data.anchor ?? meta?.anchor ?? null, path: data.path ?? meta?.path };
+}
+
+async function buildTrackerDataRaw(key) {
   const today = todayStr();
   switch (key) {
     case 'habits': {
       const r = await getHabitsRingData();
       return {
+        anchor: 'good-habits-list',
         segments: [
           { frac: r.total ? r.done / r.total : 0, color: 'var(--success-strong)' },
           { frac: r.total ? r.missed / r.total : 0, color: 'var(--danger-strong)' }
@@ -413,7 +422,7 @@ async function buildTrackerData(key) {
 function bigRingHtml(d) {
   const segments = d.segments || [{ frac: d.frac || 0, color: RING_TONE_VARS[d.tone] || 'var(--btn-color, var(--pink-deep))' }];
   return `
-    <button class="ring-item ring-item-tappable" data-path="${d.path}" aria-label="${escapeHtml(d.label)}">
+    <button class="ring-item ring-item-tappable" data-path="${d.path}" data-anchor="${d.anchor || ''}" aria-label="${escapeHtml(d.label)}">
       <div class="ring-wrap">
         ${renderRing({ segments })}
         <div class="ring-center-text">${d.center}</div>
@@ -435,13 +444,35 @@ function smallRingFromData(d) {
     ? svg.replace('</svg>', `${dividers}</svg>`)
     : svg;
   return `
-    <button class="small-ring-item small-ring-item-tappable" data-path="${d.path}" aria-label="${escapeHtml(d.label)}">
+    <button class="small-ring-item small-ring-item-tappable" data-path="${d.path}" data-anchor="${d.anchor || ''}" aria-label="${escapeHtml(d.label)}">
       <div class="ring-wrap small-ring-wrap">
         ${withDividers}
         <div class="ring-center-text small-ring-text">${d.center}</div>
       </div>
       <span class="small-ring-label">${d.label}</span>
     </button>`;
+}
+
+// Navigate AND land on the right part of the page. Dropping her at the top
+// of Worship when she tapped the wird ring means she still has to hunt for
+// it — the tap was supposed to save her that.
+function goToSection(path, anchor) {
+  goTo(path);
+  if (!anchor) return;
+  // The route renders asynchronously; poll briefly for the element rather
+  // than guessing a delay that's wrong on a slow phone.
+  const started = Date.now();
+  const findIt = () => {
+    const el = document.getElementById(anchor);
+    if (el) {
+      safeScrollIntoView(el, { behavior: 'smooth', block: 'center' });
+      el.classList.add('section-flash');
+      setTimeout(() => el.classList.remove('section-flash'), 1200);
+      return;
+    }
+    if (Date.now() - started < 2000) requestAnimationFrame(findIt);
+  };
+  requestAnimationFrame(findIt);
 }
 
 async function renderHomeRingSection(container) {
@@ -485,7 +516,7 @@ async function renderHomeRingSection(container) {
   `;
 
   container.querySelectorAll('.remaining-chip, .ring-item-tappable, .small-ring-item-tappable').forEach(el => {
-    el.addEventListener('click', () => goTo(el.dataset.path));
+    el.addEventListener('click', () => goToSection(el.dataset.path, el.dataset.anchor));
   });
 }
 
@@ -681,7 +712,7 @@ function registerAllReminderProviders() {
     const doneSet = await getFixedTasksDoneSet(tasks, todayStr());
     return tasks
       .filter(t => t.reminderTime && !doneSet.has(t.id))
-      .map(t => ({ time: t.reminderTime, title: 'رحلتي 🌸', body: `تذكير: ${t.title}` }));
+      .map(t => ({ time: t.reminderTime, title: `📋 ${t.title}`, body: 'حان وقت مهمتك' }));
   });
 
   registerReminderProvider(async (settings) => {
@@ -689,7 +720,7 @@ function registerAllReminderProviders() {
     const [liters, target] = await Promise.all([getWaterForDate(todayStr()), getWaterTarget()]);
     if (liters >= target) return [];
     const time = settings.reminderTimes?.water || '15:00';
-    return [{ time, title: 'رحلتي 🌸', body: 'حان وقت شرب الماء 💧' }];
+    return [{ time: time, title: '💧 الماء', body: 'حان وقت شرب الماء' }];
   });
 
   registerReminderProvider(async (settings) => {
@@ -697,10 +728,10 @@ function registerAllReminderProviders() {
     const items = [];
     const today = todayStr();
     if (settings.remindersEnabled.adhkarMorning && !(await isDailyAdhkarDone('morning', today))) {
-      items.push({ time: settings.reminderTimes?.adhkarMorning || '06:00', title: 'رحلتي 🌸', body: 'حان وقت أذكار الصباح 🌅' });
+      items.push({ time: settings.reminderTimes?.adhkarMorning || '06:00', title: '🌅 أذكار الصباح', body: 'حان وقتها' });
     }
     if (settings.remindersEnabled.adhkarEvening && !(await isDailyAdhkarDone('evening', today))) {
-      items.push({ time: settings.reminderTimes?.adhkarEvening || '18:00', title: 'رحلتي 🌸', body: 'حان وقت أذكار المساء 🌙' });
+      items.push({ time: settings.reminderTimes?.adhkarEvening || '18:00', title: '🌙 أذكار المساء', body: 'حان وقتها' });
     }
     return items;
   });
@@ -710,13 +741,138 @@ function registerAllReminderProviders() {
     const plan = await getWirdPlan();
     if (!plan || await isWirdLoggedToday()) return [];
     const time = settings.reminderTimes?.wird || '20:00';
-    return [{ time, title: 'رحلتي 🌸', body: 'لا تنسي وردك اليوم 📖' }];
+    return [{ time, title: '📖 ورد القرآن', body: 'لا تنسي وردك اليوم' }];
   });
 
   registerReminderProvider(async (settings) => {
     if (!settings?.remindersEnabled?.sleep) return [];
     const time = settings.reminderTimes?.sleep || '22:30';
-    return [{ time, title: 'رحلتي 🌸', body: 'قرّب وقت النوم — جهّزي نفسك 😴' }];
+    return [{ time, title: '😴 وقت النوم', body: 'قرّب وقت النوم — جهّزي نفسك' }];
+  });
+
+  // ---- new providers ----
+
+  // Custom reminders (medication, appointments, hand-entered prayer times).
+  registerReminderProvider(async () => {
+    const today = new Date().getDay();
+    const items = await getCustomReminders();
+    return items
+      .filter(r => r.enabled && r.time && (r.days || []).includes(today))
+      .map(r => ({ time: r.time, title: `${r.emoji} ${r.label}`, body: 'تذكير' }));
+  });
+
+  // Evening nudge for diary + mood — only if she hasn't already done them,
+  // so it never nags about something she's finished.
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.reflect) return [];
+    const time = settings.reminderTimes?.reflect || '21:00';
+    const today = todayStr();
+    const [diary, mood] = await Promise.all([getDiaryEntry(today), getMoodLog(today)]);
+    const missing = [];
+    if (!diary) missing.push('يوميتك');
+    if (!mood) missing.push('مزاجك');
+    if (missing.length === 0) return [];
+    return [{ time, title: '📔 وقفة اليوم', body: `لم تسجّلي ${missing.join(' و')} بعد` }];
+  });
+
+  // Period predicted start — the app already predicts it; not telling her
+  // is withholding the one thing the prediction is FOR.
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.period) return [];
+    const time = settings.reminderTimes?.period || '09:00';
+    const status = await getPeriodStatus();
+    if (!status || !status.rangeStart) return [];
+    const daysUntil = daysBetween(todayStr(), status.rangeStart);
+    if (daysUntil === 2) return [{ time, title: '🌸 الدورة الشهرية', body: 'متوقّعة بعد يومين — جهّزي نفسك' }];
+    if (daysUntil === 0) return [{ time, title: '🌸 الدورة الشهرية', body: 'متوقّعة اليوم' }];
+    return [];
+  });
+
+  // Period pain readings — only while a period is actually running, so it
+  // never nags on a day it makes no sense.
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.periodPain) return [];
+    const ongoing = await getOngoingPeriod();
+    if (!ongoing) return [];
+    const readings = await getReadingsForDate(todayStr());
+    if (readings.length > 0) return [];
+    return [{ time: settings.reminderTimes?.periodPain || '20:00', title: '🩸 قراءة اليوم', body: 'سجّلي الألم وكمية الدم' }];
+  });
+
+  // Training — silent if she already hit every target.
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.training) return [];
+    const exercises = await getActiveExercises();
+    if (exercises.length === 0) return [];
+    let pending = 0;
+    for (const ex of exercises) {
+      const sets = await getExerciseSets(ex.id, todayStr());
+      if (ex.targetSets ? sets < ex.targetSets : sets === 0) pending++;
+    }
+    if (pending === 0) return [];
+    return [{ time: settings.reminderTimes?.training || '17:00', title: '💪 التمارين', body: `${toArabicNumeral(pending)} تمرين ينتظرك` }];
+  });
+
+  // Food — only if she hasn't logged anything today.
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.food) return [];
+    const logs = await getFoodLogsForDate(todayStr());
+    if (logs.length > 0) return [];
+    return [{ time: settings.reminderTimes?.food || '13:00', title: '🍽️ وجباتك', body: 'لم تسجّلي أي وجبة اليوم' }];
+  });
+
+  // Study
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.study) return [];
+    const mins = await getStudyMinutesForDate(todayStr());
+    if (mins > 0) return [];
+    return [{ time: settings.reminderTimes?.study || '16:00', title: '⏳ وقت التركيز', body: 'جلسة بومودورو واحدة تكفي للبداية' }];
+  });
+
+  // Habits — silent once they're all ticked.
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.habits) return [];
+    const r = await getHabitsRingData();
+    if (r.total === 0 || r.done === r.total) return [];
+    return [{ time: settings.reminderTimes?.habits || '19:00', title: '🌱 عاداتك', body: `${toArabicNumeral(r.total - r.done)} عادة لم تُسجَّل بعد` }];
+  });
+
+  // Anything due TODAY: course todos and goal deadlines. A due date you're
+  // never told about is a date you set for nothing.
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.deadlines) return [];
+    const today = todayStr();
+    const [courseTodos, goals] = await Promise.all([
+      db.courseTodos.toArray(),
+      getActiveGoals()
+    ]);
+    const dueTodos = courseTodos.filter(t => !t.done && t.dueDate && t.dueDate <= today);
+    const dueGoals = goals.filter(g => !isGoalDone(g) && g.targetDate && g.targetDate <= today);
+    const n = dueTodos.length + dueGoals.length;
+    if (n === 0) return [];
+    return [{
+      time: settings.reminderTimes?.deadlines || '08:00',
+      title: '⚠️ مستحقّ اليوم',
+      body: `${toArabicNumeral(n)} ${n === 1 ? 'شيء' : 'أشياء'} حان موعدها`
+    }];
+  });
+
+  // Backup. This is the one that actually matters: the data is local-only,
+  // so a lost phone or a cleared browser cache means it's simply gone. A
+  // monthly nudge is the difference between "my app" and "my app, once".
+  registerReminderProvider(async (settings) => {
+    if (settings?.remindersEnabled?.backup === false) return [];
+    const time = settings?.reminderTimes?.backup || '20:00';
+    const last = settings?.lastBackupAt || 0;
+    const daysSince = last ? Math.floor((Date.now() - last) / 86400000) : 999;
+    if (daysSince < 30) return [];
+    return [{
+      time,
+      title: '💾 نسخة احتياطية',
+      body: last
+        ? `مرّ ${daysSince > 365 ? 'أكثر من عام' : toArabicNumeral(daysSince) + ' يوماً'} على آخر نسخة — بياناتك على هذا الجهاز فقط`
+        : 'لم تأخذي نسخة احتياطية بعد — بياناتك على هذا الجهاز فقط'
+    }];
   });
 }
 
@@ -888,6 +1044,7 @@ async function boot() {
   // and then flip to the other a frame later.
   const settings = await db.settings.get(1);
   setNumeralMode(settings?.useArabicNumerals !== false);
+  loadSoundPrefs(settings);
 
   await applyStoredTheme();
   const profile = await db.profile.get(1);

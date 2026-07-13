@@ -236,10 +236,7 @@ async function renderGoalsList(container, { limit, onChange } = {}) {
       const goal = await db.goals.get(id);
       const nowDone = !goal.done;
       await updateGoal(id, { done: nowDone });
-      if (nowDone) {
-        playSuccessChime();
-        if (navigator.vibrate) navigator.vibrate([90, 50, 90, 50, 160]);
-      }
+      if (nowDone) playEventChime('goal');
       await renderGoalsList(container, { limit, onChange });
       if (onChange) await onChange();
     });
@@ -414,10 +411,8 @@ async function renderGoalsPage(params, view) {
       <h1>الأهداف</h1>
     </div>
     <div class="card" id="goals-summary"></div>
-    <div class="card">
-      <div id="goals-list"></div>
-      <button class="btn btn-secondary btn-block" id="add-goal-btn">+ هدف جديد</button>
-    </div>
+    <div id="goals-list" class="goals-list-wrap"></div>
+    <button class="btn btn-primary btn-block goals-add-btn" id="add-goal-btn">＋ هدف جديد</button>
   `;
   document.getElementById('goals-back').addEventListener('click', () => history.back());
   const listEl = document.getElementById('goals-list');

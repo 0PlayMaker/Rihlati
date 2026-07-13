@@ -425,7 +425,7 @@ async function renderYearlyOverviewPage(params, view) {
   document.querySelectorAll('.yearly-jump-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       const target = document.getElementById(`yearly-sec-${chip.dataset.idx}`);
-      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      safeScrollIntoView(target);
     });
   });
 }

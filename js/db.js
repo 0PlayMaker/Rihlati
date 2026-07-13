@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v50 · ١٢ يوليو ٢٠٢٦';
+const APP_VERSION = 'v51 · ١٣ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -342,6 +342,15 @@ db.version(20).stores({
 // nothing about it is derived from settings that might change later.
 db.version(21).stores({
   chewSessions: '++id, date, foodLogId'
+});
+
+// ---------- Phase 22 — custom reminders ----------
+// The six built-in categories can't cover medication, an appointment, or
+// manually-entered prayer times — which are exactly the things a reminder
+// is FOR. `days` is an array of weekday numbers (0=Sunday), so a weekday-
+// only reminder doesn't go off on a Saturday morning.
+db.version(22).stores({
+  customReminders: '++id'
 });
 
 // ---------- date helpers (used everywhere) ----------

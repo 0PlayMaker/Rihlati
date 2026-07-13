@@ -59,8 +59,16 @@ async function getHabitStatus(habitId, date) {
   const row = await getLog(db.habitLogs, 'habitId', habitId, date);
   return row ? row.status : null; // 'done' | 'missed' | null (unmarked)
 }
+// Every habit ticked for the day.
+async function celebrateIfAllHabitsDone(date) {
+  if (date !== todayStr()) return;
+  const r = await getHabitsRingData();
+  if (r.total > 0 && r.done === r.total) playEventChime('habits');
+}
+
 async function setHabitStatus(habitId, date, status) {
   await upsertLog(db.habitLogs, 'habitId', habitId, date, { status });
+  if (status === 'done') await celebrateIfAllHabitsDone(date);
 }
 async function clearHabitStatus(habitId, date) {
   await deleteLog(db.habitLogs, 'habitId', habitId, date);

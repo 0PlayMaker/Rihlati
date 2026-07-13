@@ -13,8 +13,19 @@ async function getFardStatus(prayerName, date) {
   const row = await getLog(db.prayerLogs, 'prayerName', prayerName, date);
   return row ? row.status : null;
 }
+// Completing the fifth prayer of the day should feel like completing the
+// fifth prayer of the day. Fires only on the transition INTO complete, so
+// re-ticking an already-complete day doesn't re-celebrate.
+async function celebrateIfAllPrayersDone(date) {
+  if (date !== todayStr()) return; // no fanfare for backfilling last Tuesday
+  let done = 0;
+  for (const p of PRAYER_NAMES) if (await getFardStatus(p, date) === 'done') done++;
+  if (done === PRAYER_NAMES.length) playEventChime('prayers');
+}
+
 async function setFardStatus(prayerName, date, status) {
   await upsertLog(db.prayerLogs, 'prayerName', prayerName, date, { status });
+  if (status === 'done') await celebrateIfAllPrayersDone(date);
 }
 async function clearFardStatus(prayerName, date) {
   await deleteLog(db.prayerLogs, 'prayerName', prayerName, date);
@@ -167,6 +178,14 @@ async function toggleDailyAdhkar(kind, date) {
   const existing = await getLog(db.dailyAdhkarLogs, 'kind', kind, date);
   if (existing) await deleteLog(db.dailyAdhkarLogs, 'kind', kind, date);
   else await upsertLog(db.dailyAdhkarLogs, 'kind', kind, date, {});
+  // Both halves of the day's adhkar done — that's a completed practice.
+  if (date === todayStr()) {
+    const [mDone, eDone] = await Promise.all([
+      isDailyAdhkarDone('morning', date),
+      isDailyAdhkarDone('evening', date)
+    ]);
+    if (mDone && eDone) playEventChime('adhkar');
+  }
 }
 
 // \"Day counts\" if both morning AND evening were marked.
@@ -456,6 +475,10 @@ async function logWirdToday() {
   // is recorded on the log itself — that's what keeps the replay exact.
   const triggeredKhatm = (progressPages + pagesToAdd) >= QURAN_TOTAL_PAGES;
   await db.wirdLogs.add({ date: todayStr(), pagesAdded: pagesToAdd, triggeredKhatm });
+  // A finished khatm deserves more than the daily tick.
+  playEventChime(triggeredKhatm ? 'goal' : 'wird', {
+    hapticPattern: triggeredKhatm ? [120, 60, 120, 60, 200] : [60, 40, 60]
+  });
 }
 async function undoWirdToday() {
   // Deleting the log IS the undo now — progress recomputes from what's
