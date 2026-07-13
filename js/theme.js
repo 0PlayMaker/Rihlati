@@ -239,6 +239,22 @@ function applyTheme(mode, accentHex, opts = {}) {
     else root.removeProperty(`--tile-${f.id}`);
   });
 
+  // Ring tones and semantic status colours. Cleared rather than left stale
+  // when removed, so a deleted custom colour actually goes away.
+  [...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS].forEach(f => {
+    const v = opts.extras ? opts.extras[f.settingsKey] : null;
+    if (v) root.setProperty(f.cssVar, v);
+    else root.removeProperty(f.cssVar);
+  });
+
+  // Layout scales. Expressed as multipliers so every size and spacing token
+  // derives from them — one slider moves the whole app, rather than a
+  // hundred hardcoded pixel values needing individual attention.
+  LAYOUT_FIELDS.forEach(f => {
+    const v = opts.extras ? opts.extras[f.settingsKey] : null;
+    root.setProperty(f.cssVar, String((v ?? f.def) / 100));
+  });
+
   document.body.classList.toggle('theme-glass', mode === 'glass' || mode === 'glassDark');
   document.body.classList.toggle('theme-glass-dark', mode === 'glassDark');
   document.body.classList.toggle('theme-dark-ish', mode === 'dark' || mode === 'amoled' || mode === 'glassDark');
@@ -256,7 +272,11 @@ async function applyStoredTheme() {
     subtextColor: settings?.customSubtextColor,
     bottomBarColor: settings?.customBottomBarColor,
     blurAmount: settings?.customBlurAmount,
-    tiles: Object.fromEntries(TILE_ACCENT_FIELDS.map(f => [f.settingsKey, settings?.[f.settingsKey]]))
+    tiles: Object.fromEntries(TILE_ACCENT_FIELDS.map(f => [f.settingsKey, settings?.[f.settingsKey]])),
+    extras: Object.fromEntries(
+      [...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS, ...LAYOUT_FIELDS]
+        .map(f => [f.settingsKey, settings?.[f.settingsKey]])
+    )
   });
 }
 
@@ -287,7 +307,39 @@ const TILE_ACCENT_FIELDS = [
   { id: 'body-action',    settingsKey: 'tileBodyColor',    label: '⚖️ الصحة',        fallback: 'var(--blue-deep)' }
 ];
 
-const THEME_SETTINGS_KEYS = ['themeMode', 'accentColor', ...CUSTOM_COLOR_FIELDS.map(f => f.settingsKey), ...TILE_ACCENT_FIELDS.map(f => f.settingsKey), 'customBlurAmount'];
+// The eight home rings and the four semantic status colours were already
+// theme VARIABLES — but with no picker to reach them, which makes them
+// tidy, not customisable. These close that gap.
+const RING_COLOR_FIELDS = [
+  { key: 'ringcare',    settingsKey: 'ringCareColor',    cssVar: '--ring-care',    label: '🌅 الروتين والعناية' },
+  { key: 'ringworship', settingsKey: 'ringWorshipColor', cssVar: '--ring-worship', label: '🕌 العبادة والأذكار' },
+  { key: 'ringperiod',  settingsKey: 'ringPeriodColor',  cssVar: '--ring-period',  label: '🌸 الدورة الشهرية' },
+  { key: 'ringhealth',  settingsKey: 'ringHealthColor',  cssVar: '--ring-health',  label: '⚖️ الصحة والوزن' }
+];
+
+const SEMANTIC_COLOR_FIELDS = [
+  { key: 'success', settingsKey: 'semSuccessColor', cssVar: '--success-strong', label: '✅ نجاح / إنجاز' },
+  { key: 'warning', settingsKey: 'semWarningColor', cssVar: '--warning-strong', label: '⚠️ تنبيه / اقتراب' },
+  { key: 'danger',  settingsKey: 'semDangerColor',  cssVar: '--danger-strong',  label: '⛔ خطر / انتكاسة' },
+  { key: 'info',    settingsKey: 'semInfoColor',    cssVar: '--info-strong',    label: 'ℹ️ معلومة' }
+];
+
+// Layout levers. These are not decoration — text size in particular is an
+// accessibility need, and an app you have to squint at is an app you stop
+// opening.
+const LAYOUT_FIELDS = [
+  { key: 'fontScale',  settingsKey: 'fontScale',  cssVar: '--font-scale',  label: 'حجم الخط',      min: 85,  max: 130, step: 5,  def: 100, unit: '٪' },
+  { key: 'radiusScale',settingsKey: 'radiusScale',cssVar: '--radius-scale',label: 'استدارة الحواف', min: 0,   max: 150, step: 10, def: 100, unit: '٪' },
+  { key: 'density',    settingsKey: 'density',    cssVar: '--space-scale', label: 'التباعد',        min: 80,  max: 120, step: 5,  def: 100, unit: '٪' }
+];
+
+const THEME_SETTINGS_KEYS = ['themeMode', 'accentColor',
+  ...CUSTOM_COLOR_FIELDS.map(f => f.settingsKey),
+  ...TILE_ACCENT_FIELDS.map(f => f.settingsKey),
+  ...RING_COLOR_FIELDS.map(f => f.settingsKey),
+  ...SEMANTIC_COLOR_FIELDS.map(f => f.settingsKey),
+  ...LAYOUT_FIELDS.map(f => f.settingsKey),
+  'customBlurAmount'];
 
 // ---------- Settings page: minimal — mode + presets + link to editor ----------
 
@@ -310,8 +362,8 @@ function renderThemeSection(currentMode, currentAccent, presets) {
 
 async function restoreDefaultTheme() {
   const reset = { themeMode: 'light', accentColor: DEFAULT_ACCENT, customBlurAmount: null };
-  CUSTOM_COLOR_FIELDS.forEach(f => { reset[f.settingsKey] = null; });
-  TILE_ACCENT_FIELDS.forEach(f => { reset[f.settingsKey] = null; });
+  [...CUSTOM_COLOR_FIELDS, ...TILE_ACCENT_FIELDS, ...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS, ...LAYOUT_FIELDS]
+    .forEach(f => { reset[f.settingsKey] = null; });
   await db.settings.update(1, reset);
   await applyStoredTheme();
 }
@@ -412,6 +464,16 @@ async function renderThemeEditorPage(params, view) {
       <h1>تخصيص المظهر</h1>
     </div>
 
+    <div class="settings-jump">
+      <button class="settings-jump-chip" data-jump="th-accent">🎨 اللون الأساسي</button>
+      <button class="settings-jump-chip" data-jump="th-surfaces">🖼️ الأسطح والنصوص</button>
+      <button class="settings-jump-chip" data-jump="th-tiles">🔲 بطاقات الأقسام</button>
+      <button class="settings-jump-chip" data-jump="th-rings">⭕ الدوائر</button>
+      <button class="settings-jump-chip" data-jump="th-status">🚦 ألوان الحالة</button>
+      <button class="settings-jump-chip" data-jump="th-layout">📐 الشكل والحجم</button>
+      <button class="settings-jump-chip" data-jump="th-presets">💾 مظاهرك</button>
+    </div>
+
     <div class="card">
       <div class="theme-preview" id="theme-preview">
         <div class="theme-preview-card">
@@ -420,26 +482,60 @@ async function renderThemeEditorPage(params, view) {
           <button class="capsule-btn theme-preview-capsule">كبسولة</button>
         </div>
       </div>
+      <button class="btn btn-text btn-block theme-restore-quick" id="theme-restore-default">↺ استعادة المظهر الافتراضي</button>
     </div>
 
+    <h2 class="settings-group-title" id="th-accent">🎨 اللون الأساسي</h2>
     <div class="card settings-card">
-      <h2 class="card-title">لون التمييز</h2>
       ${hslPickerHtml('theme-accent', currentAccent)}
       <div class="theme-history-row" id="theme-history-row">
         ${accentHistory.map(c => `<button class="theme-history-swatch" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join('')}
       </div>
+      <p class="settings-note">يشتقّ منه لون الأزرار والكبسولات تلقائياً ما لم تغيّريها بنفسك.</p>
     </div>
 
-    ${groups.map(g => themeGroupSectionHtml(g, CUSTOM_COLOR_FIELDS.filter(f => f.group === g), cc)).join('')}
+    <h2 class="settings-group-title" id="th-surfaces">🖼️ الأسطح والنصوص</h2>
+    ${['أساسي', 'عناصر تفاعلية', 'أسطح', 'نصوص'].map(g => themeGroupSectionHtml(g, CUSTOM_COLOR_FIELDS.filter(f => f.group === g), cc)).join('')}
 
+    <h2 class="settings-group-title" id="th-tiles">🔲 بطاقات الأقسام</h2>
     <div class="card settings-card">
-      <h2 class="card-title">بطاقات الأقسام</h2>
-      <p class="settings-note">ألوان البطاقات الست في الصفحة الرئيسية.</p>
+      <p class="settings-note">البطاقات الست حول التقويم في الصفحة الرئيسية.</p>
       ${TILE_ACCENT_FIELDS.map(f => `
         <label class="field-label">${f.label}</label>
         ${hslPickerHtml(`tile-${f.id}`, cc[f.settingsKey] || DEFAULT_ACCENT)}
         <button class="btn btn-text btn-sm theme-clear-btn" data-clear="${f.settingsKey}">اللون الافتراضي</button>
       `).join('<div class="theme-field-sep"></div>')}
+    </div>
+
+    <h2 class="settings-group-title" id="th-rings">⭕ ألوان الدوائر</h2>
+    <div class="card settings-card">
+      <p class="settings-note">كل مجال من حياتك بلونه، ليُميَّز بلمحة.</p>
+      ${RING_COLOR_FIELDS.map(f => `
+        <label class="field-label">${f.label}</label>
+        ${hslPickerHtml(`ring-${f.key}`, cc[f.settingsKey] || DEFAULT_ACCENT)}
+        <button class="btn btn-text btn-sm theme-clear-btn" data-clear="${f.settingsKey}">اللون الافتراضي</button>
+      `).join('<div class="theme-field-sep"></div>')}
+    </div>
+
+    <h2 class="settings-group-title" id="th-status">🚦 ألوان الحالة</h2>
+    <div class="card settings-card">
+      <p class="settings-note">تُستخدم في كل التطبيق: الإنجاز، التنبيه، الانتكاسة. تغييرها هنا يغيّرها في كل مكان.</p>
+      ${SEMANTIC_COLOR_FIELDS.map(f => `
+        <label class="field-label">${f.label}</label>
+        ${hslPickerHtml(`sem-${f.key}`, cc[f.settingsKey] || DEFAULT_ACCENT)}
+        <button class="btn btn-text btn-sm theme-clear-btn" data-clear="${f.settingsKey}">اللون الافتراضي</button>
+      `).join('<div class="theme-field-sep"></div>')}
+    </div>
+
+    <h2 class="settings-group-title" id="th-layout">📐 الشكل والحجم</h2>
+    <div class="card settings-card">
+      ${LAYOUT_FIELDS.map(f => `
+        <div class="hsl-slider-row layout-slider-row">
+          <label for="layout-${f.key}">${f.label}</label>
+          <input type="range" min="${f.min}" max="${f.max}" step="${f.step}" value="${cc[f.settingsKey] ?? f.def}" id="layout-${f.key}" class="hsl-slider" data-layout="${f.settingsKey}">
+          <span class="layout-val" id="layout-${f.key}-val">${toArabicNumeral(cc[f.settingsKey] ?? f.def)}${f.unit}</span>
+        </div>`).join('')}
+      <p class="settings-note">حجم الخط ليس زينة — تطبيق تحتاجين لحدج عينيك لقراءته هو تطبيق تتوقّفين عن فتحه.</p>
     </div>
 
     <div class="card settings-card">
@@ -448,12 +544,12 @@ async function renderThemeEditorPage(params, view) {
       <div class="hsl-slider-row"><label for="theme-blur-input">مقدار التمويه</label><input type="range" min="0" max="40" value="${cc.customBlurAmount ?? 20}" id="theme-blur-input" class="hsl-slider"></div>
     </div>
 
+    <h2 class="settings-group-title" id="th-presets">💾 مظاهرك المحفوظة</h2>
     <div class="card settings-card">
-      <h2 class="card-title">حفظ كمظهر مخصص</h2>
-      ${presets.length >= 3 ? `<p class="settings-note">وصلتِ للحد الأقصى (٣ مظاهر مخصصة). احذفي واحداً من الإعدادات لإضافة آخر.</p>` : `
+      ${presets.length >= 3 ? `<p class="settings-note">وصلتِ للحد الأقصى (٣ مظاهر). احذفي واحداً لإضافة آخر.</p>` : `
         <div class="theme-accent-row">
           <input class="text-input" id="theme-preset-name-input" placeholder="اسم المظهر" maxlength="20">
-          <button class="btn btn-secondary btn-sm" id="theme-save-preset-btn">حفظ</button>
+          <button class="btn btn-secondary btn-sm" id="theme-save-preset-btn">حفظ الحالي</button>
         </div>`}
       ${presets.length ? `
         <div class="theme-presets-list" id="theme-presets-list">
@@ -466,11 +562,7 @@ async function renderThemeEditorPage(params, view) {
                 <button class="link-btn theme-preset-delete" data-id="${p.id}">حذف</button>
               </div>
             </div>`).join('')}
-        </div>` : ''}
-    </div>
-
-    <div class="card settings-card">
-      <button class="link-btn" id="theme-restore-default">استعادة المظهر الافتراضي بالكامل</button>
+        </div>` : '<p class="empty-state-sub">لا مظاهر محفوظة بعد.</p>'}
     </div>
   `;
   document.getElementById('theme-editor-back').addEventListener('click', () => window.history.back());
@@ -488,6 +580,9 @@ async function renderThemeEditorPage(params, view) {
     opts.bottomBarColor = s.customBottomBarColor;
     opts.blurAmount = s.customBlurAmount;
     opts.tiles = Object.fromEntries(TILE_ACCENT_FIELDS.map(f => [f.settingsKey, s[f.settingsKey]]));
+    opts.extras = Object.fromEntries(
+      [...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS, ...LAYOUT_FIELDS].map(f => [f.settingsKey, s[f.settingsKey]])
+    );
     applyTheme(s.themeMode || 'light', s.accentColor, opts);
   }
   function camelFromKey(f) {
@@ -528,6 +623,42 @@ async function renderThemeEditorPage(params, view) {
   });
   TILE_ACCENT_FIELDS.forEach(f => {
     wireHslPicker(`tile-${f.id}`, async (val) => { await saveField(f.settingsKey, val); await liveApply(); });
+  });
+  RING_COLOR_FIELDS.forEach(f => {
+    wireHslPicker(`ring-${f.key}`, async (val) => { await saveField(f.settingsKey, val); await liveApply(); });
+  });
+  SEMANTIC_COLOR_FIELDS.forEach(f => {
+    wireHslPicker(`sem-${f.key}`, async (val) => { await saveField(f.settingsKey, val); await liveApply(); });
+  });
+
+  // Layout sliders apply LIVE — watching the app resize under your finger is
+  // the only way to find the size that's actually right for you.
+  LAYOUT_FIELDS.forEach(f => {
+    const el = document.getElementById(`layout-${f.key}`);
+    const label = document.getElementById(`layout-${f.key}-val`);
+    if (!el) return;
+    ['click', 'pointerdown', 'touchstart', 'mousedown'].forEach(evt =>
+      el.addEventListener(evt, (e) => e.stopPropagation()));
+    el.addEventListener('input', async () => {
+      label.textContent = `${toArabicNumeral(el.value)}${f.unit}`;
+      document.documentElement.style.setProperty(f.cssVar, String(Number(el.value) / 100));
+    });
+    el.addEventListener('change', async () => {
+      await saveField(f.settingsKey, Number(el.value));
+    });
+  });
+
+  // Jump nav — the editor is long now.
+  view.querySelectorAll('.settings-jump-chip').forEach(chip => {
+    chip.addEventListener('click', () => safeScrollIntoView(document.getElementById(chip.dataset.jump)));
+  });
+
+  const restoreTop = document.getElementById('theme-restore-default');
+  if (restoreTop) restoreTop.addEventListener('click', async () => {
+    if (!confirm('استعادة المظهر الافتراضي بالكامل؟ (لن تُحذف مظاهرك المحفوظة)')) return;
+    await restoreDefaultTheme();
+    renderThemeEditorPage(params, view);
+    toast('↺ عاد المظهر الافتراضي');
   });
   document.querySelectorAll('.theme-clear-btn').forEach(btn => {
     btn.addEventListener('click', async () => { await saveField(btn.dataset.clear, null); await liveApply(); toast('أُعيد للون الافتراضي'); });
