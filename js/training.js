@@ -132,7 +132,7 @@ function openTimerModal(exercise) {
     display.textContent = formatTimer(0);
     toggleBtn.textContent = 'ابدأ';
     display.classList.add('timer-done');
-    playEventChime('timer', { hapticPattern: [200, 100, 200, 100, 200] });
+    playEventChime('timer', { hapticPattern: [200, 100, 200, 100, 200], hapticEvent: 'timerPhase' });
   }
 
   function tick() {

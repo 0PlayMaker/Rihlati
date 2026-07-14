@@ -187,7 +187,12 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
   function startChewTicks() {
     stopChewTicks();
     if (!sound) return;
-    chewTickTimer = setInterval(() => { if (phase === 'chew') playChewTick(); }, 550);
+    chewTickTimer = setInterval(() => {
+      if (phase !== 'chew') return;
+      playChewTick();
+      haptic([12], 'chewTick'); // off by default — a buzz twice a second for
+                                // twenty minutes is a lot to ask of anyone
+    }, 550);
   }
   function stopChewTicks() {
     if (chewTickTimer) { clearInterval(chewTickTimer); chewTickTimer = null; }
@@ -218,7 +223,7 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
       bites += 1;
       bitesEl.textContent = toArabicNumeral(bites);
       if (sound) playSwallowSound();
-      haptic([30, 40, 60]);
+      haptic([40, 40, 70], 'chewSwallow');
       // The droplet slides down: the one motion that reads as "swallow"
       // without needing a caption.
       droplet.classList.remove('chew-droplet-go');
@@ -278,7 +283,7 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
     phaseEl.textContent = CHEW_PHASES.done.label;
     hintEl.textContent = CHEW_PHASES.done.hint;
     countEl.textContent = '';
-    if (completed) playEventChime('chewMeal', { hapticPattern: [90, 50, 90, 50, 160] });
+    if (completed) playEventChime('chewMeal', { hapticPattern: [90, 50, 90, 50, 160], hapticEvent: 'completion' });
 
     // avgChewMs is the number that actually says whether she chewed, as
     // opposed to whether she sat in front of a timer for twenty minutes.

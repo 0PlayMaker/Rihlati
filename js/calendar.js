@@ -270,6 +270,73 @@ function openDayMoodModal(dateStr, onSaved) {
 
 // ---------- Yearly Overview ----------
 
+// The activity providers, but named — so the heatmap can be filtered to a
+// single area. One combined shape answers "did I use the app"; it cannot
+// answer "how was my prayer year", which is the question worth asking.
+const HEATMAP_FILTERS = [
+  { key: 'all',      label: '🗓️ الكل' },
+  { key: 'worship',  label: '🕌 العبادة' },
+  { key: 'adhkar',   label: '🤲 الأذكار' },
+  { key: 'wird',     label: '📖 الورد' },
+  { key: 'habits',   label: '🌱 العادات' },
+  { key: 'tasks',    label: '📋 المهام' },
+  { key: 'food',     label: '🍽️ الطعام' },
+  { key: 'water',    label: '💧 الماء' },
+  { key: 'sleep',    label: '😴 النوم' },
+  { key: 'training', label: '💪 التمارين' },
+  { key: 'mood',     label: '🙂 المزاج' },
+  { key: 'diary',    label: '📔 اليوميات' },
+  { key: 'period',   label: '🌸 الدورة' },
+  { key: 'study',    label: '⏳ الدراسة' },
+  { key: 'care',     label: '🧴 العناية' },
+  { key: 'chew',     label: '🌿 المضغ' },
+  { key: 'economy',  label: '💰 الاقتصاد' }
+];
+
+async function getHeatmapDates(filter, year) {
+  const prefix = String(year);
+  const only = (arr) => arr.filter(d => typeof d === 'string' && d.startsWith(prefix));
+
+  switch (filter) {
+    case 'worship':
+      return only((await db.prayerLogs.toArray()).filter(l => l.status === 'done').map(l => l.date));
+    case 'adhkar':
+      return only((await db.dailyAdhkarLogs.toArray()).map(l => l.date));
+    case 'wird':
+      return only((await db.wirdLogs.toArray()).map(l => l.date));
+    case 'habits':
+      return only((await db.habitLogs.toArray()).filter(l => l.status === 'done').map(l => l.date));
+    case 'tasks':
+      return only((await db.fixedTaskLogs.toArray()).map(l => l.date));
+    case 'food':
+      return only((await db.foodLogs.toArray()).map(l => l.date));
+    case 'water':
+      return only((await db.waterLogs.toArray()).filter(l => l.liters > 0).map(l => l.date));
+    case 'sleep':
+      return only((await db.sleepLogs.toArray()).map(l => l.date));
+    case 'training':
+      return only((await db.exerciseLogs.toArray()).filter(l => l.sets > 0).map(l => l.date));
+    case 'mood':
+      return only((await db.moodLogs.toArray()).map(l => l.date));
+    case 'diary':
+      return only((await db.diaryEntries.toArray()).map(l => l.date));
+    case 'period':
+      return only((await db.periodReadings.toArray()).map(l => l.dateStr));
+    case 'study':
+      return only((await db.studySessions.toArray()).map(l => l.date));
+    case 'care':
+      return only((await db.dailyCareLogs.toArray()).map(l => l.date));
+    case 'chew':
+      return only((await db.chewSessions.toArray()).map(l => l.date));
+    case 'economy':
+      return only((await db.economyTransactions.toArray()).map(l => l.date));
+    default: {
+      const results = await settleProviders(activityProviders);
+      return only(results.flat());
+    }
+  }
+}
+
 // A year heatmap built from the activity providers the calendar already
 // registers — 12 rows of days, tinted by how much was logged. It answers
 // "what did my year actually look like?" in a way a list of totals can't.
@@ -371,18 +438,41 @@ async function renderYearlyOverviewPage(params, view) {
 
   const heatCard = document.getElementById('yearly-heatmap-card');
   if (hasAny) {
+    let heatFilter = 'all';
+
+    async function paintHeatmap() {
+      const dates = await getHeatmapDates(heatFilter, year);
+      const daysWith = new Set(dates).size;
+      document.getElementById('heat-body').innerHTML = dates.length
+        ? `${yearHeatmapHtml(year, dates)}
+           <div class="heat-legend">
+             <span>أقل</span>
+             <span class="heat-cell heat-0"></span>
+             <span class="heat-cell heat-1"></span>
+             <span class="heat-cell heat-2"></span>
+             <span class="heat-cell heat-3"></span>
+             <span class="heat-cell heat-4"></span>
+             <span>أكثر</span>
+           </div>
+           <p class="heat-count">${toArabicNumeral(daysWith)} يوم</p>`
+        : `<p class="empty-state-sub">لا شيء مسجّل في هذا القسم لهذه السنة.</p>`;
+    }
+
     heatCard.innerHTML = `
       <p class="ring-label">شكل عامك</p>
-      ${yearHeatmapHtml(year, allDates)}
-      <div class="heat-legend">
-        <span>أقل</span>
-        <span class="heat-cell heat-0"></span>
-        <span class="heat-cell heat-1"></span>
-        <span class="heat-cell heat-2"></span>
-        <span class="heat-cell heat-3"></span>
-        <span class="heat-cell heat-4"></span>
-        <span>أكثر</span>
-      </div>`;
+      <div class="heat-filter-row" id="heat-filters">
+        ${HEATMAP_FILTERS.map(f => `<button class="heat-filter-chip ${f.key === 'all' ? 'active' : ''}" data-filter="${f.key}">${f.label}</button>`).join('')}
+      </div>
+      <div id="heat-body"></div>`;
+
+    document.querySelectorAll('.heat-filter-chip').forEach(chip => {
+      chip.addEventListener('click', async () => {
+        heatFilter = chip.dataset.filter;
+        document.querySelectorAll('.heat-filter-chip').forEach(c => c.classList.toggle('active', c === chip));
+        await paintHeatmap();
+      });
+    });
+    await paintHeatmap();
   } else {
     heatCard.style.display = 'none';
   }

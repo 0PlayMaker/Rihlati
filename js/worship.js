@@ -232,15 +232,33 @@ function dailyAdhkarKindLabel(kind) {
 }
 
 async function renderDailyAdhkar(container, dateStr) {
-  const [morning, evening] = await Promise.all([
-    isDailyAdhkarDone('morning', dateStr), isDailyAdhkarDone('evening', dateStr)
+  const [morning, evening, mStats, eStats] = await Promise.all([
+    isDailyAdhkarDone('morning', dateStr),
+    isDailyAdhkarDone('evening', dateStr),
+    getDailyAdhkarKindStats('morning'),
+    getDailyAdhkarKindStats('evening')
   ]);
-  container.innerHTML = `
-    <div class="daily-adhkar-row">
-      <button class="chip-lg ${morning ? 'active' : ''}" data-kind="morning">🌅 أذكار الصباح</button>
-      <button class="chip-lg ${evening ? 'active' : ''}" data-kind="evening">🌙 أذكار المساء</button>
+  const cardFor = (kind, done, stats, icon, label) => `
+    <div class="adhkar-kind-card ${done ? 'adhkar-kind-done' : ''}">
+      <button class="adhkar-kind-btn" data-kind="${kind}">
+        <span class="adhkar-kind-icon">${icon}</span>
+        <span class="adhkar-kind-label">${label}</span>
+        <span class="adhkar-kind-check">${done ? '✓' : '›'}</span>
+      </button>
+      <div class="adhkar-kind-stats">
+        <span class="nafl-stat">🔥 ${toArabicNumeral(stats.streak)}</span>
+        <span class="nafl-stat">✅ ${toArabicNumeral(stats.total)}</span>
+        ${stats.longest > 0 ? `<span class="nafl-stat">🏆 ${toArabicNumeral(stats.longest)}</span>` : ''}
+      </div>
     </div>`;
-  container.querySelectorAll('.chip-lg').forEach(btn => {
+
+  container.innerHTML = `
+    <div class="adhkar-kind-row">
+      ${cardFor('morning', morning, mStats, '🌅', 'أذكار الصباح')}
+      ${cardFor('evening', evening, eStats, '🌙', 'أذكار المساء')}
+    </div>`;
+
+  container.querySelectorAll('.adhkar-kind-btn').forEach(btn => {
     // Opens her actual reading list instead of blindly toggling — she
     // marks done from inside that page, after reading through it.
     btn.addEventListener('click', () => goTo(`/adhkar-detail/${btn.dataset.kind}/${dateStr}`));
@@ -379,7 +397,8 @@ async function renderAdhkarDetailPage(params, view) {
 // Tahajjud, etc. later a one-line change, not a redesign.
 
 const STANDALONE_SUNNAH_PRAYERS = [
-  { kind: 'duha', label: '☀️ صلاة الضحى' }
+  { kind: 'duha', label: 'صلاة الضحى', icon: '☀️', note: 'ركعتان بعد ارتفاع الشمس' },
+  { kind: 'qiyam', label: 'قيام الليل', icon: '🌙', note: 'أشرف الصلاة بعد الفريضة' }
 ];
 
 async function isStandaloneSunnahDone(kind, date) { return !!(await getLog(db.standaloneSunnahLogs, 'kind', kind, date)); }
@@ -393,20 +412,47 @@ async function getStandaloneSunnahStats(kind) {
   return computeImplicitStats(logs.map(l => l.date), []);
 }
 
+// Per-kind adhkar streaks. Every other worship card carried its own streak;
+// morning and evening adhkar were the only two that didn't, which made them
+// look like the one practice not worth keeping up.
+async function getDailyAdhkarKindStats(kind) {
+  const logs = await db.dailyAdhkarLogs.where('kind').equals(kind).toArray();
+  return computeImplicitStats(logs.map(l => l.date), []);
+}
+
 async function renderStandaloneSunnah(container, dateStr, { showStreak } = {}) {
   const rows = await Promise.all(STANDALONE_SUNNAH_PRAYERS.map(async p => {
     const done = await isStandaloneSunnahDone(p.kind, dateStr);
-    const statsText = showStreak ? statsLine(await getStandaloneSunnahStats(p.kind)) : '';
+    const stats = await getStandaloneSunnahStats(p.kind);
+    // The streak sits UNDER the button, not beside it — it's a property of
+    // the practice, not a note pinned next to it.
     return `
-      <div class="daily-adhkar-row">
-        <button class="chip-lg ${done ? 'active' : ''}" data-kind="${p.kind}">${p.label}</button>
-        ${statsText ? `<span class="tsr-streak">${statsText}</span>` : ''}
+      <div class="nafl-card ${done ? 'nafl-done' : ''}">
+        <button class="nafl-btn ${done ? 'active' : ''}" data-kind="${p.kind}">
+          <span class="nafl-icon">${p.icon}</span>
+          <span class="nafl-text">
+            <span class="nafl-label">${p.label}</span>
+            <span class="nafl-note">${p.note}</span>
+          </span>
+          <span class="nafl-check">${done ? '✓' : ''}</span>
+        </button>
+        ${showStreak ? `
+          <div class="nafl-stats">
+            <span class="nafl-stat">🔥 ${toArabicNumeral(stats.streak)} ${stats.streak === 1 ? 'يوم' : 'أيام'}</span>
+            <span class="nafl-stat">✅ ${toArabicNumeral(stats.total)} مرّة</span>
+            ${stats.longest > 0 ? `<span class="nafl-stat">🏆 أطول: ${toArabicNumeral(stats.longest)}</span>` : ''}
+          </div>` : ''}
       </div>`;
   }));
   container.innerHTML = rows.join('');
-  container.querySelectorAll('.chip-lg').forEach(btn => {
+  container.querySelectorAll('.nafl-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       await toggleStandaloneSunnah(btn.dataset.kind, dateStr);
+      if (dateStr === todayStr() && !(await isStandaloneSunnahDone(btn.dataset.kind, dateStr))) {
+        // toggled OFF — no celebration
+      } else if (dateStr === todayStr()) {
+        playEventChime('adhkar', { hapticPattern: [60, 40, 60] });
+      }
       await renderStandaloneSunnah(container, dateStr, { showStreak });
     });
   });
@@ -1233,7 +1279,13 @@ async function worshipYearlyProvider(year) {
   const sunnahDone = sunnahLogs.filter(l => l.date.startsWith(prefix)).length;
   const adhkarAfterDone = adhkarAfterLogs.filter(l => l.date.startsWith(prefix)).length;
   const dailyAdhkarDone = dailyAdhkarLogs.filter(l => l.date.startsWith(prefix)).length;
-  const duhaDone = standaloneSunnahLogs.filter(l => l.kind === 'duha' && l.date.startsWith(prefix)).length;
+  // Every nafl, not just الضحى — قيام الليل was invisible in the review.
+  const naflCounts = STANDALONE_SUNNAH_PRAYERS.map(p => ({
+    ...p,
+    count: standaloneSunnahLogs.filter(l => l.kind === p.kind && l.date.startsWith(prefix)).length
+  }));
+  const naflTotal = naflCounts.reduce((s, n) => s + n.count, 0);
+  const duhaDone = naflTotal; // kept for the "is there anything to show" check
   const yearCustomLogs = customAdhkarLogs.filter(l => l.date.startsWith(prefix));
   const customTotal = yearCustomLogs.reduce((s, l) => s + l.count, 0);
 
@@ -1241,16 +1293,40 @@ async function worshipYearlyProvider(year) {
 
   const customRows = customAdhkar.map(a => {
     const sum = yearCustomLogs.filter(l => l.adhkarId === a.id).reduce((s, l) => s + l.count, 0);
-    return sum > 0 ? `<div class="yearly-row"><span>${escapeHtml(a.name)}</span><span>${sum}</span></div>` : '';
+    return sum > 0 ? `<div class="yearly-row"><span>${escapeHtml(a.name)}</span><span>${toArabicNumeral(sum)}</span></div>` : '';
   }).join('');
 
+  // Morning vs evening separately — "40 adhkar" says nothing about which
+  // half of the day she keeps and which she loses.
+  const yearDailyAdhkar = dailyAdhkarLogs.filter(l => l.date.startsWith(prefix));
+  const morningCount = yearDailyAdhkar.filter(l => l.kind === 'morning').length;
+  const eveningCount = yearDailyAdhkar.filter(l => l.kind === 'evening').length;
+  const [mStreak, eStreak] = await Promise.all([
+    getDailyAdhkarKindStats('morning'),
+    getDailyAdhkarKindStats('evening')
+  ]);
+
+  const naflRows = naflCounts
+    .filter(n => n.count > 0)
+    .map(n => `<div class="yearly-row"><span>${n.icon} ${n.label}</span><span>${toArabicNumeral(n.count)} يوم</span></div>`)
+    .join('');
+
   const html = `
-    <div class="yearly-row"><span>الفرائض</span><span>${fardDone} صلاة</span></div>
-    <div class="yearly-row"><span>السنن</span><span>${sunnahDone}</span></div>
-    <div class="yearly-row"><span>أذكار بعد الصلاة</span><span>${adhkarAfterDone}</span></div>
-    <div class="yearly-row"><span>أذكار الصباح والمساء</span><span>${dailyAdhkarDone}</span></div>
-    ${duhaDone > 0 ? `<div class="yearly-row"><span>☀️ صلاة الضحى</span><span>${duhaDone} يوم</span></div>` : ''}
-    ${customRows}
+    <div class="yearly-row"><span>الفرائض</span><span>${toArabicNumeral(fardDone)} صلاة</span></div>
+    <div class="yearly-row"><span>السنن الرواتب</span><span>${toArabicNumeral(sunnahDone)}</span></div>
+    <div class="yearly-row"><span>أذكار بعد الصلاة</span><span>${toArabicNumeral(adhkarAfterDone)}</span></div>
+    <div class="yearly-row"><span>🌅 أذكار الصباح</span><span>${toArabicNumeral(morningCount)} يوم · أطول ${toArabicNumeral(mStreak.longest)}</span></div>
+    <div class="yearly-row"><span>🌙 أذكار المساء</span><span>${toArabicNumeral(eveningCount)} يوم · أطول ${toArabicNumeral(eStreak.longest)}</span></div>
+    ${naflRows ? `
+      <details class="yearly-pain-details">
+        <summary>النوافل</summary>
+        ${naflRows}
+      </details>` : ''}
+    ${customRows ? `
+      <details class="yearly-pain-details">
+        <summary>الأذكار المخصصة</summary>
+        ${customRows}
+      </details>` : ''}
   `;
-  return { title: 'العبادة', html, count: fardDone + sunnahDone + adhkarAfterDone + dailyAdhkarDone + duhaDone + customTotal };
+  return { title: 'العبادة', html, count: fardDone + sunnahDone + adhkarAfterDone + dailyAdhkarDone + naflTotal + customTotal };
 }

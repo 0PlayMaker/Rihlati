@@ -375,11 +375,11 @@ async function renderFoodPage(params, view) {
       <div id="food-summary-card"></div>
     </div>
     <div class="card" id="water-card"></div>
-    <div class="card" id="chew-card"></div>
     <div class="card">
       <button class="btn btn-primary btn-block" id="food-add-btn">+ تسجيل وجبة</button>
       <div id="food-list"></div>
     </div>
+    <div class="card" id="chew-card"></div>
     <div class="card">
       <div class="section-header">
         <h2 class="card-title">📖 وصفاتي</h2>
@@ -410,19 +410,26 @@ async function renderFoodPage(params, view) {
     const mealFrac = mealsGoal ? Math.min(1, stats.count / mealsGoal) : 0;
     const overCal = caloriesGoal && (stats.totalCal || 0) > caloriesGoal;
 
+    // Chewing is now half of what this section tracks — a food summary that
+    // says nothing about HOW she ate is only half a summary.
+    const chewToday = await getChewSessionsForDate(today);
+    const pacedIds = new Set(chewToday.map(c => c.foodLogId).filter(Boolean));
+    const pacedCount = logs.filter(l => pacedIds.has(l.id)).length;
+    const chewPerf = await getChewPerformance();
+
     summaryEl.innerHTML = `
       <div class="food-rings-row">
         ${mealsGoal ? `
           <div class="food-ring-item">
             <div class="ring-wrap">
-              ${renderRing({ size: 78, strokeWidth: 9, segments: [{ frac: mealFrac, color: mealFrac >= 1 ? 'var(--success-strong)' : 'var(--btn-color, var(--pink-deep))' }] })}
+              ${renderRing({ size: 72, strokeWidth: 8, segments: [{ frac: mealFrac, color: mealFrac >= 1 ? 'var(--success-strong)' : 'var(--btn-color, var(--pink-deep))' }] })}
               <div class="ring-center-text">${toArabicNumeral(stats.count)}/${toArabicNumeral(mealsGoal)}</div>
             </div>
             <span class="food-ring-label">وجبات</span>
           </div>` : `
           <div class="food-ring-item">
             <div class="ring-wrap">
-              ${renderRing({ size: 78, strokeWidth: 9, segments: [{ frac: stats.count > 0 ? 1 : 0, color: 'var(--btn-color, var(--pink-deep))' }] })}
+              ${renderRing({ size: 72, strokeWidth: 8, segments: [{ frac: stats.count > 0 ? 1 : 0, color: 'var(--btn-color, var(--pink-deep))' }] })}
               <div class="ring-center-text">${toArabicNumeral(stats.count)}</div>
             </div>
             <span class="food-ring-label">وجبات</span>
@@ -431,21 +438,36 @@ async function renderFoodPage(params, view) {
         ${caloriesGoal ? `
           <div class="food-ring-item">
             <div class="ring-wrap">
-              ${renderRing({ size: 78, strokeWidth: 9, segments: [{ frac: calFrac, color: overCal ? 'var(--warning-strong)' : 'var(--success-strong)' }] })}
+              ${renderRing({ size: 72, strokeWidth: 8, segments: [{ frac: calFrac, color: overCal ? 'var(--warning-strong)' : 'var(--success-strong)' }] })}
               <div class="ring-center-text food-cal-center">${toArabicNumeral(stats.totalCal || 0)}</div>
             </div>
-            <span class="food-ring-label">${overCal ? `+${toArabicNumeral((stats.totalCal || 0) - caloriesGoal)} سعرة` : `من ${toArabicNumeral(caloriesGoal)}`}</span>
+            <span class="food-ring-label">${overCal ? `+${toArabicNumeral((stats.totalCal || 0) - caloriesGoal)}` : `من ${toArabicNumeral(caloriesGoal)}`}</span>
           </div>` : (stats.totalCal ? `
           <div class="food-ring-item">
             <div class="ring-wrap">
-              ${renderRing({ size: 78, strokeWidth: 9, segments: [{ frac: 1, color: 'var(--capsule-color, var(--pink))' }] })}
+              ${renderRing({ size: 72, strokeWidth: 8, segments: [{ frac: 1, color: 'var(--capsule-color, var(--pink))' }] })}
               <div class="ring-center-text food-cal-center">${toArabicNumeral(stats.totalCal)}</div>
             </div>
             <span class="food-ring-label">سعرة</span>
           </div>` : '')}
+
+        ${logs.length > 0 ? `
+          <div class="food-ring-item">
+            <div class="ring-wrap">
+              ${renderRing({ size: 72, strokeWidth: 8, segments: [{ frac: pacedCount / logs.length, color: pacedCount === logs.length ? 'var(--success-strong)' : 'var(--ring-health)' }] })}
+              <div class="ring-center-text">${toArabicNumeral(pacedCount)}/${toArabicNumeral(logs.length)}</div>
+            </div>
+            <span class="food-ring-label">🌿 مضغ</span>
+          </div>` : ''}
       </div>
 
       <div class="food-type-strip">${typeStrip}</div>
+
+      ${chewPerf?.avgAdherence != null ? `
+        <p class="food-chew-line">
+          🌿 تمضغين <strong>${toArabicNumeral(Math.round(chewPerf.avgAdherence * 100))}٪</strong> من المدّة المطلوبة${chewPerf.fastestMeal ? ` · أسرع وجباتك: ${mealTypeIcon(chewPerf.fastestMeal.type)} ${mealTypeLabel(chewPerf.fastestMeal.type)}` : ''}
+        </p>` : (logs.length > 0 && pacedCount === 0 ? `
+        <p class="food-chew-line food-chew-hint">🌿 لم تمضغي أي وجبة اليوم — اضغطي 🍽️ بجانب أي وجبة لتبدئي</p>` : '')}
     `;
     await renderFoodList(document.getElementById('food-list'), today, { onChange: refresh });
     await renderChewCard(document.getElementById('chew-card'), refresh);

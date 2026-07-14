@@ -315,6 +315,7 @@ async function renderSettingsPage(params, view) {
 
   const prefs = await getHomeTrackerPrefs();
   const arabicNums = settings?.useArabicNumerals !== false;
+  const hapticSupport = hapticsSupportLabel();
 
   view.innerHTML = `
     <div class="page-header">
@@ -468,10 +469,15 @@ async function renderSettingsPage(params, view) {
         <span>الاهتزاز</span>
         <label class="switch"><input type="checkbox" id="haptics-enabled" ${settings.hapticsEnabled !== false ? 'checked' : ''}><span class="switch-track"></span></label>
       </div>
+      <p class="settings-note haptics-support ${hapticSupport.ok ? 'haptics-ok' : 'haptics-no'}">${hapticSupport.text}</p>
       <div id="haptics-wrap" class="${settings.hapticsEnabled !== false ? '' : 'hidden'}">
         <label class="field-label">قوّة الاهتزاز: <span class="settings-count" id="hap-label"></span></label>
         <input type="range" class="mood-intensity" id="haptics-strength" min="0" max="200" step="10" value="${Math.round((settings.hapticsStrength ?? 1) * 100)}">
-        <button class="btn btn-secondary btn-sm" id="haptics-test">جرّبي الاهتزاز</button>
+        <button class="btn btn-secondary btn-sm btn-block" id="haptics-test">📳 جرّبي الاهتزاز الآن</button>
+        <p class="settings-note" id="haptics-test-result"></p>
+
+        <label class="field-label">أين يهتزّ؟</label>
+        <div id="haptic-events"></div>
       </div>
     </div>
 
@@ -605,17 +611,24 @@ async function renderSettingsPage(params, view) {
   async function renderTasbeehPicker() {
     const el = document.getElementById('tasbeeh-picker');
     if (!el) return;
-    const items = (await getActiveCustomAdhkar()).filter(a => a.goalCount > 0);
+    // Every dhikr is listed. Filtering on goalCount hid the ones created
+    // before goals existed — which is most of them — so the picker came up
+    // empty and there was nothing to choose.
+    const items = await getActiveCustomAdhkar();
     const s = await db.settings.get(1);
     const chosen = s?.homeAdhkarIds || items.slice(0, ADHKAR_RING_MAX).map(a => a.id);
     if (items.length === 0) {
-      el.innerHTML = `<p class="settings-note">ما في أذكار مخصصة بهدف عدد. أضيفيها من صفحة العبادة.</p>`;
+      el.innerHTML = `<p class="settings-note">ما في أذكار مخصصة بعد. أضيفيها من صفحة العبادة.</p>`;
       return;
     }
     el.innerHTML = items.map(a => `
       <label class="checkbox-row">
         <input type="checkbox" data-adhkar="${a.id}" ${chosen.includes(a.id) ? 'checked' : ''}>
-        <span>${escapeHtml(a.name)} <span class="settings-count">${toArabicNumeral(a.goalCount)}</span></span>
+        <span>${escapeHtml(a.name)}
+          ${a.goalCount > 0
+            ? `<span class="settings-count">هدف ${toArabicNumeral(a.goalCount)}</span>`
+            : `<span class="settings-count settings-count-hint">بلا هدف — يمتلئ القوس بمجرّد العدّ</span>`}
+        </span>
       </label>`).join('');
     el.querySelectorAll('[data-adhkar]').forEach(cb => {
       cb.addEventListener('change', async () => {
@@ -658,8 +671,9 @@ async function renderSettingsPage(params, view) {
       previewChime('chime'); // hear the change immediately
     });
 
-    // A chime picker per event. Previewing on selection is the whole point —
-    // choosing a sound you can't hear is choosing blind.
+    // A chime picker per event, each with its own ▶ — choosing a sound you
+    // can't hear is choosing blind, and the change-event alone doesn't help
+    // if you want to hear the SAME one twice.
     const evEl = document.getElementById('sound-events');
     const chosen = settings.eventSounds || {};
     evEl.innerHTML = SOUND_EVENTS.map(ev => `
@@ -669,6 +683,7 @@ async function renderSettingsPage(params, view) {
           ${Object.entries(CHIME_LIBRARY).map(([k, c]) =>
             `<option value="${k}" ${(chosen[ev.key] || ev.def) === k ? 'selected' : ''}>${c.label}</option>`).join('')}
         </select>
+        <button class="sound-play-btn" data-play="${ev.key}" aria-label="استمعي">▶</button>
       </div>`).join('');
     evEl.querySelectorAll('.sound-event-select').forEach(sel => {
       sel.addEventListener('change', async () => {
@@ -679,6 +694,12 @@ async function renderSettingsPage(params, view) {
         previewChime(sel.value);
       });
     });
+    evEl.querySelectorAll('[data-play]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        unlockAudioContext();
+        previewChime(chimeKeyFor(btn.dataset.play));
+      });
+    });
   }
 
   const hapToggle = document.getElementById('haptics-enabled');
@@ -686,6 +707,7 @@ async function renderSettingsPage(params, view) {
     const HAP_LABELS = ['بلا', 'خفيف', 'عادي', 'قوي'];
     const hapEl = document.getElementById('haptics-strength');
     const hapLabel = document.getElementById('hap-label');
+    const hapResult = document.getElementById('haptics-test-result');
     const hapText = (v) => HAP_LABELS[Math.min(3, Math.floor(Number(v) / 60))];
     hapLabel.textContent = hapText(hapEl.value);
 
@@ -698,9 +720,44 @@ async function renderSettingsPage(params, view) {
     hapEl.addEventListener('change', async () => {
       await db.settings.update(1, { hapticsStrength: Number(hapEl.value) / 100 });
       loadSoundPrefs(await db.settings.get(1));
-      haptic([80, 50, 80]);
+      haptic([90, 60, 90]);
     });
-    document.getElementById('haptics-test').addEventListener('click', () => haptic([100, 60, 100, 60, 160]));
+
+    // The test now REPORTS. It was failing silently, which is precisely why
+    // it looked broken — you pressed it, nothing happened, and nothing told
+    // you why.
+    document.getElementById('haptics-test').addEventListener('click', () => {
+      if (!hapticsSupported()) {
+        hapResult.textContent = `❌ ${hapticsSupportLabel().text}`;
+        hapResult.className = 'settings-note haptics-no';
+        return;
+      }
+      const fired = haptic([120, 70, 120, 70, 200]);
+      hapResult.textContent = fired
+        ? '✅ اهتزّ — إن لم تشعري به، ارفعي القوّة أو تحقّقي من وضع الصامت في جهازك'
+        : '⚠️ رفض المتصفّح الاهتزاز. جرّبي بعد لمس الشاشة، وتأكّدي أن الموقع يعمل عبر HTTPS';
+      hapResult.className = fired ? 'settings-note haptics-ok' : 'settings-note haptics-no';
+    });
+
+    // Which events vibrate — a buzz on every tasbeeh tap is lovely or
+    // maddening depending on the person, and that has nothing to do with
+    // whether they want a chime at the goal.
+    const hapEvEl = document.getElementById('haptic-events');
+    const hapMap = settings.eventHaptics || {};
+    hapEvEl.innerHTML = HAPTIC_EVENTS.map(ev => `
+      <label class="checkbox-row">
+        <input type="checkbox" data-hev="${ev.key}" ${(hapMap[ev.key] ?? ev.def) ? 'checked' : ''}>
+        <span>${ev.label}</span>
+      </label>`).join('');
+    hapEvEl.querySelectorAll('[data-hev]').forEach(cb => {
+      cb.addEventListener('change', async () => {
+        const s2 = await db.settings.get(1);
+        const map = { ...(s2.eventHaptics || {}), [cb.dataset.hev]: cb.checked };
+        await db.settings.update(1, { eventHaptics: map });
+        loadSoundPrefs(await db.settings.get(1));
+        if (cb.checked) haptic([80, 50, 80], cb.dataset.hev);
+      });
+    });
   }
 
   // ---- notifications ----

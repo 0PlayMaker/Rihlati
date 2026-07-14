@@ -48,6 +48,14 @@ function isCurrentRenderToken(token) {
   return token === _renderToken;
 }
 
+// A pending "scroll to this section after the next render" request. The
+// router owns this because the router is what resets the scroll position —
+// a caller scrolling on its own gets immediately overridden.
+let _pendingSection = null;
+function requestSectionScroll(anchor) {
+  _pendingSection = anchor || null;
+}
+
 async function renderRoute() {
   runCleanups(); // tear the previous page down before building the next
   const myToken = ++_renderToken;
@@ -70,7 +78,55 @@ async function renderRoute() {
       view.innerHTML = '<div class="empty-state"><p>حدث خطأ غير متوقع في هذه الشاشة.</p></div>';
     }
   }
-  if (myToken === _renderToken) window.scrollTo(0, 0);
+  if (myToken !== _renderToken) return;
+
+  const anchor = _pendingSection;
+  _pendingSection = null;
+
+  if (!anchor) {
+    window.scrollTo(0, 0);
+    return;
+  }
+
+  // Scrolling to a section is the ONLY case where the top-reset must not
+  // run — it was firing after the caller's scrollIntoView and dragging the
+  // page straight back up, so the card would highlight and then sit there
+  // off-screen. Land at the top first, then walk down to the section once
+  // the page has actually painted.
+  window.scrollTo(0, 0);
+
+  const settle = (attempt = 0) => {
+    const el = document.getElementById(anchor);
+    if (!el) {
+      if (attempt < 40) requestAnimationFrame(() => settle(attempt + 1));
+      return;
+    }
+    scrollToElement(el);
+    // Sections below often finish loading a beat later and shift the layout,
+    // which would leave the target off-screen again. Re-aim a couple of
+    // times rather than trusting one shot.
+    setTimeout(() => scrollToElement(el), 250);
+    setTimeout(() => {
+      scrollToElement(el);
+      el.classList.add('section-flash');
+      setTimeout(() => el.classList.remove('section-flash'), 1400);
+    }, 600);
+  };
+  requestAnimationFrame(() => settle());
+}
+
+// Scroll an element into view, allowing for the fixed bottom bar so the
+// target doesn't end up hidden underneath it.
+function scrollToElement(el) {
+  try {
+    const rect = el.getBoundingClientRect();
+    const y = window.scrollY + rect.top - 80; // clear the header comfortably
+    if (typeof window.scrollTo === 'function') {
+      window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+    }
+  } catch (e) {
+    // A missed scroll is not worth breaking navigation over.
+  }
 }
 
 function goTo(path) {

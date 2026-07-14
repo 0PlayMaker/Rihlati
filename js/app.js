@@ -29,9 +29,11 @@ async function buildCustomAdhkarRingData() {
   const chosenIds = settings?.homeAdhkarIds || null;
 
   let items = await getActiveCustomAdhkar();
-  // Only ones with a goal can show meaningful progress; a countless dhikr
-  // has no fraction to draw.
-  items = items.filter(a => a.goalCount > 0);
+  // NOTE: deliberately does NOT filter on goalCount. Any dhikr created
+  // before goals existed has no goalCount at all, and filtering on it made
+  // those vanish from both the ring AND the settings picker — she'd see an
+  // empty circle and have nothing to choose. A field added later is the
+  // app's problem, not her data's.
   if (chosenIds) items = items.filter(a => chosenIds.includes(a.id));
   items = items.slice(0, ADHKAR_RING_MAX);
 
@@ -40,9 +42,20 @@ async function buildCustomAdhkarRingData() {
   }
 
   const counts = await Promise.all(items.map(a => getCustomAdhkarCount(a.id, today)));
-  const doneCount = counts.filter((c, i) => c >= items[i].goalCount).length;
+
+  // A dhikr WITH a goal fills its arc proportionally. One WITHOUT fills the
+  // moment it's counted at all — because "did I say it today" is still a
+  // real answer, and it beats hiding her dhikr entirely.
+  const fracOf = (i) => {
+    const goal = items[i].goalCount;
+    if (goal > 0) return Math.min(1, counts[i] / goal);
+    return counts[i] > 0 ? 1 : 0;
+  };
+  const isDone = (i) => fracOf(i) >= 1;
+  const doneCount = items.filter((_, i) => isDone(i)).length;
+
   const per = 1 / items.length;
-  const GAP = items.length > 1 ? 0.012 : 0; // a hair of space so arcs read as separate
+  const GAP = items.length > 1 ? 0.012 : 0;
   const sliceLen = Math.max(0, per - GAP);
 
   // Each slice gets a faint track FIRST, then its fill on top. Without the
@@ -54,14 +67,11 @@ async function buildCustomAdhkarRingData() {
     offset: i * per,
     color: 'var(--ring-slice-track)'
   }));
-  const fills = items.map((a, i) => {
-    const frac = Math.min(1, counts[i] / a.goalCount);
-    return {
-      frac: sliceLen * frac,
-      offset: i * per,
-      color: frac >= 1 ? 'var(--success-strong)' : 'var(--ring-worship)'
-    };
-  });
+  const fills = items.map((_, i) => ({
+    frac: sliceLen * fracOf(i),
+    offset: i * per,
+    color: isDone(i) ? 'var(--success-strong)' : 'var(--ring-worship)'
+  }));
 
   return {
     segments: [...tracks, ...fills],
@@ -456,23 +466,14 @@ function smallRingFromData(d) {
 // Navigate AND land on the right part of the page. Dropping her at the top
 // of Worship when she tapped the wird ring means she still has to hunt for
 // it — the tap was supposed to save her that.
+//
+// The router performs the scroll, not this function: the router resets the
+// scroll position after every render, so anything scrolling on its own was
+// simply overridden a frame later. Registering the intent lets the router
+// skip that one reset and aim properly once the page has painted.
 function goToSection(path, anchor) {
+  if (anchor) requestSectionScroll(anchor);
   goTo(path);
-  if (!anchor) return;
-  // The route renders asynchronously; poll briefly for the element rather
-  // than guessing a delay that's wrong on a slow phone.
-  const started = Date.now();
-  const findIt = () => {
-    const el = document.getElementById(anchor);
-    if (el) {
-      safeScrollIntoView(el, { behavior: 'smooth', block: 'center' });
-      el.classList.add('section-flash');
-      setTimeout(() => el.classList.remove('section-flash'), 1200);
-      return;
-    }
-    if (Date.now() - started < 2000) requestAnimationFrame(findIt);
-  };
-  requestAnimationFrame(findIt);
 }
 
 async function renderHomeRingSection(container) {

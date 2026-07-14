@@ -101,7 +101,7 @@ function playTone(freq, startOffset = 0, durationSec = 0.5, peak = 0.22) {
 // there was no way to turn anything up, down, or off.
 
 let _masterGain = null;
-let _soundPrefs = { volume: 0.7, enabled: true, hapticsEnabled: true, hapticsStrength: 1, sounds: {} };
+let _soundPrefs = { volume: 0.7, enabled: true, hapticsEnabled: true, hapticsStrength: 1, sounds: {}, haptics: {} };
 
 function loadSoundPrefs(settings) {
   _soundPrefs = {
@@ -109,7 +109,8 @@ function loadSoundPrefs(settings) {
     enabled: settings?.soundEnabled !== false,
     hapticsEnabled: settings?.hapticsEnabled !== false,
     hapticsStrength: settings?.hapticsStrength ?? 1,
-    sounds: settings?.eventSounds || {}
+    sounds: settings?.eventSounds || {},
+    haptics: settings?.eventHaptics || {}
   };
 }
 function getSoundPrefs() { return _soundPrefs; }
@@ -124,18 +125,63 @@ function audioOut() {
   return _masterGain;
 }
 
-// Haptics, scaled by her setting. A pattern is [ms on, ms off, ...] — the
-// strength multiplier lengthens the pulses, which is the only lever the
-// vibration API actually gives us.
-function haptic(pattern) {
-  if (!_soundPrefs.hapticsEnabled) return;
-  if (!navigator.vibrate) return;
+// Which events may vibrate. Separate from the sound choices because the
+// answers are genuinely different — a buzz on every tasbeeh tap is lovely
+// or maddening depending on the person, and that's got nothing to do with
+// whether they want a chime at the goal.
+const HAPTIC_EVENTS = [
+  { key: 'tasbeehTap',  label: '📿 كل ضغطة على المسبحة', def: true },
+  { key: 'tasbeehGoal', label: '📿 بلوغ هدف الذكر',       def: true },
+  { key: 'chewTick',    label: '🌿 كل مضغة',              def: false },
+  { key: 'chewSwallow', label: '🌿 البلع',                def: true },
+  { key: 'timerPhase',  label: '⏱️ بداية/نهاية البومودورو', def: true },
+  { key: 'completion',  label: '🎉 إتمام أي هدف',          def: true }
+];
+
+// The honest answer about vibration on the web:
+//   Android Chrome  → works
+//   iOS Safari      → the Vibration API does not exist. At all. No web app
+//                     can vibrate on an iPhone, and no amount of settings
+//                     will change that.
+// Saying so plainly beats letting her hunt for a switch that cannot work.
+function hapticsSupported() {
+  return typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+}
+function hapticsSupportLabel() {
+  if (hapticsSupported()) return { ok: true, text: 'مدعوم على هذا الجهاز ✅' };
+  const ua = (navigator.userAgent || '');
+  const isApple = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && 'ontouchend' in document);
+  return {
+    ok: false,
+    text: isApple
+      ? 'أجهزة آبل لا تدعم الاهتزاز في تطبيقات الويب إطلاقاً — قيد من النظام نفسه، لا من التطبيق.'
+      : 'متصفّحك لا يدعم الاهتزاز.'
+  };
+}
+
+function hapticEventEnabled(eventKey) {
+  const ev = HAPTIC_EVENTS.find(e => e.key === eventKey);
+  const map = _soundPrefs.haptics || {};
+  return map[eventKey] ?? ev?.def ?? true;
+}
+
+// Fire a haptic. `eventKey` is optional — when given, she can turn that one
+// event off without turning off all of them. Returns whether it actually
+// fired, so a test can tell the truth instead of just hoping.
+function haptic(pattern, eventKey = null) {
+  if (!_soundPrefs.hapticsEnabled) return false;
+  if (eventKey && !hapticEventEnabled(eventKey)) return false;
+  if (!hapticsSupported()) return false;
   const s = _soundPrefs.hapticsStrength;
-  if (s <= 0) return;
+  if (s <= 0) return false;
   const scaled = (Array.isArray(pattern) ? pattern : [pattern]).map((v, i) =>
-    i % 2 === 0 ? Math.round(v * s) : v   // scale the "on" pulses, leave gaps
+    i % 2 === 0 ? Math.max(1, Math.round(v * s)) : v   // scale the "on" pulses, leave the gaps
   );
-  try { navigator.vibrate(scaled); } catch (e) { /* unsupported */ }
+  try {
+    return navigator.vibrate(scaled) !== false;
+  } catch (e) {
+    return false;
+  }
 }
 
 function playToneOn(freq, startOffset = 0, durationSec = 0.5, peak = 0.22, type = 'sine') {
@@ -191,14 +237,14 @@ function chimeKeyFor(eventKey) {
 }
 
 // Play the chime configured for a named event, plus its haptic.
-function playEventChime(eventKey, { hapticPattern = [90, 50, 90, 50, 160] } = {}) {
+function playEventChime(eventKey, { hapticPattern = [90, 50, 90, 50, 160], hapticEvent = 'completion' } = {}) {
   unlockAudioContext();
   const key = chimeKeyFor(eventKey);
   const c = CHIME_LIBRARY[key];
   if (c && c.notes.length) {
     c.notes.forEach((f, i) => playToneOn(f, i * c.gap, c.dur, i === c.notes.length - 1 ? 0.30 : 0.20));
   }
-  haptic(hapticPattern);
+  haptic(hapticPattern, hapticEvent);
 }
 
 // Preview a chime by key (for the settings picker).
@@ -568,7 +614,7 @@ function openTasbeehModal({ title, benefit, goal, getCount, setCount, onClose })
   const countEl = overlay.querySelector('#tasbeeh-count');
   const goalEl = overlay.querySelector('#tasbeeh-goal-text');
   const fillEl = overlay.querySelector('#tasbeeh-ring-fill');
-  const tapEl = overlay.querySelector('#tasbeeh-tap');
+  const tapEl = overlay.querySelector('#tasbeeh-tap'); // still the visual target
   const CIRCUMFERENCE = 2 * Math.PI * 92;
   fillEl.style.strokeDasharray = String(CIRCUMFERENCE);
 
@@ -603,7 +649,7 @@ function openTasbeehModal({ title, benefit, goal, getCount, setCount, onClose })
     // on every extra tap.
     if (hasGoal && wasBelowGoal && count >= goal && !goalCelebrated) {
       goalCelebrated = true;
-      playEventChime('tasbeeh');
+      playEventChime('tasbeeh', { hapticPattern: [90, 50, 90, 50, 160], hapticEvent: 'tasbeehGoal' });
       return;
     }
     if (hasGoal && count < goal) goalCelebrated = false; // stepped back below: allow it again
@@ -611,16 +657,32 @@ function openTasbeehModal({ title, benefit, goal, getCount, setCount, onClose })
     // Without a goal, every 33 is a natural resting point (a full سبحة).
     if (!hasGoal && count > 0 && count % 33 === 0 && count !== lastMilestone) {
       lastMilestone = count;
-      playEventChime('tasbeeh', { hapticPattern: [120, 60, 120] });
+      playEventChime('tasbeeh', { hapticPattern: [120, 60, 120], hapticEvent: 'tasbeehGoal' });
       return;
     }
-    if (delta > 0) haptic([14]); // a whisper per tap
+    if (delta > 0) haptic([16], 'tasbeehTap'); // a whisper per tap
   }
-  // Audio must be unlocked inside a real user gesture, so do it on the
-  // very first tap — otherwise the chime at the goal would be blocked.
-  tapEl.addEventListener('click', () => { unlockAudioContext(); bump(1); });
-  overlay.querySelector('#tasbeeh-minus').addEventListener('click', () => bump(-1));
-  overlay.querySelector('#tasbeeh-reset').addEventListener('click', async () => {
+  // The WHOLE screen counts, not just the disc. A hundred taps on a target
+  // you aren't looking at means a hundred chances to miss — so the tap area
+  // is everything. The controls below stop propagation, so they still work
+  // as buttons rather than adding to the count.
+  const screenEl = overlay.querySelector('.tasbeeh-screen');
+  screenEl.addEventListener('click', (e) => {
+    if (e.target.closest('.tasbeeh-actions, .tasbeeh-close')) return;
+    unlockAudioContext();
+    bump(1);
+  });
+  // Keep the visual press feedback on the disc even when she taps elsewhere.
+  screenEl.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.tasbeeh-actions, .tasbeeh-close')) return;
+    tapEl.classList.add('tasbeeh-pressed');
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt =>
+    screenEl.addEventListener(evt, () => tapEl.classList.remove('tasbeeh-pressed')));
+
+  overlay.querySelector('#tasbeeh-minus').addEventListener('click', (e) => { e.stopPropagation(); bump(-1); });
+  overlay.querySelector('#tasbeeh-reset').addEventListener('click', async (e) => {
+    e.stopPropagation();
     if (count === 0) return;
     if (!confirm('تصفير العدّاد؟')) return;
     count = 0;
@@ -633,7 +695,7 @@ function openTasbeehModal({ title, benefit, goal, getCount, setCount, onClose })
     overlay.remove();
     if (onClose) onClose();
   }
-  overlay.querySelector('#tasbeeh-close').addEventListener('click', close);
+  overlay.querySelector('#tasbeeh-close').addEventListener('click', (e) => { e.stopPropagation(); close(); });
   // Tapping the dim area outside the sheet closes it, but taps INSIDE
   // must not bubble out and close it mid-count.
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });

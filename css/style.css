@@ -1163,7 +1163,13 @@ body.theme-dark-ish .food-photo-placeholder {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   padding: var(--space-4); text-align: center; position: relative;
   background: radial-gradient(circle at 50% 42%, var(--capsule-color, var(--pink)) 0%, transparent 60%);
+  /* The entire screen counts — see openTasbeehModal. */
+  cursor: pointer; user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
+/* ...except the controls, which must behave like controls. */
+.tasbeeh-actions, .tasbeeh-close { cursor: auto; }
+.tasbeeh-actions button, .tasbeeh-close { cursor: pointer; }
 .tasbeeh-close { position: absolute; inset-inline-end: var(--space-3); inset-block-start: var(--space-3); }
 .tasbeeh-title { font-size: calc(19px * var(--font-scale)); font-weight: 800; color: var(--title-color); margin-bottom: 4px; padding-inline: var(--space-4); }
 .tasbeeh-benefit { font-size: calc(13px * var(--font-scale)); color: var(--ink-soft); line-height: 1.6; margin-bottom: var(--space-3); }
@@ -1179,7 +1185,8 @@ body.theme-dark-ish .food-photo-placeholder {
   -webkit-tap-highlight-color: transparent;
   transition: transform 0.08s ease;
 }
-.tasbeeh-circle:active { transform: scale(0.96); }
+.tasbeeh-circle:active,
+.tasbeeh-circle.tasbeeh-pressed { transform: scale(0.96); }
 .tasbeeh-ring { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
 .tasbeeh-ring-track { fill: var(--capsule-color, var(--pink)); fill-opacity: 0.18; stroke: var(--track); stroke-width: 10; }
 .tasbeeh-ring-fill {
@@ -2066,14 +2073,21 @@ body.theme-dark-ish { --ring-slice-track: rgba(255,255,255,0.10); }
 .chew-adherence { margin-top: var(--space-3); }
 .mini-progress-fill.chew-adherence-good { background: var(--success-strong); }
 
-.food-row-wrap { display: flex; align-items: stretch; gap: 6px; margin-bottom: var(--space-2); }
-.food-row-wrap .food-row { flex: 1; margin-bottom: 0; }
+/* The chew button mirrors the meal thumbnail exactly (48x48, same radius) so
+   the row reads as two matched squares rather than a thumbnail with an odd
+   tall slab bolted on. */
+.food-row-wrap { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.food-row-wrap .food-row { flex: 1; margin-bottom: 0; min-width: 0; }
 .food-chew-btn {
-  flex-shrink: 0; width: 46px; border-radius: var(--radius-md);
+  flex-shrink: 0;
+  width: 48px; height: 48px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--track); background: var(--surface);
-  font-size: calc(17px * var(--font-scale)); cursor: pointer;
+  font-size: calc(19px * var(--font-scale)); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s ease;
 }
-.food-chew-btn:active { transform: scale(0.94); }
+.food-chew-btn:active { transform: scale(0.92); }
 .food-chew-btn.food-chew-done { background: var(--success); border-color: transparent; }
 /* Goals are cards in their own right — they don't need a card around them,
    and the add button was butting straight into the last one with no gap. */
@@ -2088,3 +2102,77 @@ body.theme-dark-ish { --ring-slice-track: rgba(255,255,255,0.10); }
 .layout-slider-row label { width: 78px; flex-shrink: 0; }
 .layout-slider-row .hsl-slider { flex: 1; }
 .layout-val { width: 46px; flex-shrink: 0; text-align: center; font-size: calc(11px * var(--font-scale)); font-weight: 800; color: var(--btn-color, var(--pink-deep)); }
+.food-chew-line { font-size: calc(11px * var(--font-scale)); color: var(--ink-soft); line-height: 1.7; margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px dashed var(--track); }
+.food-chew-line strong { color: var(--title-color); font-weight: 800; }
+.food-chew-hint { color: var(--ink-faint); }
+.settings-count-hint { font-weight: 500; opacity: 0.8; }
+
+/* ---------- Worship: نوافل + adhkar kind cards ---------- */
+/* The streak belongs UNDER the thing it describes, not pinned beside it. */
+.nafl-card {
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-soft);
+  padding: var(--space-2); margin-bottom: var(--space-2);
+  transition: border-color 0.2s ease;
+}
+.nafl-card:last-child { margin-bottom: 0; }
+.nafl-card.nafl-done { border-inline-start: 3px solid var(--success-strong); }
+.nafl-btn {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  padding: 8px 6px; border: none; background: none; cursor: pointer; text-align: start;
+}
+.nafl-icon { font-size: calc(20px * var(--font-scale)); flex-shrink: 0; }
+.nafl-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.nafl-label { font-size: calc(14px * var(--font-scale)); font-weight: 700; color: var(--ink); }
+.nafl-note { font-size: calc(10px * var(--font-scale)); color: var(--ink-faint); }
+.nafl-check {
+  flex-shrink: 0; width: 26px; height: 26px; border-radius: var(--radius-round);
+  display: flex; align-items: center; justify-content: center;
+  font-size: calc(13px * var(--font-scale)); font-weight: 800;
+  border: 1.5px solid var(--track); color: var(--success-ink);
+}
+.nafl-card.nafl-done .nafl-check { background: var(--success); border-color: transparent; }
+.nafl-stats {
+  display: flex; gap: 5px; flex-wrap: wrap;
+  padding: 6px 6px 2px; border-top: 1px dashed var(--track); margin-top: 4px;
+}
+.nafl-stat {
+  font-size: calc(10px * var(--font-scale)); font-weight: 700;
+  color: var(--ink-soft); background: var(--track);
+  border-radius: var(--radius-round); padding: 3px 8px;
+}
+
+.adhkar-kind-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.adhkar-kind-card {
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-soft);
+  padding: var(--space-2); transition: border-color 0.2s ease;
+}
+.adhkar-kind-card.adhkar-kind-done { border-inline-start: 3px solid var(--success-strong); }
+.adhkar-kind-btn {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 6px 4px; border: none; background: none; cursor: pointer; text-align: start;
+}
+.adhkar-kind-icon { font-size: calc(17px * var(--font-scale)); flex-shrink: 0; }
+.adhkar-kind-label { flex: 1; min-width: 0; font-size: calc(12px * var(--font-scale)); font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adhkar-kind-check { flex-shrink: 0; font-size: calc(13px * var(--font-scale)); font-weight: 800; color: var(--ink-faint); }
+.adhkar-kind-card.adhkar-kind-done .adhkar-kind-check { color: var(--success-ink); }
+.adhkar-kind-stats { display: flex; gap: 4px; flex-wrap: wrap; padding: 5px 4px 1px; border-top: 1px dashed var(--track); margin-top: 3px; }
+.heat-filter-row { display: flex; gap: 5px; overflow-x: auto; padding-bottom: var(--space-2); margin-bottom: var(--space-2); }
+.heat-filter-chip {
+  flex-shrink: 0; font-size: calc(10px * var(--font-scale)); font-weight: 700; padding: 6px 11px;
+  border-radius: var(--radius-round); border: 1px solid var(--track);
+  background: var(--surface); color: var(--ink-soft); cursor: pointer; white-space: nowrap;
+}
+.heat-filter-chip.active { background: var(--btn-color, var(--pink-deep)); color: #fff; border-color: transparent; }
+.heat-count { font-size: calc(10px * var(--font-scale)); color: var(--ink-faint); text-align: center; margin-top: 4px; }
+.sound-play-btn {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: var(--radius-round);
+  border: 1px solid var(--track); background: var(--surface);
+  color: var(--btn-color, var(--pink-deep)); font-size: calc(11px * var(--font-scale));
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.sound-play-btn:active { background: var(--capsule-color, var(--pink)); transform: scale(0.92); }
+.haptics-support { padding: 8px 12px; border-radius: var(--radius-md); margin: var(--space-2) 0; }
+.haptics-ok { background: var(--success); color: var(--success-ink); }
+.haptics-no { background: var(--warning); color: var(--warning-ink); }
