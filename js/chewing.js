@@ -80,7 +80,7 @@ function formatChewDuration(totalSec) {
   const m = Math.floor(totalSec / 60);
   const s = Math.round(totalSec % 60);
   if (m === 0) return `${toArabicNumeral(s)} ث`;
-  return `${toArabicNumeral(m)}:${String(s).padStart(2, '0').replace(/[0-9]/g, d => '٠١٢٣٤٥٦٧٨٩'[Number(d)])}`;
+  return `${toArabicNumeral(m)}:${toArabicNumeral(String(s).padStart(2, '0'))}`;
 }
 
 // ============================================================

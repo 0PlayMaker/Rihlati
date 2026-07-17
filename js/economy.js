@@ -31,19 +31,21 @@ async function getEconomyAccounts() {
   const all = await db.economyAccounts.toArray();
   return all.filter(a => !a.archived).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 }
-async function createEconomyAccount({ name, emoji, color }) {
+async function createEconomyAccount({ name, emoji, color, excludeFromTotal }) {
   const all = await db.economyAccounts.toArray();
   return db.economyAccounts.add({
     name, emoji: emoji || '💰',
     color: color || ACCOUNT_COLORS[all.length % ACCOUNT_COLORS.length],
+    excludeFromTotal: !!excludeFromTotal,
     archived: false, order: all.length, createdAt: Date.now()
   });
 }
-async function updateEconomyAccount(id, { name, emoji, color }) {
+async function updateEconomyAccount(id, { name, emoji, color, excludeFromTotal }) {
   const patch = {};
   if (name != null) patch.name = name;
   if (emoji != null) patch.emoji = emoji;
   if (color != null) patch.color = color;
+  if (excludeFromTotal != null) patch.excludeFromTotal = !!excludeFromTotal;
   await db.economyAccounts.update(id, patch);
 }
 // Archive rather than delete so its transactions keep their history; the
@@ -66,8 +68,17 @@ async function getUnassignedBalance() {
 // ===================== Balance + Transactions =====================
 
 async function getEconomyBalance() {
-  const all = await db.economyTransactions.toArray();
-  return all.reduce((sum, t) => sum + t.amount, 0);
+  const [all, accounts] = await Promise.all([db.economyTransactions.toArray(), db.economyAccounts.toArray()]);
+  // Accounts she's marked "excluded" (e.g. long-term savings she doesn't
+  // want mixed into her spendable balance) are kept out of the headline
+  // total — their money still lives on its own account card, just not here.
+  const excluded = new Set(accounts.filter(a => a.excludeFromTotal).map(a => a.id));
+  return all.filter(t => t.accountId == null || !excluded.has(t.accountId)).reduce((sum, t) => sum + t.amount, 0);
+}
+// Whether any account is excluded — lets the balance card show a hint.
+async function hasExcludedAccounts() {
+  const accounts = await db.economyAccounts.toArray();
+  return accounts.some(a => a.excludeFromTotal && !a.archived);
 }
 // opts carries the fields added in this phase — accountId / category /
 // subcategory — all optional, so every existing caller keeps working.
@@ -538,6 +549,11 @@ function openAccountModal({ existing, onSaved } = {}) {
       <div class="econ-chip-row" id="account-colors">
         ${ACCOUNT_COLORS.map(c => `<button class="account-color-dot habit-color-${c} ${c === color ? 'active' : ''}" data-color="${c}" aria-label="${c}"></button>`).join('')}
       </div>
+      <label class="checkbox-row">
+        <input type="checkbox" id="account-exclude" ${existing?.excludeFromTotal ? 'checked' : ''}>
+        <span>🔒 استثناء من الرصيد الكلي</span>
+      </label>
+      <p class="settings-note">للمدخرات أو أموال مخصّصة لا تريدين احتسابها ضمن رصيدك المتاح — تبقى ظاهرة على بطاقتها.</p>
       <div class="modal-actions">
         ${existing ? `<button class="btn btn-danger btn-sm" id="account-delete">حذف</button>` : ''}
         <button class="btn btn-text" id="account-cancel">إلغاء</button>
@@ -563,8 +579,9 @@ function openAccountModal({ existing, onSaved } = {}) {
     const name = document.getElementById('account-name').value.trim();
     if (!name) return;
     const emoji = document.getElementById('account-emoji').value.trim() || '💰';
-    if (existing) await updateEconomyAccount(existing.id, { name, emoji, color });
-    else await createEconomyAccount({ name, emoji, color });
+    const excludeFromTotal = document.getElementById('account-exclude').checked;
+    if (existing) await updateEconomyAccount(existing.id, { name, emoji, color, excludeFromTotal });
+    else await createEconomyAccount({ name, emoji, color, excludeFromTotal });
     overlay.remove();
     if (onSaved) onSaved();
   });
@@ -601,7 +618,8 @@ async function renderAccountsCard(container, onChange) {
   const balances = await Promise.all(accounts.map(a => getAccountBalance(a.id)));
   const unassigned = await getUnassignedBalance();
   const cards = accounts.map((a, i) => `
-    <button class="econ-account-card habit-color-${a.color}" data-account-id="${a.id}">
+    <button class="econ-account-card habit-color-${a.color} ${a.excludeFromTotal ? 'econ-account-excluded' : ''}" data-account-id="${a.id}">
+      ${a.excludeFromTotal ? '<span class="econ-account-lock" title="خارج الرصيد الكلي">🔒</span>' : ''}
       <span class="econ-account-emoji">${a.emoji}</span>
       <span class="econ-account-name">${escapeHtml(a.name)}</span>
       <span class="econ-account-balance ${balances[i] < 0 ? 'econ-negative' : ''}">${toArabicNumeral(balances[i].toFixed(2))}</span>
@@ -643,6 +661,7 @@ function openAccountActionSheet(account, onChange) {
     <div class="modal">
       <h2 class="modal-title">${account.emoji} ${escapeHtml(account.name)}</h2>
       <button class="btn btn-primary btn-block" id="acct-add-txn">+ معاملة في هذا الحساب</button>
+      <button class="btn btn-secondary btn-block" id="acct-view-txns">📃 عرض معاملات هذا الحساب</button>
       <button class="btn btn-secondary btn-block" id="acct-set-balance">تعديل الرصيد</button>
       <button class="btn btn-secondary btn-block" id="acct-edit">تعديل الحساب</button>
       <button class="btn btn-text btn-block" id="acct-close">إغلاق</button>
@@ -654,8 +673,42 @@ function openAccountActionSheet(account, onChange) {
     close();
     openAddTransactionModal(onChange, null, account.id); // pre-file into this account
   });
+  document.getElementById('acct-view-txns').addEventListener('click', () => { close(); openAccountTransactionsSheet(account, onChange); });
   document.getElementById('acct-set-balance').addEventListener('click', () => { close(); openSetBalanceModal(onChange, account.id, account.name); });
   document.getElementById('acct-edit').addEventListener('click', () => { close(); openAccountModal({ existing: account, onSaved: onChange }); });
+}
+
+// A full-height sheet showing ONLY this account's transactions, grouped by
+// month — reuses the same list renderer the transactions page uses, just
+// pinned to one accountId.
+async function openAccountTransactionsSheet(account, onChange) {
+  const [balance, currency] = await Promise.all([getAccountBalance(account.id), getCurrencyLabel()]);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal modal-lg acct-txns-sheet">
+      <div class="acct-txns-head">
+        <h2 class="modal-title">${account.emoji} ${escapeHtml(account.name)}</h2>
+        <div class="acct-txns-balance ${balance < 0 ? 'econ-negative' : ''}">${toArabicNumeral(balance.toFixed(2))} <span class="econ-account-cur">${currency}</span></div>
+        ${account.excludeFromTotal ? '<span class="settings-note">🔒 هذا الحساب خارج رصيدك الكلي</span>' : ''}
+      </div>
+      <div id="acct-txns-list"></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="acct-txns-add">+ معاملة</button>
+        <button class="btn btn-text" id="acct-txns-close">إغلاق</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const listEl = overlay.querySelector('#acct-txns-list');
+  const refresh = async () => {
+    await renderTransactionsGroupedByMonth(listEl, { accountId: account.id, onChange: refresh });
+    if (onChange) await onChange();
+  };
+  await renderTransactionsGroupedByMonth(listEl, { accountId: account.id, onChange: refresh });
+  overlay.querySelector('#acct-txns-close').addEventListener('click', async () => { overlay.remove(); if (onChange) await onChange(); });
+  overlay.querySelector('#acct-txns-add').addEventListener('click', () => {
+    openAddTransactionModal(refresh, null, account.id);
+  });
 }
 
 function openTransferModal(accounts, onChange) {
@@ -1409,8 +1462,9 @@ async function renderEconomyPage(params, view) {
     const catGroups = await getCategorySummary(thisMonth);
 
     // Balance hero
+    const excludedHint = await hasExcludedAccounts();
     document.getElementById('economy-balance-card').innerHTML = `
-      <p class="ring-label">رصيدك</p>
+      <p class="ring-label">رصيدك${excludedHint ? ' <span class="econ-balance-hint">(بدون الحسابات المستثناة)</span>' : ''}</p>
       <div class="econ-balance">
         <span class="econ-balance-num ${b < 0 ? 'econ-negative' : ''}">${toArabicNumeral(b.toFixed(2))}</span>
         <span class="econ-balance-cur">${currency}</span>

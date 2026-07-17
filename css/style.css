@@ -2556,3 +2556,37 @@ body.theme-dark-ish { --ring-slice-track: rgba(255,255,255,0.10); }
 .weekly-up .weekly-tile-value { color: var(--danger-strong); }
 .weekly-down .weekly-tile-value { color: var(--success-strong); }
 .weekly-flat .weekly-tile-value { color: var(--ink-soft); }
+
+/* ============================================================
+   v56 — diet-food, meal timing, account exclusion, body diagram
+   ============================================================ */
+.food-tag-chip-dietfood { background: #E9F1E1; color: #4A6B34; }
+
+/* diet timing insight rows */
+.diet-timing-row { display: flex; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--track); }
+.diet-timing-row:last-of-type { border-bottom: none; }
+.diet-timing-icon { font-size: 1.5rem; flex-shrink: 0; }
+.diet-timing-body { display: flex; flex-direction: column; gap: 3px; }
+.diet-timing-title { font-weight: 700; font-size: 0.92rem; }
+.diet-tip { font-size: 0.82rem; color: var(--info-strong); }
+
+/* economy — excluded accounts + per-account sheet */
+.econ-account-card { position: relative; }
+.econ-account-lock { position: absolute; top: 6px; inset-inline-start: 6px; font-size: 0.75rem; opacity: 0.8; }
+.econ-account-excluded { opacity: 0.82; border: 1.5px dashed rgba(0,0,0,0.15); }
+.econ-balance-hint { font-size: 0.7rem; font-weight: 500; opacity: 0.7; }
+.acct-txns-sheet { max-height: 88vh; display: flex; flex-direction: column; }
+.acct-txns-head { text-align: center; margin-bottom: var(--space-2); }
+.acct-txns-balance { font-size: 1.6rem; font-weight: 800; color: var(--ink); }
+.acct-txns-sheet #acct-txns-list { flex: 1; overflow-y: auto; }
+
+/* body diagram */
+.body-diagram { display: flex; justify-content: center; margin: var(--space-2) 0; }
+.body-diagram-svg { width: 100%; max-width: 300px; height: auto; }
+.bd-band { stroke: var(--pink-deep); stroke-width: 2; stroke-dasharray: 3 3; opacity: 0.8; }
+.bd-lead { stroke: var(--ink-faint); stroke-width: 1; opacity: 0.5; }
+.bd-label { font-size: 9px; fill: var(--ink-soft); font-weight: 600; }
+.bd-value { font-size: 10px; fill: var(--pink-deep); font-weight: 800; }
+.bd-extra { display: flex; flex-wrap: wrap; gap: var(--space-1); justify-content: center; margin-top: var(--space-1); }
+.bd-extra-chip { font-size: 0.78rem; color: var(--ink-soft); background: var(--track); padding: 3px 9px; border-radius: var(--radius-round); }
+.measure-chart-svg { width: 100%; height: auto; display: block; margin: var(--space-2) 0; }

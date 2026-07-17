@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v55 · ١٧ يوليو ٢٠٢٦';
+const APP_VERSION = 'v56 · ١٧ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -490,6 +490,12 @@ const FOOD_TAG_CATEGORIES = [
     { key: 'veggies', label: 'خضار', icon: '🥦' },
     { key: 'flaxseed', label: 'بذر كتّان', icon: '🌱' },
     { key: 'oats', label: 'شوفان', icon: '🌾' }
+  ] },
+  { key: 'dietfood', label: 'طعام دايت', icon: '🥑', subs: [
+    { key: 'eggpudding', label: 'بودنغ البيض', icon: '🍮' },
+    { key: 'dietcake', label: 'كيك دايت', icon: '🍰' },
+    { key: 'flaxbread', label: 'خبز بذر الكتّان', icon: '🍞' },
+    { key: 'other', label: 'أخرى', icon: '🥄' }
   ] },
   { key: 'drink', label: 'مشروبات', icon: '🥤', subs: [
     { key: 'water', label: 'ماء', icon: '💧' },

@@ -24,7 +24,8 @@ function dietMetric(key) { return DIET_METRICS.find(m => m.key === key) || DIET_
 // A colour per food category, so the chart legend and the tag chips agree.
 const DIET_CAT_COLORS = {
   flour: '#D9A441', protein: 'var(--mint-deep)', starch: '#C99A5B',
-  sugar: 'var(--pink-deep)', fiber: '#6FB36F', drink: 'var(--info-strong)'
+  sugar: 'var(--pink-deep)', fiber: '#6FB36F', drink: 'var(--info-strong)',
+  dietfood: '#7BA05B'
 };
 
 // ---- what's plotted: a set of series keys ("metric:calories","cat:sugar") ----
@@ -44,12 +45,55 @@ async function getPrimaryDietMetric() {
 // Back-compat name used by the Body-page summary card.
 async function getDietMetricPref() { return getPrimaryDietMetric(); }
 
+// Derived timing series (computed from meal times, not a meal field).
+const DIET_TIMING = [
+  { key: 'timing:overnight', label: '🌙 صيام الليل', color: '#6C5CE7', unit: 'ساعة' },
+  { key: 'timing:gap', label: '⏳ الفجوة بين الوجبات', color: '#00B8A9', unit: 'ساعة' }
+];
+
 function allSeriesDefs() {
   const metrics = DIET_METRICS.map(m => ({ key: 'metric:' + m.key, label: m.label, color: m.color, kind: 'metric', metricKey: m.key, unit: m.unit }));
   const cats = FOOD_TAG_CATEGORIES.map(c => ({ key: 'cat:' + c.key, label: `${c.icon} ${c.label}`, color: DIET_CAT_COLORS[c.key] || 'var(--ink-soft)', kind: 'cat', catKey: c.key, unit: 'مرّة' }));
-  return [...metrics, ...cats];
+  const timing = DIET_TIMING.map(t => ({ key: t.key, label: t.label, color: t.color, kind: 'timing', unit: t.unit }));
+  return [...metrics, ...cats, ...timing];
 }
 function seriesDef(key) { return allSeriesDefs().find(s => s.key === key); }
+
+// minutes since midnight, or null
+function parseTimeToMin(timeStr) {
+  if (!timeStr || !/^\d{1,2}:\d{2}/.test(timeStr)) return null;
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 60 + m;
+}
+// Per-day timing from timed meals: the average gap between consecutive
+// meals that day, and the overnight fast (last meal today → first meal
+// tomorrow). Returns hours (nicer axis than minutes), or null when there
+// aren't enough timed meals to say anything.
+function computeMealTiming(foodLogs) {
+  const byDate = {};
+  foodLogs.forEach(l => {
+    const t = parseTimeToMin(l.time);
+    if (t == null) return;
+    (byDate[l.date] = byDate[l.date] || []).push(t);
+  });
+  Object.values(byDate).forEach(arr => arr.sort((a, b) => a - b));
+  const dates = Object.keys(byDate).sort();
+  const gap = {}, overnight = {};
+  dates.forEach(d => {
+    const times = byDate[d];
+    if (times.length >= 2) {
+      let sum = 0; for (let i = 1; i < times.length; i++) sum += times[i] - times[i - 1];
+      gap[d] = (sum / (times.length - 1)) / 60;
+    }
+    const next = addDays(d, 1);
+    if (byDate[next] && byDate[next].length) {
+      const lastTonight = times[times.length - 1];
+      const firstTomorrow = byDate[next][0];
+      overnight[d] = ((24 * 60 - lastTonight) + firstTomorrow) / 60;
+    }
+  });
+  return { gap, overnight };
+}
 
 // ---- daily assembly ----
 // date -> summed metric across that day's meals (only meals with the field).
@@ -76,16 +120,21 @@ async function getDietDays(rangeDays) {
 
   const metricMaps = {}; DIET_METRICS.forEach(m => { metricMaps[m.key] = dailyMetricMap(foodLogs, m.field); });
   const catMaps = {}; FOOD_TAG_CATEGORIES.forEach(c => { catMaps[c.key] = dailyCatCountMap(foodLogs, c.key); });
+  const timing = computeMealTiming(foodLogs);
 
   const start = rangeDays === 'all' ? null : addDays(todayStr(), -Number(rangeDays) + 1);
   const dates = new Set([...Object.keys(weightBy)]);
   Object.values(metricMaps).forEach(mm => Object.keys(mm).forEach(d => dates.add(d)));
   Object.values(catMaps).forEach(cm => Object.keys(cm).forEach(d => dates.add(d)));
+  Object.keys(timing.overnight).forEach(d => dates.add(d));
+  Object.keys(timing.gap).forEach(d => dates.add(d));
 
   return [...dates].filter(d => start === null || d >= start).sort().map(date => {
     const row = { date, weight: weightBy[date] ?? null, series: {} };
     DIET_METRICS.forEach(m => { row.series['metric:' + m.key] = metricMaps[m.key][date] ?? 0; });
     FOOD_TAG_CATEGORIES.forEach(c => { row.series['cat:' + c.key] = catMaps[c.key][date] ?? 0; });
+    row.series['timing:overnight'] = timing.overnight[date] ?? 0;
+    row.series['timing:gap'] = timing.gap[date] ?? 0;
     return row;
   });
 }
@@ -173,6 +222,82 @@ async function analyzeDiet(rangeDays, metricKey) {
   const flaggedGain = stats.filter(s => s.presentRateGain - s.presentRateLoss > 0.25).sort((a, b) => (b.presentRateGain - b.presentRateLoss) - (a.presentRateGain - a.presentRateLoss)).slice(0, 3);
 
   return { enough: true, totalDelta, spanDays, metric: m, intakeSignal, raise, lower, flaggedGain, tagStats: stats, intervals: intervals.length, gaining, losing };
+}
+
+// Split a set of {metric, perDay} pairs into the high-metric half and the
+// low-metric half, and report each half's average weight change — the
+// generic "does more of X coincide with gaining or losing" test.
+function splitByMetric(pairs) {
+  const clean = pairs.filter(p => p.metric != null && isFinite(p.metric));
+  if (clean.length < 4) return null;
+  const sorted = [...clean].sort((a, b) => a.metric - b.metric);
+  const half = Math.floor(sorted.length / 2);
+  const low = sorted.slice(0, half), high = sorted.slice(-half);
+  return {
+    lowPerDay: low.reduce((s, x) => s + x.perDay, 0) / low.length,
+    highPerDay: high.reduce((s, x) => s + x.perDay, 0) / high.length,
+    lowMetric: low.reduce((s, x) => s + x.metric, 0) / low.length,
+    highMetric: high.reduce((s, x) => s + x.metric, 0) / high.length,
+    n: clean.length
+  };
+}
+
+// Overnight-fast and meal-gap vs weight. For each weight interval, average
+// the timing over its days, then compare the longer-fast half against the
+// shorter — a clean read on whether a bigger eating window rides along
+// with the scale moving.
+async function analyzeMealTiming(rangeDays) {
+  const [weightLogs, foodLogs] = await Promise.all([getAllWeightLogs(), db.foodLogs.toArray()]);
+  const start = rangeDays === 'all' ? '0000-00-00' : addDays(todayStr(), -Number(rangeDays) + 1);
+  const weights = weightLogs.filter(w => w.date >= start);
+  if (weights.length < 2) return { enough: false };
+  const timing = computeMealTiming(foodLogs);
+  const intervals = buildReadingIntervals(weights, foodLogs);
+
+  const avgOver = (map, a, b) => {
+    const vals = Object.keys(map).filter(d => d >= a && d < b).map(d => map[d]);
+    return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+  };
+  const overnightPairs = intervals.map(iv => ({ metric: avgOver(timing.overnight, iv.startDate, iv.endDate), perDay: iv.perDay }));
+  const gapPairs = intervals.map(iv => ({ metric: avgOver(timing.gap, iv.startDate, iv.endDate), perDay: iv.perDay }));
+
+  const allOver = Object.values(timing.overnight);
+  const allGap = Object.values(timing.gap);
+  return {
+    enough: true,
+    overnight: splitByMetric(overnightPairs),
+    gap: splitByMetric(gapPairs),
+    avgOvernight: allOver.length ? allOver.reduce((s, v) => s + v, 0) / allOver.length : null,
+    avgGap: allGap.length ? allGap.reduce((s, v) => s + v, 0) / allGap.length : null
+  };
+}
+
+// "Which meal, when skipped, tends to accompany weight going down?" For
+// each interval and meal type: skip-rate = share of her LOGGING days in
+// that interval with no meal of that type. Then split high-skip vs
+// low-skip intervals and compare weight change.
+async function analyzeMealTypeSkips(rangeDays) {
+  const [weightLogs, foodLogs] = await Promise.all([getAllWeightLogs(), db.foodLogs.toArray()]);
+  const start = rangeDays === 'all' ? '0000-00-00' : addDays(todayStr(), -Number(rangeDays) + 1);
+  const weights = weightLogs.filter(w => w.date >= start);
+  if (weights.length < 2) return { enough: false, rows: [] };
+  const intervals = buildReadingIntervals(weights, foodLogs);
+
+  const rows = [];
+  for (const mt of MEAL_TYPES) {
+    const pairs = intervals.map(iv => {
+      const loggingDays = new Set(iv.meals.map(m => m.date));
+      if (loggingDays.size === 0) return null;
+      const daysWithType = new Set(iv.meals.filter(m => m.mealType === mt.key).map(m => m.date));
+      const skipRate = 1 - (daysWithType.size / loggingDays.size);
+      return { metric: skipRate, perDay: iv.perDay };
+    }).filter(Boolean);
+    const split = splitByMetric(pairs);
+    if (!split) continue;
+    rows.push({ mealType: mt, skipEffect: split.highPerDay - split.lowPerDay, highSkipPerDay: split.highPerDay, highSkipRate: split.highMetric });
+  }
+  rows.sort((a, b) => a.skipEffect - b.skipEffect); // most weight-lowering skip first
+  return { enough: true, rows };
 }
 
 // ============================================================
@@ -331,9 +456,12 @@ async function renderDietPage(params, view) {
         <div class="diet-series-chips" id="diet-metric-series"></div>
         <p class="material-type-label">أنواع الطعام</p>
         <div class="diet-series-chips" id="diet-cat-series"></div>
+        <p class="material-type-label">التوقيت</p>
+        <div class="diet-series-chips" id="diet-timing-series"></div>
       </details>
     </div>
     <div class="card" id="diet-insights-card"></div>
+    <div class="card" id="diet-timing-card" style="display:none"></div>
     <div class="card" id="diet-measure-card"></div>
     <div class="card">
       <p class="settings-note">لإضافة مكوّنات الوجبة أو ماكروزها: افتحي أي وجبة في صفحة الطعام.</p>
@@ -351,6 +479,9 @@ async function renderDietPage(params, view) {
     metricWrap.innerHTML = defs.filter(d => d.kind === 'metric').map(d =>
       `<button class="chip diet-series-chip ${selected.includes(d.key) ? 'active' : ''}" data-skey="${d.key}"><i class="diet-chip-swatch" style="background:${d.color}"></i>${d.label}</button>`).join('');
     catWrap.innerHTML = defs.filter(d => d.kind === 'cat').map(d =>
+      `<button class="chip diet-series-chip ${selected.includes(d.key) ? 'active' : ''}" data-skey="${d.key}"><i class="diet-chip-swatch" style="background:${d.color}"></i>${d.label}</button>`).join('');
+    const timeWrap = document.getElementById('diet-timing-series');
+    timeWrap.innerHTML = defs.filter(d => d.kind === 'timing').map(d =>
       `<button class="chip diet-series-chip ${selected.includes(d.key) ? 'active' : ''}" data-skey="${d.key}"><i class="diet-chip-swatch" style="background:${d.color}"></i>${d.label}</button>`).join('');
     view.querySelectorAll('.diet-series-chip').forEach(chip => {
       chip.addEventListener('click', async () => {
@@ -385,6 +516,7 @@ async function renderDietPage(params, view) {
       </div>`;
     await drawChart();
     await renderDietInsights(document.getElementById('diet-insights-card'), range);
+    await renderTimingInsights(document.getElementById('diet-timing-card'), range);
     await renderMeasureFoodCard(document.getElementById('diet-measure-card'), range);
   }
 
@@ -436,6 +568,64 @@ async function renderDietInsights(container, range) {
     ${a.lower.length ? `<h3 class="diet-sub-title">🌿 ترافقت مع نزول وزنك — زيديها</h3>${list(a.lower, 'good')}` : ''}
     ${(!a.raise.length && !a.lower.length) ? `<p class="settings-note">لم تظهر أنماط واضحة بعد — أضيفي مكوّنات وجباتك (بروتين، سكريات، ألياف…) وكرّري التسجيل ليتّضح التحليل.</p>` : ''}
     <p class="settings-note diet-caveat">⚠️ هذه ارتباطات إحصائية من قياساتك، لا إثبات أن طعاماً بعينه سبّب التغيّر.</p>`;
+}
+
+// ---- meal-timing & skip insights ----
+async function renderTimingInsights(container, range) {
+  const [t, skips] = await Promise.all([analyzeMealTiming(range), analyzeMealTypeSkips(range)]);
+  if (!t.enough) { container.innerHTML = ''; container.style.display = 'none'; return; }
+  container.style.display = '';
+
+  const hrs = (v) => `${toArabicNumeral(v.toFixed(1))} ساعة`;
+  const effect = (perDay) => `${perDay < 0 ? '↓' : '↑'} ${toArabicNumeral(Math.abs(perDay * 7).toFixed(2))} كغ/أسبوع`;
+
+  let overnightLine = '';
+  if (t.overnight) {
+    const o = t.overnight; const longerHelps = o.highPerDay < o.lowPerDay;
+    overnightLine = `<div class="diet-timing-row">
+      <span class="diet-timing-icon">🌙</span>
+      <div class="diet-timing-body">
+        <span class="diet-timing-title">صيام الليل ${t.avgOvernight != null ? '· متوسط ' + hrs(t.avgOvernight) : ''}</span>
+        <span class="diet-insight diet-insight-${longerHelps ? 'good' : 'warn'}">حين يطول صيامك الليلي (~${hrs(o.highMetric)}) ${longerHelps ? 'يميل وزنك للنزول' : 'يميل وزنك للصعود'} مقارنةً بالليالي الأقصر (~${hrs(o.lowMetric)}).</span>
+        ${longerHelps ? '<span class="diet-tip">💡 جرّبي تقديم العشاء أو تأخير الفطور قليلاً.</span>' : ''}
+      </div></div>`;
+  }
+
+  let gapLine = '';
+  if (t.gap) {
+    const g = t.gap; const widerHelps = g.highPerDay < g.lowPerDay;
+    gapLine = `<div class="diet-timing-row">
+      <span class="diet-timing-icon">⏳</span>
+      <div class="diet-timing-body">
+        <span class="diet-timing-title">الفجوة بين الوجبات ${t.avgGap != null ? '· متوسط ' + hrs(t.avgGap) : ''}</span>
+        <span class="diet-insight diet-insight-${widerHelps ? 'good' : 'warn'}">حين تتباعد وجباتك (~${hrs(g.highMetric)} بينها) ${widerHelps ? 'يميل وزنك للنزول' : 'يميل وزنك للصعود'}.</span>
+      </div></div>`;
+  }
+
+  let skipLine = '';
+  if (skips.enough && skips.rows.length) {
+    const best = skips.rows[0];
+    if (best.skipEffect < -0.003) {
+      skipLine = `<div class="diet-timing-row">
+        <span class="diet-timing-icon">${best.mealType.icon}</span>
+        <div class="diet-timing-body">
+          <span class="diet-timing-title">تخطّي الوجبات</span>
+          <span class="diet-insight diet-insight-good">في الفترات التي تخطّيتِ فيها <strong>${best.mealType.label}</strong> أكثر، مال وزنك للنزول (${effect(best.highSkipPerDay)}).</span>
+          <span class="diet-tip">💡 ليست دعوةً لتفويت الوجبات — مجرّد ملاحظة من بياناتك. الأهم انتظام غذائك.</span>
+        </div></div>`;
+    } else {
+      skipLine = `<div class="diet-timing-row"><span class="diet-timing-icon">🍽️</span><div class="diet-timing-body"><span class="diet-timing-title">تخطّي الوجبات</span><span class="settings-note">لا يظهر أن تخطّي وجبة معيّنة يرتبط بنزول واضح — انتظامك جيّد.</span></div></div>`;
+    }
+  }
+
+  if (!overnightLine && !gapLine && !skipLine) {
+    container.innerHTML = `<h2 class="card-title">⏱️ التوقيت والوزن</h2><p class="settings-note">أضيفي وقت وجباتك (في نافذة الوجبة) عبر عدّة أيام، وسأربط توقيت أكلك وصيام ليلك بوزنك.</p>`;
+    return;
+  }
+  container.innerHTML = `
+    <h2 class="card-title">⏱️ التوقيت والوزن</h2>
+    ${overnightLine}${gapLine}${skipLine}
+    <p class="settings-note diet-caveat">⚠️ ارتباطات من قياساتك، تتأثّر بالماء والنوم وأمور أخرى.</p>`;
 }
 
 // ---- measurements-vs-food card ----

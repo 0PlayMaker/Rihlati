@@ -495,6 +495,118 @@ function measurementDeltaPill(d) {
   </span>`;
 }
 
+// Map a free-text measurement name to a body zone by keyword, so "خصر"
+// and "محيط البطن" both land on the waist of the diagram. First match
+// wins; anything unmatched is listed under the figure instead.
+const BODY_ZONES = [
+  { key: 'neck',     y: 66,  x1: 108, x2: 132, side: 'right', kws: ['رقبة', 'عنق'] },
+  { key: 'chest',    y: 108, x1: 80,  x2: 160, side: 'left',  kws: ['صدر', 'بست', 'bust', 'أكتاف', 'كتف'] },
+  { key: 'arm',      y: 138, x1: 162, x2: 188, side: 'right', kws: ['ذراع', 'عضد', 'ساعد', 'باي'] },
+  { key: 'waist',    y: 150, x1: 90,  x2: 150, side: 'right', kws: ['خصر', 'بطن', 'وسط', 'كرش'] },
+  { key: 'hips',     y: 192, x1: 78,  x2: 162, side: 'left',  kws: ['ورك', 'أرداف', 'حوض', 'ردف', 'مؤخرة'] },
+  { key: 'thigh',    y: 250, x1: 88,  x2: 152, side: 'right', kws: ['فخذ', 'فخد'] },
+  { key: 'calf',     y: 358, x1: 90,  x2: 150, side: 'left',  kws: ['ساق', 'سمانة', 'بطة', 'ربلة'] }
+];
+function matchBodyZone(name) {
+  const n = (name || '').toLowerCase();
+  for (const z of BODY_ZONES) if (z.kws.some(k => n.includes(k))) return z.key;
+  return null;
+}
+
+// A stylized figure with each tracked measurement drawn as a band across
+// the body at its zone, its latest value called out to the side. Gives
+// her the "see it on a body" view; measurements that don't map to a zone
+// (or share one) are listed below so nothing is hidden.
+async function renderBodyDiagram(container) {
+  if (!container) return;
+  const items = await getActiveMeasurements();
+  if (items.length === 0) { container.innerHTML = ''; container.style.display = 'none'; return; }
+  container.style.display = '';
+
+  const placed = {}; const unplaced = [];
+  for (const m of items) {
+    const latest = await getMeasurementLatest(m.id);
+    const zone = matchBodyZone(m.name);
+    if (zone && !placed[zone]) placed[zone] = { m, latest };
+    else unplaced.push({ m, latest });
+  }
+
+  const skin = 'var(--lavender-deep)';
+  const bands = BODY_ZONES.filter(z => placed[z.key]).map(z => {
+    const { m, latest } = placed[z.key];
+    const val = latest ? `${toArabicNumeral(latest.value)}` : '—';
+    const labelX = z.side === 'right' ? 210 : 30;
+    const anchorX = z.side === 'right' ? z.x2 : z.x1;
+    const textAnchor = z.side === 'right' ? 'start' : 'end';
+    return `
+      <line x1="${z.x1}" y1="${z.y}" x2="${z.x2}" y2="${z.y}" class="bd-band"/>
+      <line x1="${anchorX}" y1="${z.y}" x2="${labelX}" y2="${z.y}" class="bd-lead"/>
+      <text x="${labelX}" y="${z.y - 4}" text-anchor="${textAnchor}" class="bd-label">${escapeHtml(m.name)}</text>
+      <text x="${labelX}" y="${z.y + 12}" text-anchor="${textAnchor}" class="bd-value">${val} سم</text>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="body-diagram">
+      <svg viewBox="0 0 240 460" class="body-diagram-svg">
+        <g fill="${skin}" opacity="0.9">
+          <circle cx="120" cy="42" r="22"/>
+          <rect x="111" y="60" width="18" height="15" rx="7"/>
+          <rect x="74" y="72" width="92" height="30" rx="15"/>
+          <rect x="57" y="80" width="18" height="122" rx="9"/>
+          <rect x="165" y="80" width="18" height="122" rx="9"/>
+          <rect x="88" y="96" width="64" height="94" rx="22"/>
+          <rect x="79" y="168" width="82" height="52" rx="24"/>
+          <rect x="91" y="205" width="25" height="212" rx="12"/>
+          <rect x="124" y="205" width="25" height="212" rx="12"/>
+        </g>
+        ${bands}
+      </svg>
+    </div>
+    ${unplaced.length ? `<div class="bd-extra">${unplaced.map(u => `<span class="bd-extra-chip">${escapeHtml(u.m.name)}: <strong>${u.latest ? toArabicNumeral(u.latest.value) + ' سم' : '—'}</strong></span>`).join('')}</div>` : ''}`;
+}
+
+// One measurement over time as the bold line, with weight overlaid (thin,
+// normalised to its own range) so she can see them move together.
+async function renderMeasurementChart(container, measurementId, rangeDays) {
+  if (!container) return;
+  const start = rangeDays === 'all' ? '0000-00-00' : addDays(todayStr(), -Number(rangeDays) + 1);
+  const [mLogsRaw, wLogsRaw] = await Promise.all([getMeasurementLogs(measurementId), getAllWeightLogs()]);
+  const mLogs = mLogsRaw.filter(l => l.date >= start).sort((a, b) => a.date.localeCompare(b.date));
+  if (mLogs.length < 2) { container.innerHTML = '<p class="empty-state-sub">سجّلي قياسين على الأقل لرؤية الرسم.</p>'; return; }
+  const wLogs = wLogsRaw.filter(l => l.date >= start).sort((a, b) => a.date.localeCompare(b.date));
+
+  const width = 320, height = 160, padL = 30, padR = 12, padT = 12, padB = 20;
+  const plotW = width - padL - padR, plotH = height - padT - padB;
+  const allDates = [...new Set([...mLogs.map(l => l.date), ...wLogs.map(l => l.date)])].sort();
+  const xOf = (date) => padL + (allDates.length === 1 ? plotW / 2 : (allDates.indexOf(date) / (allDates.length - 1)) * plotW);
+
+  const mv = mLogs.map(l => l.value);
+  let mMin = Math.min(...mv), mMax = Math.max(...mv); if (mMin === mMax) { mMin -= 1; mMax += 1; }
+  const mpad = (mMax - mMin) * 0.2; mMin -= mpad; mMax += mpad;
+  const mY = (v) => padT + plotH - ((v - mMin) / (mMax - mMin)) * plotH;
+  const mCoords = mLogs.map(l => [xOf(l.date), mY(l.value)]);
+  const mPath = smoothPath(mCoords);
+  const mDots = mLogs.map(l => `<circle cx="${xOf(l.date).toFixed(1)}" cy="${mY(l.value).toFixed(1)}" r="3" fill="var(--pink-deep)"/>`).join('');
+
+  let weightPath = '';
+  if (wLogs.length >= 2) {
+    const wv = wLogs.map(l => l.value);
+    let wMin = Math.min(...wv), wMax = Math.max(...wv); if (wMin === wMax) { wMin -= 1; wMax += 1; }
+    const wY = (v) => padT + plotH - ((v - wMin) / (wMax - wMin)) * plotH * 0.9 - plotH * 0.05;
+    const wCoords = wLogs.map(l => [xOf(l.date), wY(l.value)]);
+    weightPath = `<path d="${smoothPath(wCoords)}" fill="none" stroke="var(--info-strong)" stroke-width="1.6" stroke-opacity="0.8"/>`;
+  }
+  const yLabels = [mMax - mpad, mMin + mpad].map(v => `<text x="${padL - 4}" y="${(mY(v) + 3).toFixed(1)}" class="chart-axis-label" text-anchor="end">${toArabicNumeral(v.toFixed(0))}</text>`).join('');
+
+  container.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" class="measure-chart-svg">
+      ${weightPath}
+      <path d="${mPath}" fill="none" stroke="var(--pink-deep)" stroke-width="2.4"/>
+      ${mDots}${yLabels}
+    </svg>
+    <div class="diet-legend"><span class="diet-leg"><i class="diet-leg-swatch" style="background:var(--pink-deep)"></i> القياس</span>${wLogs.length >= 2 ? '<span class="diet-leg"><i class="diet-leg-swatch" style="background:var(--info-strong)"></i> الوزن</span>' : ''}</div>`;
+}
+
 async function renderMeasurementsList(container) {
   const items = await getActiveMeasurements();
   if (items.length === 0) {
@@ -555,6 +667,7 @@ function openMeasurementDetailModal(measurement, onDone) {
     <div class="modal modal-lg">
       <h2 class="modal-title">${escapeHtml(measurement.name)}</h2>
       <div id="measure-summary"></div>
+      <div id="measure-chart"></div>
 
       <label class="field-label">قياس جديد (سم)</label>
       <div class="theme-accent-row">
@@ -597,6 +710,8 @@ function openMeasurementDetailModal(measurement, onDone) {
           <button class="reading-delete" data-log-id="${l.id}" aria-label="حذف">✕</button>
         </div>`).join('')
       : '';
+
+    await renderMeasurementChart(document.getElementById('measure-chart'), measurement.id, 'all');
 
     document.querySelectorAll('#measure-history .reading-delete').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -692,6 +807,7 @@ async function renderBodyPage(params, view) {
     <div class="card" id="bmi-card"></div>
     <div class="card">
       <h2 class="card-title">قياسات الجسم (اختياري)</h2>
+      <div id="body-diagram-card" style="display:none"></div>
       <div id="measurements-list"></div>
       <button class="btn btn-secondary btn-block" id="add-measurement-btn">+ قياس جديد</button>
     </div>
@@ -779,9 +895,11 @@ async function renderBodyPage(params, view) {
   await refreshWeight();
 
   const measurementsListEl = document.getElementById('measurements-list');
-  await renderMeasurementsList(measurementsListEl);
+  const diagramEl = document.getElementById('body-diagram-card');
+  const refreshMeasures = async () => { await renderMeasurementsList(measurementsListEl); await renderBodyDiagram(diagramEl); };
+  await refreshMeasures();
   document.getElementById('add-measurement-btn').addEventListener('click', () => {
-    openAddMeasurementModal(() => renderMeasurementsList(measurementsListEl));
+    openAddMeasurementModal(refreshMeasures);
   });
 
   await renderMoodWidget(document.getElementById('body-mood-widget'), todayStr());

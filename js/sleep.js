@@ -17,7 +17,7 @@ function formatTimeArabic12h(timeStr) {
   const [h, m] = timeStr.split(':').map(Number);
   const period = h >= 12 ? 'مساءً' : 'صباحاً';
   const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+  return `${toArabicNumeral(h12)}:${toArabicNumeral(String(m).padStart(2, '0'))} ${period}`;
 }
 
 function formatSleepDuration(minutes) {

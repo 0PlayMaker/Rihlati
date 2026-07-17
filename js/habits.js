@@ -258,9 +258,9 @@ function formatHabitClock(elapsedMs) {
   const hours = Math.floor((totalMinutes % 1440) / 60);
   const minutes = totalMinutes % 60;
   const parts = [];
-  if (days > 0) parts.push(`${days} ${days === 1 ? 'يوم' : 'أيام'}`);
-  parts.push(`${hours} ${hours === 1 ? 'ساعة' : 'ساعات'}`);
-  parts.push(`${minutes} ${minutes === 1 ? 'دقيقة' : 'دقائق'}`);
+  if (days > 0) parts.push(`${toArabicNumeral(days)} ${days === 1 ? 'يوم' : 'أيام'}`);
+  parts.push(`${toArabicNumeral(hours)} ${hours === 1 ? 'ساعة' : 'ساعات'}`);
+  parts.push(`${toArabicNumeral(minutes)} ${minutes === 1 ? 'دقيقة' : 'دقائق'}`);
   return parts.join(' ، ');
 }
 
