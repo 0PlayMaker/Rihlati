@@ -99,12 +99,17 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
   let phase = 'chew';
   let bites = 0;
   const biteChewMs = [];      // how long each bite was ACTUALLY chewed
-  let chewPhaseStartedAt = Date.now();
+  let chewPhaseStartedAt = 0;
   let intervalId = null;
   let chewTickTimer = null;
-  let phaseEndsAt = Date.now() + chewSeconds * 1000;
-  const mealStartedAt = Date.now();
-  const mealEndsAt = mealStartedAt + mealMinutes * 60 * 1000;
+  let phaseEndsAt = 0;
+  // The meal clock does NOT start on open — she taps ابدئي first, when the
+  // food is actually in front of her. Timing a meal that hasn't begun is
+  // how you get a "twenty-minute meal" she spent finding a fork. These are
+  // set the instant beginEating() runs.
+  let mealStartedAt = 0;
+  let mealEndsAt = 0;
+  let started = false;
   let finished = false;
 
   const RING_R = 96;
@@ -150,6 +155,7 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
 
       <div class="chew-meal-track"><div class="chew-meal-fill" id="chew-meal-fill"></div></div>
 
+      <button class="btn btn-primary btn-block chew-start-eating-btn" id="chew-start-eating">▶️ ابدئي الأكل</button>
       <button class="btn btn-primary btn-block chew-swallow-btn" id="chew-swallowed">🫗 بلعت</button>
       <p class="chew-swallow-hint">اضغطي حين تبلعين فعلاً — المؤقّت اقتراح، وفمك هو الحقيقة</p>
 
@@ -276,6 +282,15 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
     stopChewTicks();
     if (intervalId) { clearInterval(intervalId); intervalId = null; }
 
+    // She opened the pacer but never tapped ابدئي — there's no meal to
+    // record, so just close (mealStartedAt is 0 here, which would
+    // otherwise log a session millions of seconds long).
+    if (!started) {
+      overlay.remove();
+      if (onFinished) onFinished({ bites: 0, actualSeconds: 0, completed: false, notStarted: true });
+      return;
+    }
+
     const actualSeconds = Math.round((Date.now() - mealStartedAt) / 1000);
     setPhaseClass('done');
     blob.classList.remove('chewing', 'swallowing', 'resting');
@@ -313,17 +328,33 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
   });
   overlay.querySelector('#chew-swallowed').addEventListener('click', () => {
     // Only meaningful mid-chew; during rest/swallow it's a no-op.
-    if (phase !== 'chew') return;
+    if (!started || phase !== 'chew') return;
     enterPhase('swallow');
   });
-  overlay.querySelector('#chew-finish').addEventListener('click', () => finish(false));
+  overlay.querySelector('#chew-finish').addEventListener('click', () => finish(started));
   overlay.querySelector('#chew-close').addEventListener('click', () => finish(false));
 
-  // Audio must be unlocked inside the real tap that opened this.
-  unlockAudioContext();
-  enterPhase('chew');
-  intervalId = setInterval(tick, 200);
-  tick();
+  // The one motion that starts the meal: the pacer waits in a "ready"
+  // state, styled the same as the بلعت button she'll be tapping, and only
+  // begins timing when she's actually about to eat.
+  function beginEating() {
+    if (started || finished) return;
+    started = true;
+    screen.classList.remove('chew-ready');
+    unlockAudioContext(); // must be inside this real tap
+    mealStartedAt = Date.now();
+    mealEndsAt = mealStartedAt + mealMinutes * 60 * 1000;
+    enterPhase('chew');
+    intervalId = setInterval(tick, 200);
+    tick();
+  }
+  overlay.querySelector('#chew-start-eating').addEventListener('click', beginEating);
+
+  // Open in the ready state — nothing timing yet.
+  screen.classList.add('chew-ready');
+  phaseEl.textContent = 'جاهزة؟';
+  hintEl.textContent = 'اضغطي «ابدئي» حين تجلسين لتأكلي';
+  countEl.textContent = '';
 
   // The pacer must never outlive the page.
   registerCleanup(() => {
@@ -468,10 +499,91 @@ async function openChewSetupModal(onDone) {
     openChewingPacer({
       foodLog, chewSeconds, restSeconds, mealMinutes, soundOn: s.soundOn,
       onFinished: (result) => {
+        if (result.notStarted) { if (onDone) onDone(); return; }
         toast(result.completed
           ? `🌿 أنهيتِ وجبتك بـ ${toArabicNumeral(result.bites)} لقمة`
           : `تم الحفظ · ${toArabicNumeral(result.bites)} لقمة`);
         if (onDone) onDone();
+      }
+    });
+  });
+}
+
+// ============================================================
+//  Per-meal chew stats sheet
+// ============================================================
+// Tapping the 🌿 on a meal that's already been paced shows THAT meal's
+// numbers — how long it took, how many bites, how much of the asked
+// chew time it actually got — next to the overall averages for context,
+// so a single meal reads as "faster/slower than usual" rather than a
+// bare number. A re-pace button is right there if she wants to run it
+// again.
+async function openChewMealStatsSheet(foodLog, onChange) {
+  const session = await getChewSessionForMeal(foodLog.id);
+  const perf = await getChewPerformance();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  if (!session) {
+    overlay.innerHTML = `
+      <div class="modal">
+        <h2 class="modal-title">${mealTypeIcon(foodLog.mealType)} ${escapeHtml(foodLog.notes || foodLog.mealName || mealTypeLabel(foodLog.mealType))}</h2>
+        <p class="settings-note">لم تمضغي هذه الوجبة بعد.</p>
+        <div class="modal-actions">
+          <button class="btn btn-text" id="chew-stats-close">إغلاق</button>
+          <button class="btn btn-primary" id="chew-stats-pace">🌿 ابدئي المضغ</button>
+        </div>
+      </div>`;
+  } else {
+    const adh = chewAdherence(session);
+    const overallAvgSec = perf?.avgSec ?? null;
+    const vsAvg = (overallAvgSec && session.actualSeconds)
+      ? (session.actualSeconds >= overallAvgSec ? `أبطأ من متوسطك بـ ${formatChewDuration(session.actualSeconds - overallAvgSec)} 🌿` : `أسرع من متوسطك بـ ${formatChewDuration(overallAvgSec - session.actualSeconds)}`)
+      : '';
+    overlay.innerHTML = `
+      <div class="modal modal-lg">
+        <h2 class="modal-title">${session.completed ? '🌿' : '⏸️'} ${escapeHtml(foodLog.notes || foodLog.mealName || mealTypeLabel(foodLog.mealType))}</h2>
+        <p class="settings-note">${mealTypeLabel(foodLog.mealType)}${foodLog.time ? ' · ' + foodLog.time : ''}</p>
+
+        <div class="chew-stat-row">
+          <div class="chew-stat"><span class="chew-stat-num">${toArabicNumeral(session.bites)}</span><span class="chew-stat-label">لقمة</span></div>
+          <div class="chew-stat"><span class="chew-stat-num">${formatChewDuration(session.actualSeconds)}</span><span class="chew-stat-label">مدّة الأكل</span></div>
+          <div class="chew-stat"><span class="chew-stat-num">${adh != null ? toArabicNumeral(Math.round(adh * 100)) + '٪' : '—'}</span><span class="chew-stat-label">نسبة المضغ</span></div>
+          <div class="chew-stat"><span class="chew-stat-num">${session.completed ? '✓' : '½'}</span><span class="chew-stat-label">${session.completed ? 'مكتملة' : 'غير مكتملة'}</span></div>
+        </div>
+
+        ${adh != null ? `
+          <div class="chew-adherence">
+            <div class="mini-progress-track"><div class="mini-progress-fill ${adh >= 0.9 ? 'chew-adherence-good' : ''}" style="width:${Math.min(100, adh * 100)}%"></div></div>
+            <span class="mini-progress-text">مضغتِ ${toArabicNumeral(Math.round(adh * 100))}٪ من المدّة المطلوبة (${toArabicNumeral(session.chewSeconds)} ث لكل لقمة)</span>
+          </div>` : ''}
+        ${vsAvg ? `<p class="chew-tip chew-tip-neutral">${vsAvg}</p>` : ''}
+
+        <details class="chew-meal-stats-overall">
+          <summary>إحصاءات المضغ العامة</summary>
+          <div class="yearly-row"><span>عدد الجلسات</span><span>${toArabicNumeral(perf.sessions)}</span></div>
+          <div class="yearly-row"><span>متوسط مدّة الوجبة</span><span>${formatChewDuration(perf.avgSec)}</span></div>
+          ${perf.avgAdherence != null ? `<div class="yearly-row"><span>متوسط نسبة المضغ</span><span>${toArabicNumeral(Math.round(perf.avgAdherence * 100))}٪</span></div>` : ''}
+          <div class="yearly-row"><span>الوجبات المكتملة</span><span>${toArabicNumeral(Math.round(perf.completedRate * 100))}٪</span></div>
+        </details>
+
+        <div class="modal-actions">
+          <button class="btn btn-text" id="chew-stats-close">إغلاق</button>
+          <button class="btn btn-secondary" id="chew-stats-pace">🌿 إعادة المضغ</button>
+        </div>
+      </div>`;
+  }
+  document.body.appendChild(overlay);
+  document.getElementById('chew-stats-close').addEventListener('click', () => overlay.remove());
+  document.getElementById('chew-stats-pace').addEventListener('click', async () => {
+    overlay.remove();
+    const cs = await getChewSettings();
+    openChewingPacer({
+      foodLog, chewSeconds: cs.chewSeconds, restSeconds: cs.restSeconds, mealMinutes: cs.mealMinutes, soundOn: cs.soundOn,
+      onFinished: (r) => {
+        if (r.notStarted) { if (onChange) onChange(); return; }
+        toast(r.completed ? `🌿 ${toArabicNumeral(r.bites)} لقمة` : 'تم الحفظ');
+        if (onChange) onChange();
       }
     });
   });

@@ -15,7 +15,7 @@ const SIMPLE_TABLES = [
   'prayerLogs', 'sunnahLogs', 'adhkarAfterLogs', 'dailyAdhkarLogs', 'customAdhkar', 'customAdhkarLogs',
   'moodLogs', 'periodLogs', 'periodReadings', 'foodLogs', 'chewSessions', 'customReminders', 'waterLogs', 'weightLogs', 'bodyMeasurements', 'bodyMeasurementLogs',
   'goals', 'diaryEntries',
-  'economyTransactions', 'shoppingLists', 'shoppingListItems',
+  'economyTransactions', 'economyAccounts', 'shoppingLists', 'shoppingListItems',
   'edibles', 'edibleWishlist', 'things', 'thingsWishlist',
   'recipes', 'exercises', 'exerciseLogs', 'standaloneSunnahLogs', 'wirdSettings', 'wirdLogs',
   'courses', 'courseTodos', 'studySessions', 'courseMaterials', 'dailyAdhkarItems', 'dailyAdhkarItemLogs', 'sleepLogs', 'qadaPrayers', 'qadaFasting', 'habitEvents', 'dailyCareRoutines', 'dailyCareLogs'

@@ -14,16 +14,17 @@ function getHabitType(habit) {
   return habit.type === 'bad' ? 'bad' : 'good';
 }
 
-async function createHabit(name, emoji, type) {
+async function createHabit(name, emoji, type, dayGoal = null) {
   const all = await db.habits.toArray();
   const color = HABIT_COLORS[all.length % HABIT_COLORS.length];
   return db.habits.add({
     name, emoji: emoji || '🌟', color, type: type === 'bad' ? 'bad' : 'good',
+    dayGoal: dayGoal ?? null,
     archived: false, order: all.length, createdAt: Date.now()
   });
 }
-async function updateHabit(id, { name, emoji, type }) {
-  await db.habits.update(id, { name, emoji: emoji || '🌟', type: type === 'bad' ? 'bad' : 'good' });
+async function updateHabit(id, { name, emoji, type, dayGoal }) {
+  await db.habits.update(id, { name, emoji: emoji || '🌟', type: type === 'bad' ? 'bad' : 'good', dayGoal: dayGoal ?? null });
 }
 
 async function getActiveHabits() {
@@ -283,6 +284,48 @@ async function getHabitsRingData() {
 
 // ---------- rendering ----------
 
+// ---------- day-goal progress (e.g. "٩٠ يوم بدون سكّر") ----------
+// She sets a target number of clean days; the tracker on the card is
+// literally DIVIDED into that many segments, one per day, filling up as
+// the days pass. A mishap doesn't touch this (it never touched the
+// clock either) — only an انتكاسة resets it, because the day count is
+// derived from the very same clock reference the relapse resets. So
+// "divided per day, mishap counts but doesn't reset, انتكاسة zeroes it"
+// all falls out of the existing clock model for free.
+//
+// Individual pips are drawn up to a cap (a 90-day goal as 90 pips is
+// motivating; a 3000-day goal as 3000 pips is not) — past the cap it
+// falls back to a proportional bar so it still reads at a glance.
+const HABIT_DAYGOAL_PIP_CAP = 100;
+
+function habitDayGoalHtml(habit, dayCount) {
+  const goal = habit.dayGoal;
+  if (!goal || goal < 1) return '';
+  const done = Math.max(0, Math.min(goal, dayCount)); // completed days
+  const reached = dayCount >= goal;
+  const pct = Math.round((done / goal) * 100);
+  const dayNumber = Math.min(goal, dayCount + 1); // the day she's currently on
+
+  let track;
+  if (goal <= HABIT_DAYGOAL_PIP_CAP) {
+    const pips = Array.from({ length: goal }, (_, i) =>
+      `<span class="habit-daygoal-pip ${i < done ? 'habit-daygoal-pip-on' : ''} ${i === done && !reached ? 'habit-daygoal-pip-today' : ''}"></span>`
+    ).join('');
+    track = `<div class="habit-daygoal-pips">${pips}</div>`;
+  } else {
+    track = `<div class="habit-daygoal-bar"><div class="habit-daygoal-fill" style="width:${pct}%"></div></div>`;
+  }
+
+  return `
+    <div class="habit-daygoal ${reached ? 'habit-daygoal-reached' : ''}">
+      <div class="habit-daygoal-head">
+        <span class="habit-daygoal-label">${reached ? `🎉 بلغتِ هدفك: ${toArabicNumeral(goal)} يوم` : `اليوم ${toArabicNumeral(dayNumber)} من ${toArabicNumeral(goal)}`}</span>
+        <span class="habit-daygoal-pct">${toArabicNumeral(pct)}٪</span>
+      </div>
+      ${track}
+    </div>`;
+}
+
 function habitRowHtml(habit, dateStr, status, { editable }) {
   const isBad = getHabitType(habit) === 'bad';
   return threeStateRowHtml({
@@ -354,6 +397,7 @@ function habitCardHtml(habit, stats, refMs, missedToday = false) {
         <span class="habit-clock-icon">⏱️</span>
         <span class="habit-clock" data-ref-ms="${refMs}">${formatHabitClock(Date.now() - refMs)}</span>
       </div>
+      ${habitDayGoalHtml(habit, stats.streak)}
       <p class="habit-card-stats">${habitStatsLine(stats)}</p>
       <div class="habit-card-actions">
         <button class="btn btn-secondary habit-mishap-btn ${(!isBad && missedToday) ? 'habit-mishap-used' : ''}" data-habit-mishap="${habit.id}" ${(!isBad && missedToday) ? 'disabled' : ''}>${mishapLabel}</button>
@@ -441,6 +485,9 @@ function openHabitModal({ existingId, onSaved } = {}) {
       <input class="text-input" id="new-habit-name" placeholder="مثلاً: شرب الماء" autofocus>
       <label class="field-label">إيموجي (اختياري)</label>
       <input class="text-input emoji-input" id="new-habit-emoji" placeholder="🌟" maxlength="2">
+      <label class="field-label">هدف بالأيام (اختياري)</label>
+      <input class="text-input" type="text" inputmode="numeric" id="new-habit-daygoal" placeholder="مثلاً: ٩٠ يوم">
+      <p class="settings-note">يقسّم المؤشّر إلى خانة لكل يوم. الزلّة تُسجَّل ولا تصفّر العدّاد — الانتكاسة وحدها تبدأ من جديد.</p>
       <label class="checkbox-row">
         <input type="checkbox" id="new-habit-hidden">
         <span>🙈 إخفاؤها من الصفحة الرئيسية</span>
@@ -462,6 +509,7 @@ function openHabitModal({ existingId, onSaved } = {}) {
     document.getElementById('habit-modal-title').textContent = 'تعديل العادة';
     document.getElementById('new-habit-name').value = existing.name;
     document.getElementById('new-habit-emoji').value = existing.emoji;
+    document.getElementById('new-habit-daygoal').value = existing.dayGoal ? toArabicNumeral(existing.dayGoal) : '';
     document.getElementById('new-habit-hidden').checked = !!existing.hiddenFromHome;
     overlay.querySelectorAll('#habit-type-chips .chip').forEach(c => c.classList.toggle('active', c.dataset.type === selectedType));
   }
@@ -486,11 +534,12 @@ function openHabitModal({ existingId, onSaved } = {}) {
     if (!name) return;
     const emoji = document.getElementById('new-habit-emoji').value.trim();
     const hiddenFromHome = document.getElementById('new-habit-hidden').checked;
+    const dayGoal = readNumericField('new-habit-daygoal', { int: true, min: 1 });
     if (existingId) {
-      await updateHabit(existingId, { name, emoji, type: selectedType });
+      await updateHabit(existingId, { name, emoji, type: selectedType, dayGoal });
       await setHabitHiddenFromHome(existingId, hiddenFromHome);
     } else {
-      const id = await createHabit(name, emoji, selectedType);
+      const id = await createHabit(name, emoji, selectedType, dayGoal);
       if (hiddenFromHome && id) await setHabitHiddenFromHome(id, true);
     }
     overlay.remove();

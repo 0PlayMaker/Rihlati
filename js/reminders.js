@@ -17,6 +17,55 @@
 //      then — "missed while closed" becomes "here's what's due" instead
 //      of silently vanishing.
 
+// ============================================================
+//  Affectionate nudges (لمسة حنان)
+// ============================================================
+// A gentle "I miss you / you forgot to log X" nudge. Each item knows how
+// to check whether its thing is still unregistered today and carries a
+// few warm Arabic phrasings. The provider picks ONE missing item and one
+// phrasing, so it's a single soft nudge, never a pile of nags. She
+// chooses which items are eligible in Settings (settings.nudgeItems);
+// default is all of them. The check functions call module functions
+// (getDiaryEntry, getMoodLog, …) that are defined in later-loaded files —
+// fine, since they only ever run at reminder time, long after load.
+const NUDGE_ITEMS = [
+  { key: 'diary',  label: '📔 اليوميات',
+    check: async () => !(await getDiaryEntry(todayStr())),
+    messages: ['ياقمر، نسيتِ تكتبي يومياتك اليوم 📔', 'يومك يستحق سطرين في يومياتك 🌸', 'وين يومياتك يا حلوة؟ 📔'] },
+  { key: 'mood',   label: '🙂 المزاج',
+    check: async () => !(await getMoodLog(todayStr())),
+    messages: ['كيف مزاجك اليوم يا قمر؟ 🙂', 'سجّلي مزاجك — كيف كان يومك؟ 🌸'] },
+  { key: 'weight', label: '⚖️ الوزن',
+    check: async () => !(await db.weightLogs.where('date').equals(todayStr()).first()),
+    messages: ['يا حلوة، بدّك تسجّلي وزنك؟ ⚖️', 'لا تنسي وزن اليوم يا قمر ⚖️'] },
+  { key: 'food',   label: '🍽️ الوجبات',
+    check: async () => (await getFoodLogsForDate(todayStr())).length === 0,
+    messages: ['وين وجباتك اليوم يا حلوة؟ 🍽️', 'اشتقتلك — تعالي سجّلي وجباتك 🌸'] },
+  { key: 'water',  label: '💧 الماء',
+    check: async () => (await getWaterForDate(todayStr())) < (await getWaterTarget()),
+    messages: ['اشربي شوية ماي يا قمر 💧', 'جسمك بدّه ماي، لا تنسي 💧'] }
+];
+// When she's logged nothing at all from her list — a broader "I miss you".
+const NUDGE_GENERIC = ['وين الحلو؟ اشتقتلك 🌸', 'يا قمر، ما سجّلتِ شيء اليوم — كيف حالك؟ 💗', 'اشتقتلك اليوم! تعالي سجّلي شيء 🌸'];
+
+function pickRandomNudge(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function defaultNudgeItemKeys() { return NUDGE_ITEMS.map(n => n.key); }
+
+// The checklist shown under the reminders section so she can pick which
+// nudges are eligible.
+function renderNudgeItemsHtml(settings) {
+  const chosen = settings?.nudgeItems || defaultNudgeItemKeys();
+  return `
+    <div class="nudge-items">
+      ${NUDGE_ITEMS.map(n => `
+        <label class="checkbox-row nudge-item-row">
+          <input type="checkbox" class="nudge-item-toggle" data-nudge="${n.key}" ${chosen.includes(n.key) ? 'checked' : ''}>
+          <span>${n.label}</span>
+        </label>`).join('')}
+    </div>`;
+}
+
 let scheduledTimers = [];
 let reminderProviders = [];
 

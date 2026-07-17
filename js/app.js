@@ -858,6 +858,29 @@ function registerAllReminderProviders() {
     }];
   });
 
+  // Affectionate nudge (لمسة حنان) — a single soft "you forgot to log X"
+  // or "I miss you" message. Silent once she's logged everything on her
+  // chosen list, so it never nags about a finished day.
+  registerReminderProvider(async (settings) => {
+    if (!settings?.remindersEnabled?.nudge) return [];
+    const time = settings.reminderTimes?.nudge || '20:00';
+    const chosen = settings.nudgeItems || defaultNudgeItemKeys();
+    const active = NUDGE_ITEMS.filter(n => chosen.includes(n.key));
+    if (active.length === 0) return [];
+    const missing = [];
+    for (const item of active) {
+      try { if (await item.check()) missing.push(item); } catch (e) { /* ignore a broken check */ }
+    }
+    if (missing.length === 0) return [];
+    // Everything on her list still unlogged → she hasn't registered
+    // anything today, so a broader "I miss you". Otherwise nudge one of
+    // the missing things by name.
+    const body = (missing.length === active.length)
+      ? pickRandomNudge(NUDGE_GENERIC)
+      : pickRandomNudge(pickRandomNudge(missing).messages);
+    return [{ time, title: 'رحلتي 🌸', body }];
+  });
+
   // Backup. This is the one that actually matters: the data is local-only,
   // so a lost phone or a cleared browser cache means it's simply gone. A
   // monthly nudge is the difference between "my app" and "my app, once".
@@ -899,6 +922,7 @@ function registerAllDayProviders() {
   registerDayProvider(sleepDayProvider);
   registerDayProvider(dailyCareDayProvider);
   registerDayProvider(chewDayProvider);
+  registerDayProvider(dietDayProvider);
 }
 
 function registerAllActivityProviders() {
@@ -1003,6 +1027,7 @@ function startApp(profile, settings) {
   route('/mood-history', renderMoodHistoryPage);
   route('/food', renderFoodPage);
   route('/body', renderBodyPage);
+  route('/diet', renderDietPage);
   route('/goals', renderGoalsPage);
   route('/diary', renderDiaryPage);
   route('/economy', renderEconomyPage);

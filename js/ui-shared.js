@@ -439,7 +439,12 @@ function computeImplicitStats(loggedDates, pauses = []) {
     const totalDays = daysBetween(first, todayStr()) + 1;
     failed = Math.max(0, totalDays - succeeded);
   }
-  return { streak, succeeded, failed };
+  // `total` and `longest` are provided so callers that display a count of
+  // times-done or a longest-streak badge (the worship nafl/adhkar cards
+  // read `stats.total` and `stats.longest`) get real numbers instead of
+  // `undefined` — which is what produced the "✅ undefined مرّة" label.
+  // `total` is an alias of succeeded (both mean "days this was logged").
+  return { streak, succeeded, failed, total: succeeded, longest: computeLongestStreak(loggedDates, pauses) };
 }
 
 function statsLine(stats) {

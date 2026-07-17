@@ -290,6 +290,7 @@ const REMINDER_CATEGORIES = [
   { key: 'food', label: '🍽️ تسجيل وجباتك', hasTime: true, defaultTime: '13:00' },
   { key: 'study', label: '⏳ وقت الدراسة', hasTime: true, defaultTime: '16:00' },
   { key: 'habits', label: '🌱 مراجعة عاداتك', hasTime: true, defaultTime: '19:00' },
+  { key: 'nudge', label: '💗 لمسة حنان', hasTime: true, defaultTime: '20:00' },
   { key: 'deadlines', label: '⚠️ مهام ومواعيد اليوم', hasTime: true, defaultTime: '08:00' },
   { key: 'backup', label: '💾 نسخة احتياطية (شهرياً)', hasTime: true, defaultTime: '20:00', defaultOn: true }
 ];
@@ -496,8 +497,15 @@ async function renderSettingsPage(params, view) {
 
     ${notifStatus === 'granted' ? `
       <div class="card settings-card">
-        <h3 class="card-title">ما الذي يُذكّرك؟</h3>
-        ${renderReminderCategoriesHtml(settings)}
+        <details class="reminders-details" open>
+          <summary class="reminders-summary">🔔 ما الذي يُذكّرك؟</summary>
+          ${renderReminderCategoriesHtml(settings)}
+          <div class="nudge-picker">
+            <p class="material-type-label">💗 لمسات الحنان — اختاري ما تريدين تذكيره</p>
+            <p class="settings-note">حين تُفعّلين «لمسة حنان» فوق، أُرسل رسالة لطيفة إذا نسيتِ تسجيل أحد هذه.</p>
+            ${renderNudgeItemsHtml(settings)}
+          </div>
+        </details>
       </div>
 
       <div class="card settings-card">
@@ -942,6 +950,15 @@ async function renderSettingsPage(params, view) {
       const s = await db.settings.get(1);
       const reminderTimes = { ...(s?.reminderTimes || {}), [input.dataset.catTime]: input.value };
       await db.settings.update(1, { reminderTimes });
+      await scheduleAllTodayReminders();
+    });
+  });
+  document.querySelectorAll('.nudge-item-toggle').forEach(toggle => {
+    toggle.addEventListener('change', async () => {
+      const s = await db.settings.get(1);
+      const current = new Set(s?.nudgeItems || defaultNudgeItemKeys());
+      if (toggle.checked) current.add(toggle.dataset.nudge); else current.delete(toggle.dataset.nudge);
+      await db.settings.update(1, { nudgeItems: [...current] });
       await scheduleAllTodayReminders();
     });
   });

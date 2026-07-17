@@ -2176,3 +2176,180 @@ body.theme-dark-ish { --ring-slice-track: rgba(255,255,255,0.10); }
 .haptics-support { padding: 8px 12px; border-radius: var(--radius-md); margin: var(--space-2) 0; }
 .haptics-ok { background: var(--success); color: var(--success-ink); }
 .haptics-no { background: var(--warning); color: var(--warning-ink); }
+
+/* ================================================================
+   v54 additions — accounts & categories, habit day-goals, chew
+   start button, diet mode, tidy reminders
+   ================================================================ */
+
+/* ---------- Economy: transaction tags (account + category) ---------- */
+.txn-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0; }
+.txn-tag {
+  font-size: calc(10px * var(--font-scale)); font-weight: 600; color: var(--ink-soft);
+  background: var(--track); border-radius: var(--radius-round); padding: 1px 8px; white-space: nowrap;
+}
+.txn-tag-account { background: var(--pink); color: var(--ink-on-pastel); }
+.txn-day-meta { font-size: calc(11px * var(--font-scale)); color: var(--ink-faint); }
+
+/* ---------- Economy: chip rows (accounts / categories / subs) ---------- */
+.econ-chip-row { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-2) 0; }
+.econ-cat-chips, .econ-sub-chips { -webkit-overflow-scrolling: touch; }
+.econ-sub-chips { margin-top: 0; }
+.chip-sub { font-size: calc(12px * var(--font-scale)); opacity: 0.95; }
+.txn-account-filter, .txn-cat-filter {
+  overflow-x: auto; flex-wrap: nowrap; margin: var(--space-2) 0; padding-bottom: 4px;
+}
+.txn-account-filter::-webkit-scrollbar, .txn-cat-filter::-webkit-scrollbar { height: 0; }
+.txn-account-filter .chip, .txn-cat-filter .chip { flex: 0 0 auto; }
+
+/* ---------- Economy: accounts grid ---------- */
+.econ-account-actions { display: flex; gap: var(--space-2); }
+.econ-accounts-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-2); margin-top: var(--space-2);
+}
+.econ-account-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  background: var(--surface); border: 1px solid var(--card-border);
+  border-inline-start: 4px solid var(--pink);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-tap);
+  padding: var(--space-3); cursor: pointer; text-align: start; transition: transform 0.12s ease;
+}
+.econ-account-card:active { transform: scale(0.97); }
+.econ-account-emoji { font-size: calc(18px * var(--font-scale)); }
+.econ-account-name { font-size: calc(12px * var(--font-scale)); color: var(--ink-soft); font-weight: 600; }
+.econ-account-balance { font-size: calc(20px * var(--font-scale)); font-weight: 800; color: var(--title-color); direction: ltr; line-height: 1.1; }
+.econ-account-balance.econ-negative { color: var(--danger-ink); }
+.econ-account-cur { font-size: calc(10px * var(--font-scale)); color: var(--ink-faint); }
+.econ-suggest-account { }
+
+/* account colour dots in the account modal */
+.account-color-dot {
+  width: 30px; height: 30px; border-radius: var(--radius-round);
+  border: 2px solid transparent; cursor: pointer;
+  background: var(--pink); /* overridden by habit-color-* border-inline-start… so set fill explicitly below */
+}
+.account-color-dot.habit-color-pink { background: var(--pink-deep); }
+.account-color-dot.habit-color-blue { background: var(--blue-deep); }
+.account-color-dot.habit-color-mint { background: var(--mint-deep); }
+.account-color-dot.habit-color-yellow { background: var(--yellow-deep); }
+.account-color-dot.habit-color-lavender { background: var(--lavender-deep); }
+.account-color-dot.active { border-color: var(--ink); transform: scale(1.12); }
+
+/* ---------- Economy: category breakdown extras ---------- */
+.econ-cat-pct { font-size: calc(10px * var(--font-scale)); color: var(--ink-faint); font-weight: 600; }
+.econ-cat-fill-has { background: var(--btn-color, var(--pink-deep)); }
+.econ-cat-fill-plain { background: var(--blue-deep); }
+.econ-cat-subs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.econ-cat-sub-pill {
+  font-size: calc(10px * var(--font-scale)); color: var(--ink-soft);
+  background: var(--track); border-radius: var(--radius-round); padding: 1px 7px; direction: rtl;
+}
+.econ-notes-details summary {
+  font-size: calc(13px * var(--font-scale)); font-weight: 700; color: var(--pink-deep);
+  cursor: pointer; list-style: none; padding: var(--space-1) 0;
+}
+.econ-notes-details summary::-webkit-details-marker { display: none; }
+.econ-notes-details[open] summary { margin-bottom: var(--space-3); }
+
+/* ---------- Habits: day-goal segmented tracker ---------- */
+.habit-daygoal { margin: var(--space-2) 0 var(--space-3); }
+.habit-daygoal-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.habit-daygoal-label { font-size: calc(12px * var(--font-scale)); font-weight: 700; color: var(--ink-soft); }
+.habit-daygoal-pct { font-size: calc(12px * var(--font-scale)); font-weight: 800; color: var(--pink-deep); direction: ltr; }
+.habit-daygoal-reached .habit-daygoal-label { color: var(--success-ink); }
+.habit-daygoal-reached .habit-daygoal-pct { color: var(--success-strong); }
+.habit-daygoal-pips { display: flex; flex-wrap: wrap; gap: 3px; }
+.habit-daygoal-pip {
+  width: 9px; height: 9px; border-radius: 3px; background: var(--track);
+  flex: 0 0 auto; transition: background 0.2s ease, transform 0.2s ease;
+}
+.habit-daygoal-pip-on { background: var(--btn-color, var(--pink-deep)); }
+.habit-daygoal-reached .habit-daygoal-pip-on { background: var(--success-strong); }
+.habit-daygoal-pip-today {
+  background: var(--pink); box-shadow: 0 0 0 2px rgba(var(--pink-deep-rgb), 0.35); transform: scale(1.15);
+}
+.habit-daygoal-bar { height: 10px; border-radius: var(--radius-round); background: var(--track); overflow: hidden; }
+.habit-daygoal-fill { height: 100%; background: var(--btn-color, var(--pink-deep)); border-radius: var(--radius-round); transition: width 0.4s ease; }
+.habit-daygoal-reached .habit-daygoal-fill { background: var(--success-strong); }
+
+/* ---------- Chew: start-eating button + ready state ---------- */
+.chew-start-eating-btn { margin-top: var(--space-3); max-width: 300px; }
+/* Before she taps ابدئي: show only the start button; hide the swallow
+   controls and the bottom actions until the meal is actually running. */
+.chew-screen:not(.chew-ready) .chew-start-eating-btn { display: none; }
+.chew-screen.chew-ready .chew-swallow-btn,
+.chew-screen.chew-ready .chew-swallow-hint,
+.chew-screen.chew-ready .chew-actions { display: none; }
+.chew-meal-stats-overall { margin-top: var(--space-3); }
+.chew-meal-stats-overall summary {
+  font-size: calc(13px * var(--font-scale)); font-weight: 700; color: var(--pink-deep);
+  cursor: pointer; list-style: none;
+}
+.chew-meal-stats-overall summary::-webkit-details-marker { display: none; }
+
+/* ---------- Food: macros details ---------- */
+.food-macros-details { margin: var(--space-2) 0; }
+.food-macros-details summary {
+  font-size: calc(13px * var(--font-scale)); font-weight: 700; color: var(--pink-deep);
+  cursor: pointer; list-style: none; padding: var(--space-2) 0;
+}
+.food-macros-details summary::-webkit-details-marker { display: none; }
+.food-macros-row { display: flex; gap: var(--space-2); }
+.food-macro-field { flex: 1; }
+
+/* ---------- Diet mode ---------- */
+.diet-chart-svg { width: 100%; height: 190px; display: block; direction: ltr; overflow: visible; }
+.diet-bar { fill: var(--pink); opacity: 0.55; }
+.diet-weight-line { stroke: var(--blue-deep); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.diet-weight-dot { fill: var(--blue-deep); }
+.diet-axis-metric { fill: var(--pink-deep); }
+.diet-chart-legend {
+  display: flex; justify-content: center; gap: var(--space-4); margin-top: var(--space-2);
+  font-size: calc(11px * var(--font-scale)); color: var(--ink-soft);
+}
+.diet-legend-line { display: inline-block; width: 14px; height: 3px; border-radius: 2px; background: var(--blue-deep); margin-inline-end: 4px; vertical-align: middle; }
+.diet-legend-bar { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--pink); opacity: 0.6; margin-inline-end: 4px; vertical-align: middle; }
+
+.diet-period-grid, .diet-summary-row { display: flex; gap: var(--space-2); }
+.diet-period {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: var(--track); border-radius: var(--radius-md); padding: var(--space-3) var(--space-2);
+}
+.diet-period-label { font-size: calc(10px * var(--font-scale)); color: var(--ink-soft); text-align: center; }
+.diet-period-num { font-size: calc(20px * var(--font-scale)); font-weight: 800; color: var(--title-color); direction: ltr; line-height: 1.1; }
+.diet-period-unit { font-size: calc(9px * var(--font-scale)); color: var(--ink-faint); }
+.diet-delta { font-size: calc(12px * var(--font-scale)); font-weight: 800; direction: ltr; margin-top: 2px; }
+.diet-delta-up { color: var(--danger-ink); }
+.diet-delta-down { color: var(--success-ink); }
+.diet-delta-flat { color: var(--ink-faint); }
+
+.diet-headline { font-size: calc(15px * var(--font-scale)); font-weight: 600; margin: var(--space-2) 0; }
+.diet-dir { font-weight: 800; }
+.diet-dir-up { color: var(--danger-ink); }
+.diet-dir-down { color: var(--success-ink); }
+.diet-dir-flat { color: var(--ink-soft); }
+.diet-insight { font-size: calc(13px * var(--font-scale)); line-height: 1.7; padding: 10px 12px; border-radius: var(--radius-md); margin: var(--space-2) 0; }
+.diet-insight-good { background: var(--success); color: var(--success-ink); }
+.diet-insight-warn { background: var(--warning); color: var(--warning-ink); }
+.diet-sub-title { font-size: calc(13px * var(--font-scale)); font-weight: 700; color: var(--ink); margin: var(--space-3) 0 var(--space-2); }
+.diet-meal-impacts { display: flex; flex-direction: column; gap: var(--space-2); }
+.diet-meal-impact { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.diet-meal-name { font-size: calc(13px * var(--font-scale)); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diet-meal-effect { font-size: calc(12px * var(--font-scale)); font-weight: 700; flex-shrink: 0; direction: ltr; }
+.diet-meal-effect-good { color: var(--success-ink); }
+.diet-meal-effect-bad { color: var(--danger-ink); }
+.diet-caveat { margin-top: var(--space-3); font-style: italic; }
+
+/* ---------- Reminders: collapsible + nudge picker ---------- */
+.reminders-details summary.reminders-summary {
+  font-size: calc(16px * var(--font-scale)); font-weight: 700; color: var(--ink);
+  cursor: pointer; list-style: none; padding: var(--space-1) 0;
+}
+.reminders-details summary.reminders-summary::-webkit-details-marker { display: none; }
+.reminders-details summary.reminders-summary::after { content: ' ⌄'; color: var(--ink-faint); }
+.reminders-details[open] summary.reminders-summary::after { content: ' ⌃'; }
+.reminders-details[open] summary.reminders-summary { margin-bottom: var(--space-3); }
+.nudge-picker { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--track); }
+.nudge-items { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
+.nudge-item-row { padding: var(--space-1) 0; }

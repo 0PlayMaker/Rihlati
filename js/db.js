@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v53 · ١٣ يوليو ٢٠٢٦';
+const APP_VERSION = 'v54 · ١٦ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -352,6 +352,94 @@ db.version(21).stores({
 db.version(22).stores({
   customReminders: '++id'
 });
+
+// ---------- Phase 23 — economy accounts + categories ----------
+// Accounts (مدخرات / راتب / مصروف …) are a real table: each transaction
+// can now belong to one, so \"how much is in savings\" is answerable
+// separately from \"how much do I have overall\". Balance per account is
+// still DERIVED (sum of that account's transactions), same rule as the
+// global balance — nothing caches a number that could drift from the
+// history that explains it.
+//
+// `accountId`, `category` and `subcategory` on economyTransactions are
+// plain optional fields (Dexie stores extra properties without a schema
+// change) — every reader treats \"missing\" as the sensible default
+// (no account / uncategorised), so every transaction made before this
+// phase keeps working untouched.
+//
+// Macros (protein/carbs/fat) and mealWeightG on foodLogs, and dayGoal on
+// habits, are the same kind of plain optional field added this phase for
+// Diet mode and habit day-goals respectively — no version bump needed
+// for those, only for the new accounts TABLE.
+db.version(23).stores({
+  economyAccounts: '++id'
+});
+
+// The spending taxonomy she asked for: a flat list of top-level
+// categories, a few of which carry sub-categories. `null` sub means the
+// category is used on its own. Kept as data (not hard-coded into the
+// modal) so the yearly view, the day view and the picker all read the
+// exact same source.
+const ECONOMY_CATEGORIES = [
+  { key: 'food',      label: 'طعام',        icon: '🍎', subs: [
+    { key: 'snacks',  label: 'سناكات',   icon: '🍿' },
+    { key: 'sweets',  label: 'حلويات',   icon: '🍰' },
+    { key: 'meat',    label: 'لحوم',     icon: '🥩' },
+    { key: 'veggies', label: 'خضار وفواكه', icon: '🥗' },
+    { key: 'diet',    label: 'دايت',     icon: '🥑' },
+    { key: 'drinks',  label: 'مشروبات',  icon: '🥤' },
+    { key: 'dining',  label: 'مطاعم',    icon: '🍽️' },
+    { key: 'grocery', label: 'بقالة',    icon: '🛒' }
+  ] },
+  { key: 'commute',   label: 'مواصلات',    icon: '🚌', subs: null },
+  { key: 'health',    label: 'صحة',        icon: '💊', subs: [
+    { key: 'meds',    label: 'أدوية',    icon: '💊' },
+    { key: 'clinic',  label: 'عيادة',    icon: '🩺' },
+    { key: 'supplements', label: 'مكمّلات', icon: '🌿' }
+  ] },
+  { key: 'skincare',  label: 'عناية بالبشرة', icon: '🧴', subs: null },
+  { key: 'makeup',    label: 'مكياج',      icon: '💄', subs: null },
+  { key: 'clothing',  label: 'ملابس',      icon: '👗', subs: [
+    { key: 'clothes', label: 'ملابس',    icon: '👕' },
+    { key: 'shoes',   label: 'أحذية',    icon: '👟' },
+    { key: 'bags',    label: 'حقائب',    icon: '👜' },
+    { key: 'accessories', label: 'إكسسوارات', icon: '💍' }
+  ] },
+  { key: 'tools',     label: 'أدوات',      icon: '🔧', subs: null },
+  { key: 'home',      label: 'المنزل',     icon: '🏠', subs: null },
+  { key: 'bills',     label: 'فواتير',     icon: '🧾', subs: null },
+  { key: 'gifts',     label: 'هدايا',      icon: '🎁', subs: null },
+  { key: 'fun',       label: 'ترفيه',      icon: '🎉', subs: null },
+  { key: 'other',     label: 'أخرى',       icon: '📦', subs: null }
+];
+
+function economyCategory(key) { return ECONOMY_CATEGORIES.find(c => c.key === key) || null; }
+function economyCategoryLabel(key) { const c = economyCategory(key); return c ? c.label : ''; }
+function economyCategoryIcon(key) { const c = economyCategory(key); return c ? c.icon : '📦'; }
+function economySubLabel(catKey, subKey) {
+  const c = economyCategory(catKey);
+  if (!c || !c.subs) return '';
+  const s = c.subs.find(x => x.key === subKey);
+  return s ? s.label : '';
+}
+function economySubIcon(catKey, subKey) {
+  const c = economyCategory(catKey);
+  if (!c || !c.subs) return '';
+  const s = c.subs.find(x => x.key === subKey);
+  return s ? s.icon : '';
+}
+// A single label for a transaction's category + optional sub, used
+// everywhere a row is drawn.
+function economyCategoryFullLabel(category, subcategory) {
+  if (!category) return '';
+  const catIcon = economyCategoryIcon(category);
+  const catLabel = economyCategoryLabel(category);
+  if (subcategory) {
+    const subLabel = economySubLabel(category, subcategory);
+    if (subLabel) return `${catIcon} ${catLabel} · ${subLabel}`;
+  }
+  return `${catIcon} ${catLabel}`;
+}
 
 // ---------- date helpers (used everywhere) ----------
 

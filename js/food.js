@@ -6,16 +6,24 @@
 // as its own field — same "don't store what you can compute" rule as
 // everywhere else.
 
-async function addFoodLog({ date, mealType, mealName, time, notes, calories, photoBlob }) {
+async function addFoodLog({ date, mealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, photoBlob }) {
   const id = await db.foodLogs.add({
     date, mealType, mealName: mealName || '', time: time || null, notes: notes || '',
-    calories: calories ?? null, createdAt: Date.now()
+    calories: calories ?? null,
+    protein: protein ?? null, carbs: carbs ?? null, fat: fat ?? null,
+    mealWeightG: mealWeightG ?? null,
+    createdAt: Date.now()
   });
   if (photoBlob) await db.foodPhotos.put({ foodLogId: id, photoBlob });
   return id;
 }
-async function updateFoodLog(id, { mealType, mealName, time, notes, calories, photoBlob, removePhoto }) {
-  await db.foodLogs.update(id, { mealType, mealName: mealName || '', time: time || null, notes: notes || '', calories: calories ?? null });
+async function updateFoodLog(id, { mealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, photoBlob, removePhoto }) {
+  await db.foodLogs.update(id, {
+    mealType, mealName: mealName || '', time: time || null, notes: notes || '',
+    calories: calories ?? null,
+    protein: protein ?? null, carbs: carbs ?? null, fat: fat ?? null,
+    mealWeightG: mealWeightG ?? null
+  });
   if (photoBlob) await db.foodPhotos.put({ foodLogId: id, photoBlob });
   else if (removePhoto) await db.foodPhotos.delete(id);
 }
@@ -204,6 +212,27 @@ async function openFoodModal({ date, existingId, onSaved }) {
       <label class="field-label">السعرات (اختياري)</label>
       <input class="text-input" type="number" min="0" id="food-calories-input" value="${existing?.calories ?? ''}" placeholder="مثلاً: 350">
 
+      <details class="food-macros-details" ${(existing && (existing.protein != null || existing.carbs != null || existing.fat != null || existing.mealWeightG != null)) ? 'open' : ''}>
+        <summary>وزن الوجبة والماكروز (لوضع الدايت)</summary>
+        <label class="field-label">وزن الوجبة (غرام)</label>
+        <input class="text-input" type="number" min="0" step="1" id="food-weight-input" value="${existing?.mealWeightG ?? ''}" placeholder="مثلاً: 300">
+        <div class="food-macros-row">
+          <div class="food-macro-field">
+            <label class="field-label">بروتين</label>
+            <input class="text-input" type="number" min="0" step="0.1" id="food-protein-input" value="${existing?.protein ?? ''}" placeholder="غ">
+          </div>
+          <div class="food-macro-field">
+            <label class="field-label">كارب</label>
+            <input class="text-input" type="number" min="0" step="0.1" id="food-carbs-input" value="${existing?.carbs ?? ''}" placeholder="غ">
+          </div>
+          <div class="food-macro-field">
+            <label class="field-label">دهون</label>
+            <input class="text-input" type="number" min="0" step="0.1" id="food-fat-input" value="${existing?.fat ?? ''}" placeholder="غ">
+          </div>
+        </div>
+        <p class="settings-note">أدخلي وزن الوجبة أو الماكروز أو كليهما — وضع الدايت يرسمها مقابل وزنك.</p>
+      </details>
+
       <label class="field-label">ملاحظات (اختياري)</label>
       <textarea class="mood-note-input" id="food-notes-input" placeholder="شعورك، تفاصيل الوجبة...">${escapeHtml(existing?.notes || '')}</textarea>
 
@@ -252,13 +281,17 @@ async function openFoodModal({ date, existingId, onSaved }) {
   document.getElementById('food-save-btn').addEventListener('click', async () => {
     const time = document.getElementById('food-time-input').value || null;
     const calories = readNumericField('food-calories-input', { int: true, min: 0 });
+    const protein = readNumericField('food-protein-input', { min: 0 });
+    const carbs = readNumericField('food-carbs-input', { min: 0 });
+    const fat = readNumericField('food-fat-input', { min: 0 });
+    const mealWeightG = readNumericField('food-weight-input', { int: true, min: 0 });
     const notes = document.getElementById('food-notes-input').value.trim();
     const mealName = document.getElementById('food-name-input').value.trim();
 
     if (existing) {
-      await updateFoodLog(existing.id, { mealType: selectedMealType, mealName, time, notes, calories, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
+      await updateFoodLog(existing.id, { mealType: selectedMealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
     } else {
-      await addFoodLog({ date, mealType: selectedMealType, mealName, time, notes, calories, photoBlob: pendingPhotoBlob });
+      await addFoodLog({ date, mealType: selectedMealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, photoBlob: pendingPhotoBlob });
     }
     overlay.remove();
     if (onSaved) onSaved();
@@ -296,17 +329,25 @@ async function renderFoodList(container, date, { onChange } = {}) {
   container.innerHTML = rows.join('');
 
   // Start the pacer on THIS meal, without going hunting for it in a list.
+  // If the meal already has a session, show its stats instead (with a
+  // re-pace button inside).
   container.querySelectorAll('[data-chew-meal]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const meal = await db.foodLogs.get(Number(btn.dataset.chewMeal));
       if (!meal) return;
+      const existingSession = await getChewSessionForMeal(meal.id);
+      if (existingSession) {
+        openChewMealStatsSheet(meal, onChange);
+        return;
+      }
       const cs = await getChewSettings();
       openChewingPacer({
         foodLog: meal,
         chewSeconds: cs.chewSeconds, restSeconds: cs.restSeconds, mealMinutes: cs.mealMinutes,
         soundOn: cs.soundOn,
         onFinished: (r) => {
+          if (r.notStarted) { if (onChange) onChange(); return; }
           toast(r.completed ? `🌿 ${toArabicNumeral(r.bites)} لقمة` : `تم الحفظ`);
           if (onChange) onChange();
         }

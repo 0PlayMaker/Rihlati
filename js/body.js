@@ -663,6 +663,7 @@ async function renderBodyPage(params, view) {
       </div>
       <p class="settings-note">تمارينك اليومية، بعداد مجموعات، تكرار، ومؤقّت.</p>
     </div>
+    <div class="card" id="diet-summary-card"></div>
     <div class="card" id="daily-care-card"></div>
     <div class="card" id="weight-glance-card"></div>
     <div class="card">
@@ -765,6 +766,7 @@ async function renderBodyPage(params, view) {
 
   document.getElementById('weight-add-btn').addEventListener('click', () => openWeightModal(refreshWeight));
   await renderSleepSummaryCard(document.getElementById('body-sleep-summary'));
+  await renderDietSummaryCard(document.getElementById('diet-summary-card'));
   await renderDailyCareSummaryCard(document.getElementById('daily-care-card'));
   document.getElementById('save-target-btn').addEventListener('click', async () => {
     const raw = document.getElementById('target-weight-input').value;
