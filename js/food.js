@@ -6,26 +6,33 @@
 // as its own field — same "don't store what you can compute" rule as
 // everywhere else.
 
-async function addFoodLog({ date, mealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, foodTags, photoBlob }) {
+async function addFoodLog({ date, mealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, foodTags, fullness, craving, isDrink, drinkSweet, photoBlob }) {
   const id = await db.foodLogs.add({
     date, mealType, mealName: mealName || '', time: time || null, notes: notes || '',
     calories: calories ?? null,
     protein: protein ?? null, carbs: carbs ?? null, fat: fat ?? null,
     mealWeightG: mealWeightG ?? null,
     foodTags: Array.isArray(foodTags) ? foodTags : [],
+    fullness: fullness ?? null,
+    craving: craving ? true : false,
+    isDrink: isDrink ? true : false,
+    drinkSweet: drinkSweet ?? null,
     createdAt: Date.now()
   });
   if (photoBlob) await db.foodPhotos.put({ foodLogId: id, photoBlob });
   return id;
 }
-async function updateFoodLog(id, { mealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, foodTags, photoBlob, removePhoto }) {
-  await db.foodLogs.update(id, {
+async function updateFoodLog(id, { mealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, foodTags, fullness, craving, photoBlob, removePhoto }) {
+  const patch = {
     mealType, mealName: mealName || '', time: time || null, notes: notes || '',
     calories: calories ?? null,
     protein: protein ?? null, carbs: carbs ?? null, fat: fat ?? null,
     mealWeightG: mealWeightG ?? null,
     foodTags: Array.isArray(foodTags) ? foodTags : []
-  });
+  };
+  if (fullness !== undefined) patch.fullness = fullness ?? null;
+  if (craving !== undefined) patch.craving = craving ? true : false;
+  await db.foodLogs.update(id, patch);
   if (photoBlob) await db.foodPhotos.put({ foodLogId: id, photoBlob });
   else if (removePhoto) await db.foodPhotos.delete(id);
 }
@@ -93,11 +100,86 @@ async function getWaterTarget() {
   return settings?.dailyWaterTargetL ?? 2.0;
 }
 
+// ---------- drinks (tracked in the drinks card, stored as isDrink food logs) ----------
+// Water stays a simple counter. Everything else — coffee, tea, milk, diet
+// soda, juice — is logged here (not in the meal builder) because what
+// matters about a drink for the diet is its macros and its sweetener, and
+// those flow straight into diet mode via the shared foodLogs table.
+async function getDrinkLogsForDate(date) {
+  return (await getFoodLogsForDate(date)).filter(l => l.isDrink);
+}
+function drinkSubOptions() {
+  return (foodTagCategory('drink')?.subs || []).filter(s => s.key !== 'water');
+}
+async function openDrinkModal({ date, existingId, onSaved }) {
+  const existing = existingId ? await db.foodLogs.get(existingId) : null;
+  const existingTag = existing?.foodTags?.find(t => t.cat === 'drink');
+  let sub = existingTag?.sub || 'coffee';
+  let sweet = existing?.drinkSweet || existingTag?.sweet || 'none';
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal modal-lg">
+      <h2 class="modal-title">${existing ? 'تعديل مشروب' : '🥤 مشروب'}</h2>
+      <label class="field-label">النوع</label>
+      <div class="drink-type-chips" id="drink-type-chips">
+        ${drinkSubOptions().map(s => `<button class="chip drink-type-chip ${sub === s.key ? 'active' : ''}" data-sub="${s.key}">${s.icon} ${s.label}</button>`).join('')}
+      </div>
+      <label class="field-label">التحلية</label>
+      <div class="drink-sweet-chips" id="drink-sweet-chips">
+        ${DRINK_SWEET_OPTIONS.map(o => `<button class="chip drink-sweet-chip ${sweet === o.key ? 'active' : ''}" data-sweet="${o.key}">${o.icon} ${o.label}</button>`).join('')}
+      </div>
+      <p class="settings-note">💡 المهم للدايت: السعرات والتحلية. الماء يُسجَّل في العدّاد فوق.</p>
+      <div class="food-macros-row">
+        <div class="food-macro-field">
+          <label class="field-label">سعرات</label>
+          <input class="text-input" type="number" min="0" id="drink-calories" value="${existing?.calories ?? ''}" placeholder="اختياري">
+        </div>
+        <div class="food-macro-field">
+          <label class="field-label">الوقت</label>
+          <input class="text-input" type="time" id="drink-time" value="${existing?.time || ''}">
+        </div>
+      </div>
+      <div class="modal-actions">
+        ${existing ? `<button class="btn btn-danger btn-sm" id="drink-delete">حذف</button>` : ''}
+        <button class="btn btn-text" id="drink-cancel">إلغاء</button>
+        <button class="btn btn-primary" id="drink-save">حفظ</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.querySelectorAll('#drink-type-chips .drink-type-chip').forEach(c => c.addEventListener('click', () => {
+    sub = c.dataset.sub; overlay.querySelectorAll('#drink-type-chips .drink-type-chip').forEach(x => x.classList.toggle('active', x === c));
+  }));
+  overlay.querySelectorAll('#drink-sweet-chips .drink-sweet-chip').forEach(c => c.addEventListener('click', () => {
+    sweet = c.dataset.sweet; overlay.querySelectorAll('#drink-sweet-chips .drink-sweet-chip').forEach(x => x.classList.toggle('active', x === c));
+  }));
+  overlay.querySelector('#drink-cancel').addEventListener('click', () => overlay.remove());
+  const del = overlay.querySelector('#drink-delete');
+  if (del) del.addEventListener('click', async () => { if (!confirm('حذف هذا المشروب؟')) return; await deleteFoodLog(existing.id); overlay.remove(); if (onSaved) onSaved(); });
+  overlay.querySelector('#drink-save').addEventListener('click', async () => {
+    const calories = readNumericField('drink-calories', { int: true, min: 0 });
+    const time = document.getElementById('drink-time').value || null;
+    const subObj = foodTagSub('drink', sub);
+    const tag = { cat: 'drink', sub, sweet };
+    if (existing) {
+      await updateFoodLog(existing.id, { mealType: 'drink', mealName: subObj?.label || 'مشروب', time, notes: '', calories, protein: null, carbs: null, fat: null, mealWeightG: null, foodTags: [tag] });
+      await db.foodLogs.update(existing.id, { drinkSweet: sweet, isDrink: true });
+    } else {
+      await addFoodLog({ date, mealType: 'drink', mealName: subObj?.label || 'مشروب', time, calories, foodTags: [tag], isDrink: true, drinkSweet: sweet });
+    }
+    overlay.remove();
+    if (onSaved) onSaved();
+  });
+}
+
 async function renderWaterCard(container) {
   const today = todayStr();
-  const [liters, target] = await Promise.all([getWaterForDate(today), getWaterTarget()]);
+  const [liters, target, drinks] = await Promise.all([getWaterForDate(today), getWaterTarget(), getDrinkLogsForDate(today)]);
   const frac = Math.min(1, liters / target);
   const reached = liters >= target;
+  const drinkCals = drinks.reduce((s, d) => s + (d.calories || 0), 0);
 
   // Glasses, not a bar: a row of cups you can SEE filling is far more
   // legible at a glance than "1.75 من 2 لتر", and it makes the remaining
@@ -113,7 +195,7 @@ async function renderWaterCard(container) {
 
   container.innerHTML = `
     <div class="section-header">
-      <h2 class="card-title">💧 الماء</h2>
+      <h2 class="card-title">💧 الماء والمشروبات</h2>
       <button class="capsule-btn" id="water-edit-target">الهدف: ${toArabicNumeral(target)} ل</button>
     </div>
 
@@ -131,6 +213,20 @@ async function renderWaterCard(container) {
       <button class="water-quick" data-add="0.5">🍶 ٥٠٠</button>
       <button class="water-quick water-quick-minus" data-add="-0.25">−</button>
       <button class="water-quick" id="water-edit-exact">✏️</button>
+    </div>
+
+    <div class="drinks-section">
+      <div class="section-header">
+        <h3 class="material-type-label">🥤 مشروبات أخرى${drinkCals ? ` · ${toArabicNumeral(drinkCals)} سعرة` : ''}</h3>
+        <button class="capsule-btn" id="drink-add-btn">+ مشروب</button>
+      </div>
+      ${drinks.length ? `<div class="drinks-list">${drinks.map(d => {
+        const tag = d.foodTags?.find(t => t.cat === 'drink');
+        return `<button class="drink-chip-row" data-drink-id="${d.id}">
+          <span>${tag ? foodTagLabel(tag) : '🥤 ' + escapeHtml(d.mealName || 'مشروب')}</span>
+          <span class="drink-chip-cal">${d.calories ? toArabicNumeral(d.calories) + ' سعرة' : (d.drinkSweet === 'sweetener' ? 'محلّي' : '')}${d.time ? ' · ' + d.time : ''}</span>
+        </button>`;
+      }).join('')}</div>` : `<p class="empty-state-sub">سجّلي القهوة والشاي والعصائر — تُحتسب في وضع الدايت.</p>`}
     </div>
   `;
 
@@ -156,6 +252,12 @@ async function renderWaterCard(container) {
     if (input === null) return;
     const n = parseNumericInput(input);
     if (n !== null && n > 0) { await db.settings.update(1, { dailyWaterTargetL: n }); renderWaterCard(container); }
+  });
+  document.getElementById('drink-add-btn').addEventListener('click', () => {
+    openDrinkModal({ date: today, onSaved: () => renderWaterCard(container) });
+  });
+  container.querySelectorAll('.drink-chip-row').forEach(row => {
+    row.addEventListener('click', () => openDrinkModal({ date: today, existingId: Number(row.dataset.drinkId), onSaved: () => renderWaterCard(container) }));
   });
 }
 
@@ -193,6 +295,7 @@ async function openFoodModal({ date, existingId, onSaved }) {
   let tags = Array.isArray(existing?.foodTags) ? existing.foodTags.map(t => ({ ...t })) : [];
   let activeCat = null;                 // which category tray is open
   let drinkSweet = 'none';              // sweetness applied to selected drinks
+  let fullness = existing?.fullness ?? null;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -200,20 +303,19 @@ async function openFoodModal({ date, existingId, onSaved }) {
     <div class="modal modal-lg food-builder">
       <div class="food-builder-hero" id="food-hero">
         <div class="food-hero-photo" id="food-photo-preview"></div>
-        <div class="food-hero-overlay">
-          <div class="meal-type-chips food-hero-types" id="meal-type-chips">
-            ${MEAL_TYPES.map(m => `<button class="chip ${selectedMealType === m.key ? 'active' : ''}" data-meal="${m.key}">${m.icon} ${m.label}</button>`).join('')}
-          </div>
-        </div>
       </div>
       ${photoPickerHtml('food-photo')}
+
+      <div class="meal-type-chips food-builder-types" id="meal-type-chips">
+        ${MEAL_TYPES.map(m => `<button class="chip ${selectedMealType === m.key ? 'active' : ''}" data-meal="${m.key}">${m.icon} ${m.label}</button>`).join('')}
+      </div>
 
       <input class="text-input food-name-big" id="food-name-input" placeholder="اسم الوجبة (اختياري)" value="${escapeHtml(existing?.mealName || '')}">
 
       <label class="field-label">ممّ تتكوّن؟ <span class="field-hint">اختاري ما تحتويه — يُرسم في وضع الدايت</span></label>
       <div class="food-tag-strip" id="food-tag-strip"></div>
       <div class="food-cat-pills" id="food-cat-pills">
-        ${FOOD_TAG_CATEGORIES.map(c => `<button class="food-cat-pill" data-cat="${c.key}"><span class="food-cat-emoji">${c.icon}</span><span>${c.label}</span><span class="food-cat-badge" data-badge="${c.key}"></span></button>`).join('')}
+        ${FOOD_TAG_CATEGORIES.filter(c => c.key !== 'drink').map(c => `<button class="food-cat-pill" data-cat="${c.key}"><span class="food-cat-emoji">${c.icon}</span><span>${c.label}</span><span class="food-cat-badge" data-badge="${c.key}"></span></button>`).join('')}
       </div>
       <div class="food-sub-tray" id="food-sub-tray" hidden></div>
 
@@ -251,6 +353,15 @@ async function openFoodModal({ date, existingId, onSaved }) {
           <input class="text-input" type="time" id="food-time-input" value="${existing?.time || ''}">
         </div>
       </div>
+
+      <label class="field-label">شعورك بعد الوجبة <span class="field-hint">اختياري — لوضع الدايت</span></label>
+      <div class="fullness-chips" id="food-fullness-chips">
+        ${[[1,'😖 جائعة'],[2,'🙂 خفيف'],[3,'😌 معتدل'],[4,'😊 شبعانة'],[5,'😣 متخمة']].map(([v,l]) => `<button class="chip fullness-chip ${existing?.fullness === v ? 'active' : ''}" data-full="${v}">${l}</button>`).join('')}
+      </div>
+      <label class="checkbox-row">
+        <input type="checkbox" id="food-craving" ${existing?.craving ? 'checked' : ''}>
+        <span>🍫 كانت نتيجة رغبة/اشتهاء</span>
+      </label>
 
       <label class="field-label">ملاحظات (اختياري)</label>
       <textarea class="mood-note-input" id="food-notes-input" placeholder="شعورك، تفاصيل الوجبة...">${escapeHtml(existing?.notes || '')}</textarea>
@@ -344,6 +455,14 @@ async function openFoodModal({ date, existingId, onSaved }) {
     });
   });
 
+  overlay.querySelectorAll('#food-fullness-chips .fullness-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const v = Number(chip.dataset.full);
+      fullness = (fullness === v) ? null : v;
+      overlay.querySelectorAll('#food-fullness-chips .fullness-chip').forEach(c => c.classList.toggle('active', Number(c.dataset.full) === fullness));
+    });
+  });
+
   wirePhotoPicker('food-photo', async (file) => {
     pendingPhotoBlob = await resizeImageToBlob(file, 1200, 0.8);
     removePhotoFlag = false;
@@ -377,11 +496,12 @@ async function openFoodModal({ date, existingId, onSaved }) {
     const mealWeightG = readNumericField('food-weight-input', { int: true, min: 0 });
     const notes = document.getElementById('food-notes-input').value.trim();
     const mealName = document.getElementById('food-name-input').value.trim();
+    const craving = document.getElementById('food-craving').checked;
 
     if (existing) {
-      await updateFoodLog(existing.id, { mealType: selectedMealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, foodTags: tags, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
+      await updateFoodLog(existing.id, { mealType: selectedMealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, foodTags: tags, fullness, craving, photoBlob: pendingPhotoBlob, removePhoto: removePhotoFlag });
     } else {
-      await addFoodLog({ date, mealType: selectedMealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, foodTags: tags, photoBlob: pendingPhotoBlob });
+      await addFoodLog({ date, mealType: selectedMealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, foodTags: tags, fullness, craving, photoBlob: pendingPhotoBlob });
     }
     overlay.remove();
     if (onSaved) onSaved();
@@ -395,7 +515,7 @@ async function openFoodModal({ date, existingId, onSaved }) {
 
 async function renderFoodList(container, date, { onChange } = {}) {
   revokeFoodPhotoUrls();
-  const logs = await getFoodLogsForDate(date);
+  const logs = (await getFoodLogsForDate(date)).filter(l => !l.isDrink);
   if (logs.length === 0) {
     container.innerHTML = `<div class="empty-state"><p>ما في وجبات مسجلة بهذا اليوم.</p></div>`;
     return;

@@ -94,7 +94,7 @@ async function buildCustomAdhkarRingData() {
 // whole day hangs on; 'small' ones are glanceable supporting numbers.
 const HOME_TRACKERS = [
   { key: 'habits',   label: 'العادات',          icon: '🌱', path: '/habits',        anchor: 'good-habits-list' },
-  { key: 'counters', label: 'العدّادات',        icon: '🔢', path: '/habits',        anchor: 'good-habits-list' },
+  { key: 'counters', label: 'أيام العادات',        icon: '📅', path: '/habits',        anchor: 'good-habits-list' },
   { key: 'tasks',    label: 'المهام الثابتة',    icon: '📋', path: '/tasks',         anchor: 'fixed-tasks-list' },
   { key: 'goals',    label: 'الأهداف',           icon: '🎯', path: '/goals',         anchor: 'goals-list' },
   { key: 'water',    label: 'الماء',             icon: '💧', path: '/food',          anchor: 'water-card' },
@@ -314,57 +314,35 @@ async function buildTrackerDataRaw(key) {
       if (r.total === 0) {
         return { anchor: 'good-habits-list', segments: [{ frac: 0, color: 'var(--track)' }], center: '—', label: 'عاداتك', path: '/habits', empty: true };
       }
-      // When she has BOTH day-goal and normal habits, the ring divides in
-      // two (same track+fill+offset pattern as the tasbeeh): one half is
-      // aggregate day-goal progress, the other is "clean today". With only
-      // one kind, it's a single arc so a lone habit still fills the ring.
-      if (r.hasDayGoal && r.hasNormal) {
-        const half = 0.5, GAP = 0.02, slice = half - GAP;
-        const segments = [
-          { frac: slice, offset: 0, color: 'var(--ring-slice-track)' },
-          { frac: slice, offset: half, color: 'var(--ring-slice-track)' },
-          { frac: slice * r.dayGoalProgress, offset: 0, color: 'var(--info-strong)' },
-          { frac: slice * r.cleanFrac, offset: half, color: r.cleanFrac >= 1 ? 'var(--success-strong)' : 'var(--warning-strong)' }
-        ];
-        return {
-          anchor: 'good-habits-list', segments, sliceCount: 2,
-          center: `${toArabicNumeral(Math.round(r.dayGoalProgress * 100))}٪`,
-          label: 'عاداتك', path: '/habits'
-        };
-      }
-      if (r.hasDayGoal) {
-        return {
-          anchor: 'good-habits-list',
-          segments: [{ frac: r.dayGoalProgress, color: 'var(--info-strong)' }],
-          center: `${toArabicNumeral(Math.round(r.dayGoalProgress * 100))}٪`,
-          label: 'عاداتك', path: '/habits'
-        };
-      }
-      // Normal habits only — the daily clean/slip signal.
+      // مسبحة-style: one slice per habit, faint track then fill. In-progress
+      // slices are blue, completed ones green.
+      const per = 1 / r.total;
+      const GAP = r.total > 1 ? 0.012 : 0;
+      const sliceLen = Math.max(0, per - GAP);
+      const tracks = r.items.map((_, i) => ({ frac: sliceLen, offset: i * per, color: 'var(--ring-slice-track)' }));
+      const fills = r.items.map((it, i) => ({ frac: sliceLen * it.frac, offset: i * per, color: it.done ? 'var(--success-strong)' : 'var(--info-strong)' }));
       return {
-        anchor: 'good-habits-list',
-        segments: [
-          { frac: r.cleanFrac, color: 'var(--success-strong)' },
-          { frac: r.normalCount ? (r.normalCount - r.cleanToday) / r.normalCount : 0, color: 'var(--danger-strong)' }
-        ],
-        center: `${toArabicNumeral(r.cleanToday)}/${toArabicNumeral(r.normalCount)}`,
+        anchor: 'good-habits-list', segments: [...tracks, ...fills], sliceCount: r.total,
+        center: `${toArabicNumeral(r.doneCount)}/${toArabicNumeral(r.total)}`,
         label: 'عاداتك', path: '/habits'
       };
     }
     case 'counters': {
-      const r = await getCounterHabitsRingData();
+      // "أيام العادات" — day-goal habits only, each slice a day-goal's
+      // progress toward its N-day target, مسبحة-style.
+      const r = await getHabitDaysRingData();
       if (r.total === 0) {
-        return { anchor: 'good-habits-list', segments: [{ frac: 0, color: 'var(--track)' }], center: '—', label: 'العدّادات', path: '/habits', empty: true };
+        return { anchor: 'good-habits-list', segments: [{ frac: 0, color: 'var(--track)' }], center: '—', label: 'أيام العادات', path: '/habits', empty: true };
       }
       const per = 1 / r.total;
       const GAP = r.total > 1 ? 0.012 : 0;
       const sliceLen = Math.max(0, per - GAP);
       const tracks = r.items.map((_, i) => ({ frac: sliceLen, offset: i * per, color: 'var(--ring-slice-track)' }));
-      const fills = r.items.map((it, i) => ({ frac: sliceLen * it.frac, offset: i * per, color: it.done ? 'var(--success-strong)' : 'var(--ring-care)' }));
+      const fills = r.items.map((it, i) => ({ frac: sliceLen * it.frac, offset: i * per, color: it.done ? 'var(--success-strong)' : 'var(--info-strong)' }));
       return {
         anchor: 'good-habits-list', segments: [...tracks, ...fills], sliceCount: r.total,
         center: `${toArabicNumeral(r.doneCount)}/${toArabicNumeral(r.total)}`,
-        label: 'العدّادات', path: '/habits'
+        label: 'أيام العادات', path: '/habits'
       };
     }
     case 'tasks': {
@@ -572,6 +550,79 @@ async function renderHomeRingSection(container) {
 // across the app. Each stat is a defensive read: a tile only appears if
 // there's data behind it, so an empty week shows an empty (hidden) card
 // rather than a wall of dashes.
+// A fuller, tappable breakdown behind the weekly card's "عرض التفاصيل".
+// Self-contained (recomputes from the DB) so it never drifts from the
+// card, and each domain links through to its own page.
+async function openWeeklyDetailSheet() {
+  const today = todayStr();
+  const weekAgo = addDays(today, -6);
+  const [weightLogs, txns, chewAll, habitEvents, prayerLogs, moodAll, currency] = await Promise.all([
+    getAllWeightLogs(), db.economyTransactions.toArray(), db.chewSessions.toArray(),
+    db.habitEvents.toArray(), db.prayerLogs.toArray(), db.moodLogs.toArray(), getCurrencyLabel()
+  ]);
+  const sections = [];
+
+  const wWeek = weightLogs.filter(w => w.date >= weekAgo);
+  if (wWeek.length) {
+    const d = wWeek.length >= 2 ? wWeek[wWeek.length - 1].value - wWeek[0].value : 0;
+    const rows = [...wWeek].reverse().map(w => `<div class="wk-line"><span>${formatPrettyDate(w.date)}</span><span>${toArabicNumeral(w.value.toFixed(1))} كغ</span></div>`).join('');
+    sections.push({ path: '/body', head: `⚖️ الوزن`, sub: wWeek.length >= 2 ? `${d > 0 ? '+' : d < 0 ? '−' : ''}${toArabicNumeral(Math.abs(d).toFixed(1))} كغ هذا الأسبوع` : 'قياس واحد', body: rows });
+  }
+
+  const weekTxns = txns.filter(t => t.date >= weekAgo && t.amount < 0 && !t.isTransfer);
+  if (weekTxns.length) {
+    const spend = weekTxns.reduce((s, t) => s + Math.abs(t.amount), 0);
+    const catTotals = {};
+    weekTxns.forEach(t => {
+      const tags = transactionTags(t); const keys = tags.length ? tags : [{ cat: 'other' }];
+      const seen = new Set();
+      keys.forEach(({ cat }) => { if (seen.has(cat)) return; seen.add(cat); catTotals[cat] = (catTotals[cat] || 0) + Math.abs(t.amount); });
+    });
+    const rows = Object.entries(catTotals).sort((a, b) => b[1] - a[1]).map(([c, v]) => `<div class="wk-line"><span>${economyCategoryIcon(c)} ${economyCategoryLabel(c)}</span><span>${toArabicNumeral(v.toFixed(0))} ${currency}</span></div>`).join('');
+    sections.push({ path: '/economy', head: `💸 المصروف`, sub: `${toArabicNumeral(spend.toFixed(0))} ${currency} في ${toArabicNumeral(weekTxns.length)} عملية`, body: rows });
+  }
+
+  const chewWeek = chewAll.filter(s => s.date >= weekAgo);
+  if (chewWeek.length) {
+    const adh = chewWeek.map(chewAdherence).filter(x => x != null);
+    const avg = adh.length ? Math.round(adh.reduce((s, x) => s + x, 0) / adh.length * 100) : null;
+    sections.push({ path: '/food', head: `🌿 المضغ`, sub: `${toArabicNumeral(chewWeek.length)} وجبة${avg != null ? ` · متوسط ${toArabicNumeral(avg)}٪ من المدّة` : ''}`, body: '' });
+  }
+
+  const relapseDates = habitEvents.filter(e => e.type === 'relapse' && e.date >= weekAgo).map(e => e.date);
+  sections.push({ path: '/habits', head: relapseDates.length ? '⛔ العادات' : '🌱 العادات', sub: relapseDates.length ? `${toArabicNumeral(relapseDates.length)} انتكاسة` : 'أسبوع نظيف 🎉', body: [...relapseDates].reverse().map(d => `<div class="wk-line"><span>${formatPrettyDate(d)}</span><span>انتكاسة</span></div>`).join('') });
+
+  const doneP = prayerLogs.filter(p => p.date >= weekAgo && p.date <= today && p.status === 'done').length;
+  if (doneP) sections.push({ path: '/worship', head: `🕌 الصلوات`, sub: `${toArabicNumeral(doneP)} من ${toArabicNumeral(35)} صلاة`, body: '' });
+
+  const moodWeek = moodAll.filter(m => m.date >= weekAgo && m.emoji);
+  if (moodWeek.length) {
+    const freq = {}; moodWeek.forEach(m => { freq[m.emoji] = (freq[m.emoji] || 0) + 1; });
+    const rows = Object.entries(freq).sort((a, b) => b[1] - a[1]).map(([e, n]) => `<div class="wk-line"><span>${e}</span><span>${toArabicNumeral(n)} ${n === 1 ? 'يوم' : 'أيام'}</span></div>`).join('');
+    sections.push({ path: '/mood-history', head: `😊 المزاج`, sub: `سجّلتِ مزاجك ${toArabicNumeral(moodWeek.length)} ${moodWeek.length === 1 ? 'يوم' : 'أيام'}`, body: rows });
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal modal-lg">
+      <h2 class="modal-title">🗓️ رحلتك هذا الأسبوع</h2>
+      <p class="settings-note">آخر ٧ أيام. اضغطي أي قسم لفتح صفحته.</p>
+      <div class="wk-sections">
+        ${sections.map(s => `
+          <button class="wk-section" data-path="${s.path}">
+            <div class="wk-section-head"><span class="wk-section-title">${s.head}</span><span class="wk-section-open">←</span></div>
+            <div class="wk-section-sub">${s.sub}</div>
+            ${s.body ? `<div class="wk-section-body">${s.body}</div>` : ''}
+          </button>`).join('')}
+      </div>
+      <div class="modal-actions"><button class="btn btn-primary" id="wk-close">إغلاق</button></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll('.wk-section').forEach(el => el.addEventListener('click', () => { overlay.remove(); goTo(el.dataset.path); }));
+  document.getElementById('wk-close').addEventListener('click', () => overlay.remove());
+}
+
 async function renderWeeklyOverview(container) {
   if (!container) return;
   const today = todayStr();
@@ -632,7 +683,7 @@ async function renderWeeklyOverview(container) {
   if (!tiles.length) { container.style.display = 'none'; return; }
   container.style.display = '';
   container.innerHTML = `
-    <div class="section-header"><h2 class="card-title">🗓️ رحلتك هذا الأسبوع</h2></div>
+    <div class="section-header"><h2 class="card-title">🗓️ رحلتك هذا الأسبوع</h2><button class="capsule-btn" id="weekly-detail-btn">عرض التفاصيل ←</button></div>
     <div class="weekly-grid">
       ${tiles.map(t => `<div class="weekly-tile ${t.tone ? 'weekly-' + t.tone : ''}">
         <span class="weekly-tile-icon">${t.icon}</span>
@@ -640,6 +691,9 @@ async function renderWeeklyOverview(container) {
         <span class="weekly-tile-label">${t.label}</span>
       </div>`).join('')}
     </div>`;
+  const wkBtn = document.getElementById('weekly-detail-btn');
+  if (wkBtn) wkBtn.addEventListener('click', openWeeklyDetailSheet);
+  container.querySelector('.weekly-grid').addEventListener('click', openWeeklyDetailSheet);
 }
 
 async function renderHome(params, view, renderToken) {

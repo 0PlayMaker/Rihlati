@@ -2590,3 +2590,116 @@ body.theme-dark-ish { --ring-slice-track: rgba(255,255,255,0.10); }
 .bd-extra { display: flex; flex-wrap: wrap; gap: var(--space-1); justify-content: center; margin-top: var(--space-1); }
 .bd-extra-chip { font-size: 0.78rem; color: var(--ink-soft); background: var(--track); padding: 3px 9px; border-radius: var(--radius-round); }
 .measure-chart-svg { width: 100%; height: auto; display: block; margin: var(--space-2) 0; }
+
+/* ============================================================
+   v57 — meal-builder types, fullness, drink tracker,
+   smarter diet mode (hero, food-mix, adherence, hidden cals,
+   direction key), skipped-dates sheet
+   ============================================================ */
+
+/* Meal builder: types now sit BELOW the photo hero, not over it */
+.food-builder-hero { border-radius: var(--radius-md); overflow: hidden; }
+.food-builder-types { display: flex; gap: var(--space-1); flex-wrap: wrap; margin: var(--space-3) 0 var(--space-2); }
+.food-builder-types .chip { font-size: 0.85rem; }
+
+/* Hunger / fullness after a meal */
+.fullness-chips { display: flex; gap: var(--space-1); flex-wrap: wrap; margin-bottom: var(--space-2); }
+.fullness-chip { font-size: 0.82rem; }
+
+/* ---- Drink tracker (inside the water card) ---- */
+.drinks-section { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--track); }
+.drinks-list { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-1); }
+.drink-chip-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  width: 100%; text-align: start; background: var(--surface-2, rgba(0,0,0,0.02));
+  border: 1px solid var(--track); border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3); font-size: 0.92rem; color: var(--ink); cursor: pointer;
+}
+.drink-chip-row:active { transform: scale(0.99); }
+.drink-chip-cal { color: var(--ink-soft); font-size: 0.82rem; white-space: nowrap; }
+.drink-type-chips, .drink-sweet-chips { display: flex; gap: var(--space-1); flex-wrap: wrap; margin-bottom: var(--space-2); }
+.drink-type-chip, .drink-sweet-chip { font-size: 0.85rem; }
+
+/* ---- Diet goal hero ---- */
+.diet-hero-card {
+  background: linear-gradient(135deg, rgba(var(--pink-deep-rgb), 0.10), rgba(var(--pink-deep-rgb), 0.02));
+  border: 1px solid rgba(var(--pink-deep-rgb), 0.16);
+}
+.diet-hero-top { display: flex; align-items: stretch; gap: var(--space-2); flex-wrap: wrap; }
+.diet-hero-stat {
+  flex: 1 1 0; min-width: 90px; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 2px; padding: var(--space-2); background: rgba(255,255,255,0.45);
+  border-radius: var(--radius-md); text-align: center;
+}
+.diet-hero-main { background: var(--pink-deep); }
+.diet-hero-main .diet-hero-stat-num, .diet-hero-main .diet-hero-stat-lbl { color: #fff; }
+.diet-hero-stat-num { font-size: 1.5rem; font-weight: 800; color: var(--ink); line-height: 1.1; }
+.diet-hero-stat-lbl { font-size: 0.72rem; color: var(--ink-soft); }
+.diet-goal-chips { display: flex; gap: var(--space-1); margin-top: var(--space-3); }
+.diet-goal-chip { flex: 1; text-align: center; font-size: 0.88rem; }
+.diet-goal-progress { margin-top: var(--space-3); }
+.diet-goal-bar { height: 10px; border-radius: var(--radius-round); background: rgba(0,0,0,0.06); overflow: hidden; }
+.diet-goal-fill { height: 100%; border-radius: var(--radius-round); background: var(--success-strong); transition: width 0.4s ease; }
+.diet-goal-text { display: block; margin-top: var(--space-2); font-size: 0.82rem; color: var(--ink-soft); }
+.diet-goal-none { font-style: italic; }
+
+/* ---- 7-day average line + its legend swatch ---- */
+.diet-weight-avg { stroke: var(--ink-soft); stroke-width: 2; stroke-dasharray: 5 4; opacity: 0.75; }
+.diet-leg-avg { border-bottom: 2px dashed var(--ink-soft); width: 16px; display: inline-block; height: 0; vertical-align: middle; }
+
+/* ---- "what do the lines mean?" key ---- */
+.diet-dir-key { margin: var(--space-2) 0; }
+.diet-dir-key > summary { font-size: 0.86rem; color: var(--info-strong); cursor: pointer; font-weight: 600; }
+.diet-dir-list { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
+.diet-dir-row { display: flex; align-items: flex-start; gap: var(--space-2); font-size: 0.84rem; }
+.diet-dir-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+.diet-dir-name { font-weight: 700; color: var(--ink); flex-shrink: 0; }
+.diet-dir-mean { color: var(--ink-soft); }
+
+/* ---- Food-mix quality ---- */
+.food-mix-bar { display: flex; height: 16px; border-radius: var(--radius-round); overflow: hidden; margin: var(--space-2) 0; background: var(--track); }
+.food-mix-seg { height: 100%; }
+.food-mix-legend { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
+.food-mix-leg { display: inline-flex; align-items: center; gap: 5px; font-size: 0.8rem; color: var(--ink-soft); }
+
+/* ---- Logging streak / adherence ---- */
+.adh-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); margin: var(--space-2) 0; }
+.adh-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: var(--space-2); background: rgba(0,0,0,0.03); border-radius: var(--radius-md); }
+.adh-num { font-size: 1.35rem; font-weight: 800; color: var(--info-strong); }
+.adh-lbl { font-size: 0.7rem; color: var(--ink-soft); text-align: center; }
+.adh-skips { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
+.adh-skip-chip {
+  text-align: start; background: rgba(var(--warning-strong-rgb, 214,158,46), 0.10);
+  border: 1px solid rgba(var(--warning-strong-rgb, 214,158,46), 0.25); color: var(--ink);
+  border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); font-size: 0.85rem; cursor: pointer;
+}
+
+/* ---- Hidden-calorie alert ---- */
+.hidden-cal-rows { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
+.hidden-cal-row { display: flex; justify-content: space-between; font-size: 0.88rem; color: var(--ink); padding: var(--space-1) 0; border-bottom: 1px dashed var(--track); }
+.hidden-cal-row:last-child { border-bottom: none; }
+
+/* ---- Skipped-meal detail ---- */
+.diet-skip-more { color: var(--info-strong); font-size: 0.78rem; font-weight: 600; }
+.skip-dates-list { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow-y: auto; margin: var(--space-2) 0; }
+.skip-date-row { padding: var(--space-2) var(--space-3); background: rgba(0,0,0,0.03); border-radius: var(--radius-sm); font-size: 0.9rem; color: var(--ink); }
+
+/* ---- Weekly detail sheet ---- */
+.wk-sections { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0; }
+.wk-section {
+  display: block; width: 100%; text-align: start; background: rgba(0,0,0,0.02);
+  border: 1px solid var(--track); border-radius: var(--radius-md); padding: var(--space-3); cursor: pointer;
+}
+.wk-section:active { transform: scale(0.995); }
+.wk-section-head { display: flex; align-items: center; justify-content: space-between; }
+.wk-section-title { font-weight: 700; color: var(--ink); font-size: 0.98rem; }
+.wk-section-open { color: var(--info-strong); font-weight: 700; }
+.wk-section-sub { color: var(--ink-soft); font-size: 0.84rem; margin-top: 2px; }
+.wk-section-body { margin-top: var(--space-2); display: flex; flex-direction: column; gap: 3px; }
+.wk-line { display: flex; justify-content: space-between; font-size: 0.82rem; color: var(--ink); padding: 3px 0; border-top: 1px dashed var(--track); }
+
+/* v57 — clickable skipped-meal row + measurement action buttons */
+.diet-skip-row { width: 100%; text-align: inherit; background: none; border: none; cursor: pointer; font: inherit; padding: var(--space-2) 0; border-radius: var(--radius-md); }
+.diet-skip-row:active { opacity: 0.82; }
+.measure-actions { display: flex; gap: var(--space-2); margin-top: var(--space-3); flex-wrap: wrap; }
+.measure-actions .btn { flex: 1; min-width: 46%; }

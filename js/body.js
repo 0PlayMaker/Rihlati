@@ -434,9 +434,40 @@ async function renderBmiCard(container) {
 
 // ---------- body measurements (optional, flexible — she names her own) ----------
 
-async function createMeasurement(name) {
+async function createMeasurement(name, zone = null) {
   const all = await db.bodyMeasurements.toArray();
-  await db.bodyMeasurements.add({ name, archived: false, order: all.length, createdAt: Date.now() });
+  return db.bodyMeasurements.add({ name, zone: zone || null, archived: false, order: all.length, createdAt: Date.now() });
+}
+
+// A full standard set she can add in one tap. Each is bound to a diagram
+// zone directly (so the figure places it exactly, no name-guessing), and
+// the list is generous on purpose — "the more the better".
+const BODY_MEASUREMENT_DEFAULTS = [
+  { name: 'الرقبة', zone: 'neck' },
+  { name: 'الكتفين', zone: 'shoulders' },
+  { name: 'الصدر', zone: 'chest' },
+  { name: 'الذراع (العضد)', zone: 'arm' },
+  { name: 'الساعد', zone: 'forearm' },
+  { name: 'المعصم', zone: 'wrist' },
+  { name: 'الخصر', zone: 'waist' },
+  { name: 'البطن', zone: 'abdomen' },
+  { name: 'الورك', zone: 'hips' },
+  { name: 'الفخذ', zone: 'thigh' },
+  { name: 'السمانة', zone: 'calf' }
+];
+// Adds any of the defaults she doesn't already have (matched by zone or
+// name), leaving her own custom ones untouched.
+async function seedDefaultMeasurements() {
+  const existing = await getActiveMeasurements();
+  const haveZones = new Set(existing.map(m => m.zone).filter(Boolean));
+  const haveNames = new Set(existing.map(m => m.name));
+  let added = 0;
+  for (const d of BODY_MEASUREMENT_DEFAULTS) {
+    if (haveZones.has(d.zone) || haveNames.has(d.name)) continue;
+    await createMeasurement(d.name, d.zone);
+    added++;
+  }
+  return added;
 }
 async function updateMeasurementName(id, name) {
   await db.bodyMeasurements.update(id, { name });
@@ -499,16 +530,21 @@ function measurementDeltaPill(d) {
 // and "محيط البطن" both land on the waist of the diagram. First match
 // wins; anything unmatched is listed under the figure instead.
 const BODY_ZONES = [
-  { key: 'neck',     y: 66,  x1: 108, x2: 132, side: 'right', kws: ['رقبة', 'عنق'] },
-  { key: 'chest',    y: 108, x1: 80,  x2: 160, side: 'left',  kws: ['صدر', 'بست', 'bust', 'أكتاف', 'كتف'] },
-  { key: 'arm',      y: 138, x1: 162, x2: 188, side: 'right', kws: ['ذراع', 'عضد', 'ساعد', 'باي'] },
-  { key: 'waist',    y: 150, x1: 90,  x2: 150, side: 'right', kws: ['خصر', 'بطن', 'وسط', 'كرش'] },
-  { key: 'hips',     y: 192, x1: 78,  x2: 162, side: 'left',  kws: ['ورك', 'أرداف', 'حوض', 'ردف', 'مؤخرة'] },
-  { key: 'thigh',    y: 250, x1: 88,  x2: 152, side: 'right', kws: ['فخذ', 'فخد'] },
-  { key: 'calf',     y: 358, x1: 90,  x2: 150, side: 'left',  kws: ['ساق', 'سمانة', 'بطة', 'ربلة'] }
+  { key: 'neck',      y: 64,  x1: 108, x2: 132, side: 'right', kws: ['رقبة', 'عنق'] },
+  { key: 'shoulders', y: 84,  x1: 76,  x2: 164, side: 'left',  kws: ['كتف', 'اكتاف', 'أكتاف'] },
+  { key: 'chest',     y: 108, x1: 84,  x2: 156, side: 'right', kws: ['صدر', 'بست', 'bust'] },
+  { key: 'arm',       y: 132, x1: 162, x2: 188, side: 'right', kws: ['ذراع', 'عضد', 'باي'] },
+  { key: 'waist',     y: 150, x1: 90,  x2: 150, side: 'left',  kws: ['خصر', 'وسط'] },
+  { key: 'abdomen',   y: 168, x1: 84,  x2: 156, side: 'right', kws: ['بطن', 'كرش', 'معدة'] },
+  { key: 'forearm',   y: 182, x1: 162, x2: 186, side: 'right', kws: ['ساعد'] },
+  { key: 'hips',      y: 196, x1: 78,  x2: 162, side: 'left',  kws: ['ورك', 'أرداف', 'حوض', 'ردف', 'مؤخرة'] },
+  { key: 'wrist',     y: 205, x1: 55,  x2: 76,  side: 'left',  kws: ['معصم', 'رسغ'] },
+  { key: 'thigh',     y: 250, x1: 122, x2: 150, side: 'right', kws: ['فخذ', 'فخد'] },
+  { key: 'calf',      y: 358, x1: 90,  x2: 118, side: 'left',  kws: ['ساق', 'سمانة', 'بطة', 'ربلة'] }
 ];
-function matchBodyZone(name) {
-  const n = (name || '').toLowerCase();
+function matchBodyZone(measurement) {
+  if (measurement.zone) return measurement.zone;
+  const n = (measurement.name || '').toLowerCase();
   for (const z of BODY_ZONES) if (z.kws.some(k => n.includes(k))) return z.key;
   return null;
 }
@@ -526,7 +562,7 @@ async function renderBodyDiagram(container) {
   const placed = {}; const unplaced = [];
   for (const m of items) {
     const latest = await getMeasurementLatest(m.id);
-    const zone = matchBodyZone(m.name);
+    const zone = matchBodyZone(m);
     if (zone && !placed[zone]) placed[zone] = { m, latest };
     else unplaced.push({ m, latest });
   }
@@ -809,7 +845,10 @@ async function renderBodyPage(params, view) {
       <h2 class="card-title">قياسات الجسم (اختياري)</h2>
       <div id="body-diagram-card" style="display:none"></div>
       <div id="measurements-list"></div>
-      <button class="btn btn-secondary btn-block" id="add-measurement-btn">+ قياس جديد</button>
+      <div class="measure-actions">
+        <button class="btn btn-secondary btn-sm" id="seed-measurements-btn">📐 إضافة القياسات الأساسية</button>
+        <button class="btn btn-secondary btn-sm" id="add-measurement-btn">+ قياس مخصّص</button>
+      </div>
     </div>
     <div class="card">
       <h2 class="card-title">مزاج اليوم</h2>
@@ -900,6 +939,11 @@ async function renderBodyPage(params, view) {
   await refreshMeasures();
   document.getElementById('add-measurement-btn').addEventListener('click', () => {
     openAddMeasurementModal(refreshMeasures);
+  });
+  document.getElementById('seed-measurements-btn').addEventListener('click', async () => {
+    const added = await seedDefaultMeasurements();
+    toast(added ? `أُضيفت ${toArabicNumeral(added)} قياسات` : 'كل القياسات الأساسية موجودة');
+    await refreshMeasures();
   });
 
   await renderMoodWidget(document.getElementById('body-mood-widget'), todayStr());

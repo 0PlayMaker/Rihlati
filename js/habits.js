@@ -296,68 +296,56 @@ async function getTopHabitStreak(type) {
   return best;
 }
 
+// The Home ring "عاداتك" — now built exactly like the مسبحة: one slice
+// per habit (up to HABIT_RING_MAX), a faint track under each so the ring
+// reads as a divided whole even when empty, and a fill on top. What each
+// slice's fill MEANS depends on the habit's kind, so a mixed set still
+// makes sense at a glance:
+//   • day-goal habit → progress toward its N-day goal (shows the "days")
+//   • counter habit  → today's count toward its daily target
+//   • normal/quit    → full if today is clean (no slip), empty if slipped
+// The centre shows how many habits are "good" right now, done/total, the
+// same readout as the مسبحة.
+//
+// Deliberately includes habits hidden from Home: the ring is only ever
+// numbers, so it reveals nothing, and a habit she keeps private should
+// still count toward her day.
+const HABIT_RING_MAX = 6;
 async function getHabitsRingData() {
-  // The Home ring for normal + day-goal habits (counters have their own).
-  // Two distinct signals live here, which is why it splits into two arcs:
-  //   • day-goal habits contribute long-term PROGRESS (how far toward the
-  //     N-day goal), so a 90-day quit reads as "day 12 of 90", not as a
-  //     single done/missed tick that says nothing about the journey.
-  //   • normal habits contribute a DAILY "clean today" signal — did I slip
-  //     today or not.
-  //
-  // Deliberately includes habits hidden from Home: the ring is only ever
-  // numbers, so it reveals nothing, and a habit she keeps private should
-  // still be tracked and still count toward her day.
-  const habits = await getNonCounterHabits();
-  const today = todayStr();
-
-  const dayGoalHabits = habits.filter(h => habitKind(h) === 'daygoal');
-  const normalHabits = habits.filter(h => habitKind(h) === 'normal');
-
-  // Day-goal progress: average of each habit's day/goal fraction.
-  let dayGoalProgress = 0;
-  if (dayGoalHabits.length) {
-    let sum = 0;
-    for (const h of dayGoalHabits) {
-      const stats = await getHabitStats(h.id);
-      sum += Math.min(1, stats.streak / h.dayGoal);
-    }
-    dayGoalProgress = sum / dayGoalHabits.length;
-  }
-
-  // Clean-today across normal habits: no slip logged today.
-  let cleanToday = 0;
-  for (const h of normalHabits) {
-    if (!(await hasMishapToday(h.id))) cleanToday++;
-  }
-  const cleanFrac = normalHabits.length ? cleanToday / normalHabits.length : 0;
-
-  // Kept for any caller still reading done/missed.
-  let done = 0, missed = 0;
-  for (const h of habits) {
-    if ((await getHabitStatus(h.id, today)) === 'missed') missed++; else done++;
-  }
-
-  return {
-    total: habits.length, done, missed, pending: 0,
-    hasDayGoal: dayGoalHabits.length > 0,
-    hasNormal: normalHabits.length > 0,
-    dayGoalCount: dayGoalHabits.length,
-    normalCount: normalHabits.length,
-    dayGoalProgress, cleanToday, cleanFrac
-  };
-}
-
-// Home ring for daily-counter habits: one slice per counter, each filling
-// toward its own daily target — the same divided-ring shape as the مسبحة.
-async function getCounterHabitsRingData() {
-  const habits = await getCounterHabits();
+  const habits = (await getActiveHabits()).slice(0, HABIT_RING_MAX);
   const today = todayStr();
   const items = [];
   for (const h of habits) {
-    const count = await getHabitCount(h.id, today);
-    const target = h.dailyTarget || 1;
-    items.push({ habit: h, count, target, frac: Math.min(1, count / target), done: count >= target });
+    const kind = habitKind(h);
+    let frac = 0, done = false, detail = '';
+    if (kind === 'counter') {
+      const count = await getHabitCount(h.id, today);
+      const target = h.dailyTarget || 1;
+      frac = Math.min(1, count / target); done = count >= target;
+      detail = `${toArabicNumeral(count)}/${toArabicNumeral(target)}`;
+    } else if (kind === 'daygoal') {
+      const stats = await getHabitStats(h.id);
+      frac = Math.min(1, stats.streak / h.dayGoal); done = stats.streak >= h.dayGoal;
+      detail = `${toArabicNumeral(stats.streak)}/${toArabicNumeral(h.dayGoal)} يوم`;
+    } else {
+      const clean = !(await hasMishapToday(h.id));
+      frac = clean ? 1 : 0; done = clean;
+    }
+    items.push({ habit: h, kind, frac, done, detail });
+  }
+  return { items, doneCount: items.filter(i => i.done).length, total: items.length };
+}
+
+// The Home ring "أيام العادات" — only day-goal habits, one slice each,
+// filling toward the goal. Same divided شكل as the مسبحة; centre shows
+// how many have reached their goal.
+async function getHabitDaysRingData() {
+  const habits = (await getActiveHabits()).filter(h => habitKind(h) === 'daygoal').slice(0, HABIT_RING_MAX);
+  const items = [];
+  for (const h of habits) {
+    const stats = await getHabitStats(h.id);
+    const frac = Math.min(1, stats.streak / h.dayGoal);
+    items.push({ habit: h, frac, done: stats.streak >= h.dayGoal, streak: stats.streak, dayGoal: h.dayGoal });
   }
   return { items, doneCount: items.filter(i => i.done).length, total: items.length };
 }

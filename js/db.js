@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v56 · ١٧ يوليو ٢٠٢٦';
+const APP_VERSION = 'v57 · ١٧ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -118,8 +118,8 @@ const MEAL_TYPES = [
   { key: 'dinner', label: 'عشاء', icon: '🍽️' },
   { key: 'dessert', label: 'تحلية صحية', icon: '🍓' }
 ];
-function mealTypeLabel(key) { return MEAL_TYPES.find(m => m.key === key)?.label || key; }
-function mealTypeIcon(key) { return MEAL_TYPES.find(m => m.key === key)?.icon || '🍽️'; }
+function mealTypeLabel(key) { return key === 'drink' ? 'مشروب' : (MEAL_TYPES.find(m => m.key === key)?.label || key); }
+function mealTypeIcon(key) { return key === 'drink' ? '🥤' : (MEAL_TYPES.find(m => m.key === key)?.icon || '🍽️'); }
 
 // Bottom nav — shared between app.js (renders it) and profile.js
 // (renders the Settings checklist that controls which items show).

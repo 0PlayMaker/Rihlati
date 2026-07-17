@@ -57,7 +57,35 @@ function allSeriesDefs() {
   const timing = DIET_TIMING.map(t => ({ key: t.key, label: t.label, color: t.color, kind: 'timing', unit: t.unit }));
   return [...metrics, ...cats, ...timing];
 }
-function seriesDef(key) { return allSeriesDefs().find(s => s.key === key); }
+// Full defs including the context-dependent series (BMI needs her height,
+// measurement series need her measurement list). Kept separate so the
+// static picker groups still work without a context.
+function allSeriesDefsCtx(ctx = {}) {
+  const defs = allSeriesDefs();
+  if (ctx.heightCm) defs.push({ key: 'metric:bmi', label: '📊 BMI', color: '#8E7CC3', kind: 'body', unit: '' });
+  (ctx.measurements || []).forEach(m => defs.push({ key: 'meas:' + m.id, label: '📏 ' + m.name, color: '#C77DA0', kind: 'body', unit: 'سم' }));
+  return defs;
+}
+function seriesDef(key, ctx = {}) { return allSeriesDefsCtx(ctx).find(s => s.key === key); }
+
+// What a RISING line means, in plain Arabic — so the legend can tell her
+// that a falling "gap" line means shorter gaps, not fewer meals, etc.
+function dietSeriesMeaning(key) {
+  if (key === 'weight') return 'ينزل = نقص وزنك، يصعد = زاد';
+  if (key === 'metric:bmi') return 'يتبع وزنك';
+  if (key === 'timing:overnight') return 'أعلى = صيام ليلي أطول';
+  if (key === 'timing:gap') return 'أعلى = فجوات أطول بين الوجبات';
+  if (key.startsWith('meas:')) return 'أعلى = القياس أكبر';
+  if (key.startsWith('cat:')) return 'أعلى = تكرّر أكثر في اليوم';
+  if (key === 'metric:calories') return 'أعلى = سعرات أكثر';
+  if (key === 'metric:weight') return 'أعلى = وزن طعام أكبر';
+  return 'أعلى = كمية أكبر';
+}
+
+async function getDietContext() {
+  const [settings, measurements] = await Promise.all([db.settings.get(1), getActiveMeasurements()]);
+  return { heightCm: settings?.heightCm || null, measurements };
+}
 
 // minutes since midnight, or null
 function parseTimeToMin(timeStr) {
@@ -114,7 +142,7 @@ function dailyCatCountMap(foodLogs, catKey) {
 // One row per day in the window that has weight or any food data. Each row
 // carries the weight and a value for every possible series, so the chart
 // and the day-detail can read straight from it.
-async function getDietDays(rangeDays) {
+async function getDietDays(rangeDays, ctx = {}) {
   const [weightLogs, foodLogs] = await Promise.all([getAllWeightLogs(), db.foodLogs.toArray()]);
   const weightBy = {}; weightLogs.forEach(w => { weightBy[w.date] = w.value; });
 
@@ -122,21 +150,43 @@ async function getDietDays(rangeDays) {
   const catMaps = {}; FOOD_TAG_CATEGORIES.forEach(c => { catMaps[c.key] = dailyCatCountMap(foodLogs, c.key); });
   const timing = computeMealTiming(foodLogs);
 
+  // Measurement values per day (for optional overlays).
+  const measMaps = {};
+  for (const m of (ctx.measurements || [])) {
+    const logs = await getMeasurementLogs(m.id);
+    const map = {}; logs.forEach(l => { map[l.date] = l.value; });
+    measMaps[m.id] = map;
+  }
+  const h = ctx.heightCm ? ctx.heightCm / 100 : null;
+
   const start = rangeDays === 'all' ? null : addDays(todayStr(), -Number(rangeDays) + 1);
   const dates = new Set([...Object.keys(weightBy)]);
   Object.values(metricMaps).forEach(mm => Object.keys(mm).forEach(d => dates.add(d)));
   Object.values(catMaps).forEach(cm => Object.keys(cm).forEach(d => dates.add(d)));
   Object.keys(timing.overnight).forEach(d => dates.add(d));
   Object.keys(timing.gap).forEach(d => dates.add(d));
+  Object.values(measMaps).forEach(mm => Object.keys(mm).forEach(d => dates.add(d)));
 
-  return [...dates].filter(d => start === null || d >= start).sort().map(date => {
+  const rows = [...dates].filter(d => start === null || d >= start).sort().map(date => {
     const row = { date, weight: weightBy[date] ?? null, series: {} };
     DIET_METRICS.forEach(m => { row.series['metric:' + m.key] = metricMaps[m.key][date] ?? 0; });
     FOOD_TAG_CATEGORIES.forEach(c => { row.series['cat:' + c.key] = catMaps[c.key][date] ?? 0; });
     row.series['timing:overnight'] = timing.overnight[date] ?? 0;
     row.series['timing:gap'] = timing.gap[date] ?? 0;
+    if (h && row.weight != null) row.series['metric:bmi'] = row.weight / (h * h);
+    (ctx.measurements || []).forEach(m => { if (measMaps[m.id][date] != null) row.series['meas:' + m.id] = measMaps[m.id][date]; });
     return row;
   });
+
+  // 7-day trailing average of weight, attached to each row that has a weight.
+  const wPoints = rows.filter(r => r.weight != null);
+  rows.forEach(r => {
+    if (r.weight == null) return;
+    const from = addDays(r.date, -6);
+    const window = wPoints.filter(p => p.date >= from && p.date <= r.date);
+    r.weightAvg = window.reduce((s, p) => s + p.weight, 0) / window.length;
+  });
+  return rows;
 }
 
 // ============================================================
@@ -227,18 +277,22 @@ async function analyzeDiet(rangeDays, metricKey) {
 // Split a set of {metric, perDay} pairs into the high-metric half and the
 // low-metric half, and report each half's average weight change — the
 // generic "does more of X coincide with gaining or losing" test.
-function splitByMetric(pairs) {
+// minSpread guards against a near-constant metric (e.g. a meal she never
+// skips): if the two halves barely differ, there's no contrast to read
+// and it returns null instead of inventing a spurious effect.
+function splitByMetric(pairs, minSpread = 0) {
   const clean = pairs.filter(p => p.metric != null && isFinite(p.metric));
   if (clean.length < 4) return null;
   const sorted = [...clean].sort((a, b) => a.metric - b.metric);
   const half = Math.floor(sorted.length / 2);
   const low = sorted.slice(0, half), high = sorted.slice(-half);
+  const lowMetric = low.reduce((s, x) => s + x.metric, 0) / low.length;
+  const highMetric = high.reduce((s, x) => s + x.metric, 0) / high.length;
+  if (highMetric - lowMetric < minSpread) return null;
   return {
     lowPerDay: low.reduce((s, x) => s + x.perDay, 0) / low.length,
     highPerDay: high.reduce((s, x) => s + x.perDay, 0) / high.length,
-    lowMetric: low.reduce((s, x) => s + x.metric, 0) / low.length,
-    highMetric: high.reduce((s, x) => s + x.metric, 0) / high.length,
-    n: clean.length
+    lowMetric, highMetric, n: clean.length
   };
 }
 
@@ -272,32 +326,56 @@ async function analyzeMealTiming(rangeDays) {
   };
 }
 
-// "Which meal, when skipped, tends to accompany weight going down?" For
-// each interval and meal type: skip-rate = share of her LOGGING days in
-// that interval with no meal of that type. Then split high-skip vs
-// low-skip intervals and compare weight change.
+// "Which meal, when skipped, tends to accompany weight going down?"
+//
+// The subtle bug this fixes: a meal she NEVER skips has a skip-rate of 0 in
+// every interval. Splitting a constant-0 column still produced two halves
+// and a random-looking effect, so the app once claimed skipping breakfast
+// lowered her weight when she'd never skipped it. Now a meal type is only
+// considered when it was ACTUALLY skipped on enough logging days AND the
+// skip-rate genuinely varies between intervals (minSpread). It also
+// returns the exact skipped dates so the insight can be opened up.
+//
+// "Skipped" = a day she logged at least one (non-drink) meal but none of
+// this type — a real omission, not just an unlogged day.
 async function analyzeMealTypeSkips(rangeDays) {
-  const [weightLogs, foodLogs] = await Promise.all([getAllWeightLogs(), db.foodLogs.toArray()]);
+  const [weightLogs, foodLogsAll] = await Promise.all([getAllWeightLogs(), db.foodLogs.toArray()]);
+  const foodLogs = foodLogsAll.filter(l => !l.isDrink);
   const start = rangeDays === 'all' ? '0000-00-00' : addDays(todayStr(), -Number(rangeDays) + 1);
   const weights = weightLogs.filter(w => w.date >= start);
-  if (weights.length < 2) return { enough: false, rows: [] };
+  const inRange = foodLogs.filter(l => l.date >= start);
+
+  // Global skipped-dates per meal type (over all logging days in range).
+  const loggingDaysAll = [...new Set(inRange.map(l => l.date))].sort();
+  const skippedByType = {};
+  for (const mt of MEAL_TYPES) {
+    const daysWith = new Set(inRange.filter(l => l.mealType === mt.key).map(l => l.date));
+    skippedByType[mt.key] = loggingDaysAll.filter(d => !daysWith.has(d));
+  }
+
+  if (weights.length < 2) {
+    return { enough: false, rows: [], skippedByType, loggingDays: loggingDaysAll.length };
+  }
   const intervals = buildReadingIntervals(weights, foodLogs);
 
   const rows = [];
   for (const mt of MEAL_TYPES) {
+    const totalSkipped = skippedByType[mt.key].length;
+    // Never/barely skipped → nothing to say about skipping it.
+    if (totalSkipped < 3) continue;
     const pairs = intervals.map(iv => {
       const loggingDays = new Set(iv.meals.map(m => m.date));
       if (loggingDays.size === 0) return null;
       const daysWithType = new Set(iv.meals.filter(m => m.mealType === mt.key).map(m => m.date));
-      const skipRate = 1 - (daysWithType.size / loggingDays.size);
-      return { metric: skipRate, perDay: iv.perDay };
+      return { metric: 1 - (daysWithType.size / loggingDays.size), perDay: iv.perDay };
     }).filter(Boolean);
-    const split = splitByMetric(pairs);
-    if (!split) continue;
-    rows.push({ mealType: mt, skipEffect: split.highPerDay - split.lowPerDay, highSkipPerDay: split.highPerDay, highSkipRate: split.highMetric });
+    // Require a real difference in skip-rate between the halves.
+    const split = splitByMetric(pairs, 0.15);
+    if (!split || split.highMetric < 0.25) continue;
+    rows.push({ mealType: mt, skipEffect: split.highPerDay - split.lowPerDay, highSkipPerDay: split.highPerDay, highSkipRate: split.highMetric, totalSkipped, skippedDates: skippedByType[mt.key] });
   }
   rows.sort((a, b) => a.skipEffect - b.skipEffect); // most weight-lowering skip first
-  return { enough: true, rows };
+  return { enough: true, rows, skippedByType, loggingDays: loggingDaysAll.length };
 }
 
 // ============================================================
@@ -307,7 +385,7 @@ async function analyzeMealTypeSkips(rangeDays) {
 // series is normalised to its OWN range and drawn thin — so the eye
 // compares SHAPE (does this rise when weight rises?) rather than raw units
 // that don't share a scale. Transparent day-columns make points tappable.
-function renderDietChart(days, selectedKeys) {
+function renderDietChart(days, selectedKeys, ctx = {}) {
   const withWeight = days.filter(p => p.weight != null);
   if (days.length === 0) return '<p class="empty-state-sub">سجّلي وزنك ووجباتك لرؤية الرسم.</p>';
 
@@ -325,7 +403,7 @@ function renderDietChart(days, selectedKeys) {
 
   // each selected series, normalised to its own visible range
   const seriesPaths = selectedKeys.map(key => {
-    const def = seriesDef(key); if (!def) return '';
+    const def = seriesDef(key, ctx); if (!def) return '';
     const vals = days.map(p => p.series[key] ?? 0);
     const mx = Math.max(...vals, 0), mn = Math.min(...vals, 0);
     const range = (mx - mn) || 1;
@@ -337,6 +415,10 @@ function renderDietChart(days, selectedKeys) {
     const path = coords.length >= 2 ? smoothPath(coords) : '';
     return path ? `<path d="${path}" fill="none" stroke="${def.color}" stroke-width="1.6" stroke-opacity="0.85" stroke-linejoin="round"/>` : '';
   }).join('');
+
+  // 7-day average trend (dashed) — the calmer signal under the daily noise.
+  const avgCoords = days.map((p, i) => p.weightAvg != null ? [xAt(i), wY(p.weightAvg)] : null).filter(Boolean);
+  const avgLine = avgCoords.length >= 2 ? `<path d="${smoothPath(avgCoords)}" fill="none" class="diet-weight-avg"/>` : '';
 
   const weightCoords = days.map((p, i) => p.weight != null ? [xAt(i), wY(p.weight)] : null).filter(Boolean);
   const weightLine = weightCoords.length >= 2 ? `<path d="${smoothPath(weightCoords)}" fill="none" class="diet-weight-line"/>` : '';
@@ -351,6 +433,7 @@ function renderDietChart(days, selectedKeys) {
   return `
     <svg viewBox="0 0 ${width} ${height}" class="diet-chart-svg">
       ${seriesPaths}
+      ${avgLine}
       ${weightLine}
       ${dots}
       ${wLabels}
@@ -358,10 +441,23 @@ function renderDietChart(days, selectedKeys) {
     </svg>`;
 }
 
-function dietChartLegend(selectedKeys) {
-  const items = [`<span class="diet-leg"><i class="diet-leg-swatch diet-leg-weight"></i> الوزن</span>`]
-    .concat(selectedKeys.map(k => { const d = seriesDef(k); return d ? `<span class="diet-leg"><i class="diet-leg-swatch" style="background:${d.color}"></i> ${d.label}</span>` : ''; }));
+function dietChartLegend(selectedKeys, ctx = {}) {
+  const items = [`<span class="diet-leg"><i class="diet-leg-swatch diet-leg-weight"></i> الوزن</span>`, `<span class="diet-leg"><i class="diet-leg-swatch diet-leg-avg"></i> متوسط ٧ أيام</span>`]
+    .concat(selectedKeys.map(k => { const d = seriesDef(k, ctx); return d ? `<span class="diet-leg"><i class="diet-leg-swatch" style="background:${d.color}"></i> ${d.label}</span>` : ''; }));
   return `<div class="diet-legend">${items.join('')}</div>`;
+}
+
+// A plain-language key: for every line on the chart, what does UP mean?
+function dietDirectionKey(selectedKeys, ctx = {}) {
+  const rows = [{ key: 'weight', label: 'الوزن', color: 'var(--ink)' }]
+    .concat(selectedKeys.map(k => { const d = seriesDef(k, ctx); return d ? { key: k, label: d.label, color: d.color } : null; }).filter(Boolean));
+  return `
+    <details class="diet-dir-key">
+      <summary>❓ ماذا تعني الخطوط؟</summary>
+      <div class="diet-dir-list">
+        ${rows.map(r => `<div class="diet-dir-row"><i class="diet-dir-dot" style="background:${r.color}"></i><span class="diet-dir-name">${r.label}</span><span class="diet-dir-mean">${dietSeriesMeaning(r.key)}</span></div>`).join('')}
+      </div>
+    </details>`;
 }
 
 // ============================================================
@@ -428,6 +524,170 @@ function deltaPillHtml(delta, unit = 'كغ') {
 }
 
 // ============================================================
+//  smarter diet: goal, food-mix, adherence, hidden calories
+// ============================================================
+async function getWeightGoal() {
+  const [settings, weights] = await Promise.all([db.settings.get(1), getAllWeightLogs()]);
+  const target = settings?.targetWeightKg ?? null;
+  const current = weights.length ? weights[weights.length - 1].value : null;
+  const start = weights.length ? weights[0].value : null;
+  let goalType = settings?.dietGoalType || null; // 'loss' | 'gain' | 'maintain'
+  if (!goalType && target != null && current != null) {
+    goalType = Math.abs(target - current) < 0.3 ? 'maintain' : (target < current ? 'loss' : 'gain');
+  }
+  return { target, goalType, current, start, heightCm: settings?.heightCm || null };
+}
+async function saveDietGoalType(t) { await db.settings.update(1, { dietGoalType: t }); }
+
+// The hero: current weight + 7-day average + trend + BMI, then goal
+// progress that is DIRECTION-AWARE — for a gain goal, moving up is
+// progress; for a loss goal, moving down is.
+async function renderDietGoalHero(container, ctx) {
+  const g = await getWeightGoal();
+  const days = await getDietDays('30', ctx);
+  const withAvg = days.filter(d => d.weightAvg != null);
+  const avg = withAvg.length ? withAvg[withAvg.length - 1].weightAvg : null;
+  const prevAvg = withAvg.length > 1 ? withAvg[0].weightAvg : null;
+  const trend = (avg != null && prevAvg != null) ? avg - prevAvg : null;
+
+  const goalChips = ['loss', 'maintain', 'gain'].map(t => {
+    const lbl = t === 'loss' ? '📉 نزول' : t === 'gain' ? '📈 زيادة' : '⚖️ ثبات';
+    return `<button class="chip diet-goal-chip ${g.goalType === t ? 'active' : ''}" data-goal="${t}">${lbl}</button>`;
+  }).join('');
+
+  let bmiBit = '';
+  if (g.heightCm && g.current != null) {
+    const bmi = computeBmi(g.current, g.heightCm);
+    bmiBit = `<div class="diet-hero-stat"><span class="diet-hero-stat-num">${toArabicNumeral(bmi.toFixed(1))}</span><span class="diet-hero-stat-lbl">BMI · ${bmiCategory(bmi)}</span></div>`;
+  }
+
+  let progressBit = '';
+  if (g.target != null && g.current != null && g.start != null && g.goalType !== 'maintain') {
+    const totalNeeded = Math.abs(g.target - g.start) || 1;
+    const done = g.goalType === 'loss' ? (g.start - g.current) : (g.current - g.start);
+    const pct = Math.max(0, Math.min(100, (done / totalNeeded) * 100));
+    const remaining = Math.abs(g.target - g.current);
+    progressBit = `
+      <div class="diet-goal-progress">
+        <div class="diet-goal-bar"><div class="diet-goal-fill" style="width:${pct}%"></div></div>
+        <span class="diet-goal-text">${toArabicNumeral(Math.abs(done).toFixed(1))} من ${toArabicNumeral(totalNeeded.toFixed(1))} كغ · باقٍ ${toArabicNumeral(remaining.toFixed(1))} كغ نحو ${toArabicNumeral(g.target.toFixed(1))}</span>
+      </div>`;
+  } else if (g.target != null && g.goalType === 'maintain' && g.current != null) {
+    progressBit = `<span class="diet-goal-text">هدفك الثبات قرب ${toArabicNumeral(g.target.toFixed(1))} كغ — الآن ${toArabicNumeral(g.current.toFixed(1))}.</span>`;
+  } else {
+    progressBit = `<span class="diet-goal-text diet-goal-none">أضيفي وزناً مستهدفاً في صفحة الصحة لعرض تقدّمك.</span>`;
+  }
+
+  container.innerHTML = `
+    <div class="diet-hero-top">
+      <div class="diet-hero-stat diet-hero-main">
+        <span class="diet-hero-stat-num">${g.current != null ? toArabicNumeral(g.current.toFixed(1)) : '—'}</span>
+        <span class="diet-hero-stat-lbl">كغ الآن</span>
+      </div>
+      <div class="diet-hero-stat">
+        <span class="diet-hero-stat-num">${avg != null ? toArabicNumeral(avg.toFixed(1)) : '—'} ${trend != null ? deltaArrowInline(trend) : ''}</span>
+        <span class="diet-hero-stat-lbl">متوسط ٧ أيام</span>
+      </div>
+      ${bmiBit}
+    </div>
+    <div class="diet-goal-chips">${goalChips}</div>
+    ${progressBit}`;
+
+  container.querySelectorAll('.diet-goal-chip').forEach(chip => {
+    chip.addEventListener('click', async () => {
+      await saveDietGoalType(chip.dataset.goal);
+      await renderDietGoalHero(container, ctx);
+    });
+  });
+}
+function deltaArrowInline(d) {
+  if (Math.abs(d) < 0.05) return '<span class="diet-delta diet-delta-flat">→</span>';
+  return d > 0 ? '<span class="diet-delta diet-delta-up">↑</span>' : '<span class="diet-delta diet-delta-down">↓</span>';
+}
+
+// Food-mix quality: what share of tagged food is each category.
+async function computeFoodMix(range) {
+  const foodLogs = await db.foodLogs.toArray();
+  const start = range === 'all' ? '0000-00-00' : addDays(todayStr(), -Number(range) + 1);
+  const meals = foodLogs.filter(l => l.date >= start);
+  const counts = {}; let total = 0;
+  FOOD_TAG_CATEGORIES.forEach(c => { counts[c.key] = 0; });
+  meals.forEach(l => (l.foodTags || []).forEach(t => { if (counts[t.cat] !== undefined) { counts[t.cat]++; total++; } }));
+  const rows = FOOD_TAG_CATEGORIES.map(c => ({ cat: c, count: counts[c.key], share: total ? counts[c.key] / total : 0 })).filter(r => r.count > 0).sort((a, b) => b.count - a.count);
+  return { rows, total };
+}
+async function renderFoodMixCard(container, range) {
+  const mix = await computeFoodMix(range);
+  if (mix.total === 0) { container.innerHTML = `<h2 class="card-title">🍽️ مزيج طعامك</h2><p class="settings-note">أضيفي مكوّنات وجباتك لرؤية توزيع أنواع طعامك.</p>`; return; }
+  container.innerHTML = `
+    <h2 class="card-title">🍽️ مزيج طعامك</h2>
+    <p class="settings-note">توزيع أنواع الطعام التي سجّلتِها في هذه الفترة.</p>
+    <div class="food-mix-bar">${mix.rows.map(r => `<span class="food-mix-seg" style="width:${(r.share * 100).toFixed(1)}%;background:${DIET_CAT_COLORS[r.cat.key] || 'var(--ink-soft)'}" title="${r.cat.label}"></span>`).join('')}</div>
+    <div class="food-mix-legend">${mix.rows.map(r => `<span class="food-mix-leg"><i class="diet-chip-swatch" style="background:${DIET_CAT_COLORS[r.cat.key] || 'var(--ink-soft)'}"></i>${r.cat.icon} ${r.cat.label} ${toArabicNumeral(Math.round(r.share * 100))}٪</span>`).join('')}</div>`;
+}
+
+// Logging streak + how much of the window she actually logged.
+async function computeAdherence(range) {
+  const foodLogs = await db.foodLogs.toArray();
+  const logged = new Set(foodLogs.filter(l => !l.isDrink).map(l => l.date));
+  const days = Number(range === 'all' ? 90 : range);
+  let loggedInRange = 0;
+  for (let i = 0; i < days; i++) if (logged.has(addDays(todayStr(), -i))) loggedInRange++;
+  let streak = 0, cursor = todayStr();
+  if (!logged.has(cursor)) cursor = addDays(cursor, -1); // today not logged yet is OK
+  while (logged.has(cursor)) { streak++; cursor = addDays(cursor, -1); }
+  return { streak, loggedInRange, totalDays: days, pct: loggedInRange / days };
+}
+async function renderAdherenceCard(container, range) {
+  const [a, skips] = await Promise.all([computeAdherence(range), analyzeMealTypeSkips(range)]);
+  const skipRows = (skips.rows || []).filter(r => r.totalSkipped >= 3).slice(0, 3);
+  const skipList = skipRows.length
+    ? `<div class="adh-skips">${skipRows.map(r => `<button class="adh-skip-chip" data-skip="${r.mealType.key}">${r.mealType.icon} ${r.mealType.label}: تخطّي ${toArabicNumeral(r.totalSkipped)} يوم ←</button>`).join('')}</div>`
+    : '<p class="settings-note">لا تخطّي وجبات ملحوظ — انتظام جيّد. 👏</p>';
+  container.innerHTML = `
+    <h2 class="card-title">📋 الالتزام بالتسجيل</h2>
+    <div class="adh-grid">
+      <div class="adh-stat"><span class="adh-num">${toArabicNumeral(a.streak)}</span><span class="adh-lbl">${a.streak === 1 ? 'يوم متتالٍ' : 'أيام متتالية'}</span></div>
+      <div class="adh-stat"><span class="adh-num">${toArabicNumeral(Math.round(a.pct * 100))}٪</span><span class="adh-lbl">من الأيام سجّلتِ</span></div>
+      <div class="adh-stat"><span class="adh-num">${toArabicNumeral(a.loggedInRange)}</span><span class="adh-lbl">من ${toArabicNumeral(a.totalDays)} يوم</span></div>
+    </div>
+    ${skipList}`;
+  container.querySelectorAll('[data-skip]').forEach(btn => btn.addEventListener('click', () => {
+    const mt = MEAL_TYPES.find(m => m.key === btn.dataset.skip);
+    openSkippedDatesSheet(mt, skips.skippedByType?.[btn.dataset.skip] || []);
+  }));
+}
+
+// Hidden-calorie alert: share of intake from drinks and snacks.
+async function computeHiddenCalories(range) {
+  const foodLogs = await db.foodLogs.toArray();
+  const start = range === 'all' ? '0000-00-00' : addDays(todayStr(), -Number(range) + 1);
+  const inR = foodLogs.filter(l => l.date >= start && l.calories);
+  const drinkCal = inR.filter(l => l.isDrink).reduce((s, l) => s + l.calories, 0);
+  const snackCal = inR.filter(l => !l.isDrink && (l.mealType === 'snack' || l.mealType === 'dessert')).reduce((s, l) => s + l.calories, 0);
+  const total = inR.reduce((s, l) => s + l.calories, 0);
+  const days = new Set(inR.map(l => l.date)).size || 1;
+  const hidden = drinkCal + snackCal;
+  return { drinkCal, snackCal, hidden, total, perDayHidden: hidden / days, share: total ? hidden / total : 0 };
+}
+async function renderHiddenCalorieCard(container, range) {
+  const h = await computeHiddenCalories(range);
+  if (h.total === 0) { container.innerHTML = ''; container.style.display = 'none'; return; }
+  container.style.display = '';
+  const high = h.share > 0.25;
+  container.innerHTML = `
+    <h2 class="card-title">🥤 السعرات الخفيّة</h2>
+    <p class="diet-insight diet-insight-${high ? 'warn' : 'good'}">
+      ${high ? '⚠️ ' : ''}المشروبات والسناك تشكّل <strong>${toArabicNumeral(Math.round(h.share * 100))}٪</strong> من سعراتك (~${toArabicNumeral(Math.round(h.perDayHidden))} سعرة/يوم).
+    </p>
+    <div class="hidden-cal-rows">
+      <div class="hidden-cal-row"><span>🥤 مشروبات</span><span>${toArabicNumeral(Math.round(h.drinkCal))} سعرة</span></div>
+      <div class="hidden-cal-row"><span>🍿 سناك وتحلية</span><span>${toArabicNumeral(Math.round(h.snackCal))} سعرة</span></div>
+    </div>
+    ${high ? '<p class="diet-tip">💡 هذه غالباً أسهل ما يُخفَّض دون الشعور بالجوع.</p>' : ''}`;
+}
+
+// ============================================================
 //  the page
 // ============================================================
 async function renderDietPage(params, view) {
@@ -436,7 +696,7 @@ async function renderDietPage(params, view) {
       <button class="icon-btn" aria-label="رجوع" id="diet-back">→</button>
       <h1>وضع الدايت</h1>
     </div>
-    <div class="card" id="diet-periods-card"></div>
+    <div class="card diet-hero-card" id="diet-goal-hero"></div>
     <div class="card">
       <div class="section-header">
         <h2 class="card-title">الوجبات مقابل وزنك</h2>
@@ -450,7 +710,8 @@ async function renderDietPage(params, view) {
       <div id="diet-chart"></div>
       <div id="diet-legend"></div>
       <p class="diet-tap-hint">اضغطي أي يوم على الرسم لرؤية تفاصيله</p>
-      <details class="diet-series-picker" open>
+      <div id="diet-dir-key"></div>
+      <details class="diet-series-picker">
         <summary>ماذا أرسم فوق منحنى الوزن؟</summary>
         <p class="material-type-label">قيم غذائية</p>
         <div class="diet-series-chips" id="diet-metric-series"></div>
@@ -458,8 +719,13 @@ async function renderDietPage(params, view) {
         <div class="diet-series-chips" id="diet-cat-series"></div>
         <p class="material-type-label">التوقيت</p>
         <div class="diet-series-chips" id="diet-timing-series"></div>
+        <p class="material-type-label">الجسم والقياسات</p>
+        <div class="diet-series-chips" id="diet-body-series"></div>
       </details>
     </div>
+    <div class="card" id="diet-mix-card"></div>
+    <div class="card" id="diet-adherence-card"></div>
+    <div class="card" id="diet-hidden-card" style="display:none"></div>
     <div class="card" id="diet-insights-card"></div>
     <div class="card" id="diet-timing-card" style="display:none"></div>
     <div class="card" id="diet-measure-card"></div>
@@ -471,18 +737,19 @@ async function renderDietPage(params, view) {
 
   let range = '180';
   let selected = await getDietSeriesPref();
+  const ctx = await getDietContext();
 
   function renderSeriesChips() {
-    const defs = allSeriesDefs();
-    const metricWrap = document.getElementById('diet-metric-series');
-    const catWrap = document.getElementById('diet-cat-series');
-    metricWrap.innerHTML = defs.filter(d => d.kind === 'metric').map(d =>
-      `<button class="chip diet-series-chip ${selected.includes(d.key) ? 'active' : ''}" data-skey="${d.key}"><i class="diet-chip-swatch" style="background:${d.color}"></i>${d.label}</button>`).join('');
-    catWrap.innerHTML = defs.filter(d => d.kind === 'cat').map(d =>
-      `<button class="chip diet-series-chip ${selected.includes(d.key) ? 'active' : ''}" data-skey="${d.key}"><i class="diet-chip-swatch" style="background:${d.color}"></i>${d.label}</button>`).join('');
-    const timeWrap = document.getElementById('diet-timing-series');
-    timeWrap.innerHTML = defs.filter(d => d.kind === 'timing').map(d =>
-      `<button class="chip diet-series-chip ${selected.includes(d.key) ? 'active' : ''}" data-skey="${d.key}"><i class="diet-chip-swatch" style="background:${d.color}"></i>${d.label}</button>`).join('');
+    const defs = allSeriesDefsCtx(ctx);
+    const fill = (id, kind) => {
+      const el = document.getElementById(id); if (!el) return;
+      el.innerHTML = defs.filter(d => d.kind === kind).map(d =>
+        `<button class="chip diet-series-chip ${selected.includes(d.key) ? 'active' : ''}" data-skey="${d.key}"><i class="diet-chip-swatch" style="background:${d.color}"></i>${d.label}</button>`).join('') || '<span class="settings-note">—</span>';
+    };
+    fill('diet-metric-series', 'metric');
+    fill('diet-cat-series', 'cat');
+    fill('diet-timing-series', 'timing');
+    fill('diet-body-series', 'body');
     view.querySelectorAll('.diet-series-chip').forEach(chip => {
       chip.addEventListener('click', async () => {
         const k = chip.dataset.skey;
@@ -495,26 +762,21 @@ async function renderDietPage(params, view) {
   }
 
   async function drawChart() {
-    const days = await getDietDays(range);
-    document.getElementById('diet-chart').innerHTML = renderDietChart(days, selected);
-    document.getElementById('diet-legend').innerHTML = dietChartLegend(selected);
+    const days = await getDietDays(range, ctx);
+    document.getElementById('diet-chart').innerHTML = renderDietChart(days, selected, ctx);
+    document.getElementById('diet-legend').innerHTML = dietChartLegend(selected, ctx);
+    document.getElementById('diet-dir-key').innerHTML = dietDirectionKey(selected, ctx);
     view.querySelectorAll('[data-diet-day]').forEach(band => {
       band.addEventListener('click', () => openDietDayDetail(band.dataset.dietDay));
     });
   }
 
   async function refresh() {
-    const primary = await getPrimaryDietMetric();
-    const per = await dietPeriodSummary(primary);
-    const mc = per.metric;
-    document.getElementById('diet-periods-card').innerHTML = `
-      <h2 class="card-title">لمحة سريعة</h2>
-      <div class="diet-period-grid">
-        <div class="diet-period"><span class="diet-period-label">${mc.label} اليوم</span><span class="diet-period-num">${per.todayIntake != null ? toArabicNumeral(Math.round(per.todayIntake)) : '—'}</span><span class="diet-period-unit">${mc.unit}</span></div>
-        <div class="diet-period"><span class="diet-period-label">متوسط الأسبوع</span><span class="diet-period-num">${per.week.avgIntake != null ? toArabicNumeral(Math.round(per.week.avgIntake)) : '—'}</span><span class="diet-period-unit">${mc.unit}/يوم</span>${deltaPillHtml(per.week.weightDelta)}</div>
-        <div class="diet-period"><span class="diet-period-label">متوسط الشهر</span><span class="diet-period-num">${per.month.avgIntake != null ? toArabicNumeral(Math.round(per.month.avgIntake)) : '—'}</span><span class="diet-period-unit">${mc.unit}/يوم</span>${deltaPillHtml(per.month.weightDelta)}</div>
-      </div>`;
+    await renderDietGoalHero(document.getElementById('diet-goal-hero'), ctx);
     await drawChart();
+    await renderFoodMixCard(document.getElementById('diet-mix-card'), range);
+    await renderAdherenceCard(document.getElementById('diet-adherence-card'), range);
+    await renderHiddenCalorieCard(document.getElementById('diet-hidden-card'), range);
     await renderDietInsights(document.getElementById('diet-insights-card'), range);
     await renderTimingInsights(document.getElementById('diet-timing-card'), range);
     await renderMeasureFoodCard(document.getElementById('diet-measure-card'), range);
@@ -606,13 +868,13 @@ async function renderTimingInsights(container, range) {
   if (skips.enough && skips.rows.length) {
     const best = skips.rows[0];
     if (best.skipEffect < -0.003) {
-      skipLine = `<div class="diet-timing-row">
+      skipLine = `<button class="diet-timing-row diet-skip-row" data-skip-meal="${best.mealType.key}">
         <span class="diet-timing-icon">${best.mealType.icon}</span>
         <div class="diet-timing-body">
-          <span class="diet-timing-title">تخطّي الوجبات</span>
-          <span class="diet-insight diet-insight-good">في الفترات التي تخطّيتِ فيها <strong>${best.mealType.label}</strong> أكثر، مال وزنك للنزول (${effect(best.highSkipPerDay)}).</span>
+          <span class="diet-timing-title">تخطّي الوجبات <span class="diet-skip-more">التفاصيل ←</span></span>
+          <span class="diet-insight diet-insight-good">في الفترات التي تخطّيتِ فيها <strong>${best.mealType.label}</strong> أكثر (${toArabicNumeral(best.totalSkipped)} يوم)، مال وزنك للنزول (${effect(best.highSkipPerDay)}).</span>
           <span class="diet-tip">💡 ليست دعوةً لتفويت الوجبات — مجرّد ملاحظة من بياناتك. الأهم انتظام غذائك.</span>
-        </div></div>`;
+        </div></button>`;
     } else {
       skipLine = `<div class="diet-timing-row"><span class="diet-timing-icon">🍽️</span><div class="diet-timing-body"><span class="diet-timing-title">تخطّي الوجبات</span><span class="settings-note">لا يظهر أن تخطّي وجبة معيّنة يرتبط بنزول واضح — انتظامك جيّد.</span></div></div>`;
     }
@@ -626,6 +888,29 @@ async function renderTimingInsights(container, range) {
     <h2 class="card-title">⏱️ التوقيت والوزن</h2>
     ${overnightLine}${gapLine}${skipLine}
     <p class="settings-note diet-caveat">⚠️ ارتباطات من قياساتك، تتأثّر بالماء والنوم وأمور أخرى.</p>`;
+
+  container.querySelectorAll('[data-skip-meal]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mt = MEAL_TYPES.find(m => m.key === btn.dataset.skipMeal);
+      const dates = (skips.skippedByType?.[btn.dataset.skipMeal]) || [];
+      openSkippedDatesSheet(mt, dates);
+    });
+  });
+}
+
+// The exact days a meal type was skipped (logged other meals, not this one).
+function openSkippedDatesSheet(mealType, dates) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal modal-lg">
+      <h2 class="modal-title">${mealType.icon} أيام تخطّي ${mealType.label}</h2>
+      <p class="settings-note">${dates.length ? `${toArabicNumeral(dates.length)} يوم سجّلتِ فيها وجبات أخرى دون ${mealType.label}:` : 'لا أيام تخطّي مسجّلة.'}</p>
+      ${dates.length ? `<div class="skip-dates-list">${[...dates].reverse().map(d => `<div class="skip-date-row">${formatPrettyDate(d)}</div>`).join('')}</div>` : ''}
+      <div class="modal-actions"><button class="btn btn-primary" id="skip-dates-close">إغلاق</button></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('skip-dates-close').addEventListener('click', () => overlay.remove());
 }
 
 // ---- measurements-vs-food card ----
