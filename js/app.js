@@ -94,6 +94,7 @@ async function buildCustomAdhkarRingData() {
 // whole day hangs on; 'small' ones are glanceable supporting numbers.
 const HOME_TRACKERS = [
   { key: 'habits',   label: 'العادات',          icon: '🌱', path: '/habits',        anchor: 'good-habits-list' },
+  { key: 'counters', label: 'العدّادات',        icon: '🔢', path: '/habits',        anchor: 'good-habits-list' },
   { key: 'tasks',    label: 'المهام الثابتة',    icon: '📋', path: '/tasks',         anchor: 'fixed-tasks-list' },
   { key: 'goals',    label: 'الأهداف',           icon: '🎯', path: '/goals',         anchor: 'goals-list' },
   { key: 'water',    label: 'الماء',             icon: '💧', path: '/food',          anchor: 'water-card' },
@@ -113,7 +114,7 @@ const HOME_TRACKERS = [
   { key: 'chew',     label: 'وضع المضغ',         icon: '🌿', path: '/food',          anchor: 'chew-card' }
 ];
 
-const HOME_MAX_BIG = 2;
+const HOME_MAX_BIG = 3;
 const HOME_MAX_SMALL = 8;
 const HOME_DEFAULT_BIG = ['habits', 'tasks'];
 const HOME_DEFAULT_SMALL = ['morning', 'evening', 'prayers', 'adhkar', 'tasbeeh', 'wird', 'period', 'health'];
@@ -310,14 +311,60 @@ async function buildTrackerDataRaw(key) {
   switch (key) {
     case 'habits': {
       const r = await getHabitsRingData();
+      if (r.total === 0) {
+        return { anchor: 'good-habits-list', segments: [{ frac: 0, color: 'var(--track)' }], center: '—', label: 'عاداتك', path: '/habits', empty: true };
+      }
+      // When she has BOTH day-goal and normal habits, the ring divides in
+      // two (same track+fill+offset pattern as the tasbeeh): one half is
+      // aggregate day-goal progress, the other is "clean today". With only
+      // one kind, it's a single arc so a lone habit still fills the ring.
+      if (r.hasDayGoal && r.hasNormal) {
+        const half = 0.5, GAP = 0.02, slice = half - GAP;
+        const segments = [
+          { frac: slice, offset: 0, color: 'var(--ring-slice-track)' },
+          { frac: slice, offset: half, color: 'var(--ring-slice-track)' },
+          { frac: slice * r.dayGoalProgress, offset: 0, color: 'var(--info-strong)' },
+          { frac: slice * r.cleanFrac, offset: half, color: r.cleanFrac >= 1 ? 'var(--success-strong)' : 'var(--warning-strong)' }
+        ];
+        return {
+          anchor: 'good-habits-list', segments, sliceCount: 2,
+          center: `${toArabicNumeral(Math.round(r.dayGoalProgress * 100))}٪`,
+          label: 'عاداتك', path: '/habits'
+        };
+      }
+      if (r.hasDayGoal) {
+        return {
+          anchor: 'good-habits-list',
+          segments: [{ frac: r.dayGoalProgress, color: 'var(--info-strong)' }],
+          center: `${toArabicNumeral(Math.round(r.dayGoalProgress * 100))}٪`,
+          label: 'عاداتك', path: '/habits'
+        };
+      }
+      // Normal habits only — the daily clean/slip signal.
       return {
         anchor: 'good-habits-list',
         segments: [
-          { frac: r.total ? r.done / r.total : 0, color: 'var(--success-strong)' },
-          { frac: r.total ? r.missed / r.total : 0, color: 'var(--danger-strong)' }
+          { frac: r.cleanFrac, color: 'var(--success-strong)' },
+          { frac: r.normalCount ? (r.normalCount - r.cleanToday) / r.normalCount : 0, color: 'var(--danger-strong)' }
         ],
-        center: r.total ? `${toArabicNumeral(r.done)}/${toArabicNumeral(r.total)}` : '—',
+        center: `${toArabicNumeral(r.cleanToday)}/${toArabicNumeral(r.normalCount)}`,
         label: 'عاداتك', path: '/habits'
+      };
+    }
+    case 'counters': {
+      const r = await getCounterHabitsRingData();
+      if (r.total === 0) {
+        return { anchor: 'good-habits-list', segments: [{ frac: 0, color: 'var(--track)' }], center: '—', label: 'العدّادات', path: '/habits', empty: true };
+      }
+      const per = 1 / r.total;
+      const GAP = r.total > 1 ? 0.012 : 0;
+      const sliceLen = Math.max(0, per - GAP);
+      const tracks = r.items.map((_, i) => ({ frac: sliceLen, offset: i * per, color: 'var(--ring-slice-track)' }));
+      const fills = r.items.map((it, i) => ({ frac: sliceLen * it.frac, offset: i * per, color: it.done ? 'var(--success-strong)' : 'var(--ring-care)' }));
+      return {
+        anchor: 'good-habits-list', segments: [...tracks, ...fills], sliceCount: r.total,
+        center: `${toArabicNumeral(r.doneCount)}/${toArabicNumeral(r.total)}`,
+        label: 'العدّادات', path: '/habits'
       };
     }
     case 'tasks': {
@@ -521,6 +568,80 @@ async function renderHomeRingSection(container) {
   });
 }
 
+// "رحلتك هذا الأسبوع" — a glance back over the last 7 days, pulled from
+// across the app. Each stat is a defensive read: a tile only appears if
+// there's data behind it, so an empty week shows an empty (hidden) card
+// rather than a wall of dashes.
+async function renderWeeklyOverview(container) {
+  if (!container) return;
+  const today = todayStr();
+  const weekAgo = addDays(today, -6);
+  const [weightLogs, txns, chewAll, habitEvents, prayerLogs, moodAll, currency] = await Promise.all([
+    getAllWeightLogs(),
+    db.economyTransactions.toArray(),
+    db.chewSessions.toArray(),
+    db.habitEvents.toArray(),
+    db.prayerLogs.toArray(),
+    db.moodLogs.toArray(),
+    getCurrencyLabel()
+  ]);
+
+  const tiles = [];
+
+  const wWeek = weightLogs.filter(w => w.date >= weekAgo);
+  if (wWeek.length >= 2) {
+    const d = wWeek[wWeek.length - 1].value - wWeek[0].value;
+    const flat = Math.abs(d) < 0.05;
+    tiles.push({ icon: '⚖️', value: `${flat ? '' : (d > 0 ? '+' : '−')}${toArabicNumeral(Math.abs(d).toFixed(1))}`, unit: 'كغ', label: 'الوزن', tone: flat ? 'flat' : (d > 0 ? 'up' : 'down') });
+  }
+
+  const weekTxns = txns.filter(t => t.date >= weekAgo && t.amount < 0 && !t.isTransfer);
+  if (weekTxns.length) {
+    const spend = weekTxns.reduce((s, t) => s + Math.abs(t.amount), 0);
+    tiles.push({ icon: '💸', value: toArabicNumeral(spend.toFixed(0)), unit: currency, label: 'صُرف' });
+    const catTotals = {};
+    weekTxns.forEach(t => {
+      const tags = transactionTags(t); const keys = tags.length ? tags : [{ cat: 'other' }];
+      const seen = new Set();
+      keys.forEach(({ cat }) => { if (seen.has(cat)) return; seen.add(cat); catTotals[cat] = (catTotals[cat] || 0) + Math.abs(t.amount); });
+    });
+    const top = Object.entries(catTotals).sort((a, b) => b[1] - a[1])[0];
+    if (top) tiles.push({ icon: economyCategoryIcon(top[0]), value: economyCategoryLabel(top[0]), label: 'أكثر فئة', text: true });
+  }
+
+  const chewWeek = chewAll.filter(s => s.date >= weekAgo);
+  if (chewWeek.length) {
+    const adh = chewWeek.map(chewAdherence).filter(x => x != null);
+    const avg = adh.length ? adh.reduce((s, x) => s + x, 0) / adh.length : null;
+    tiles.push({ icon: '🌿', value: avg != null ? toArabicNumeral(Math.round(avg * 100)) : toArabicNumeral(chewWeek.length), unit: avg != null ? '٪' : 'وجبة', label: 'المضغ' });
+  }
+
+  const relapses = habitEvents.filter(e => e.type === 'relapse' && e.date >= weekAgo).length;
+  tiles.push({ icon: relapses ? '⛔' : '🌱', value: toArabicNumeral(relapses), unit: relapses === 1 ? 'انتكاسة' : 'انتكاسات', label: 'العادات', tone: relapses ? 'up' : 'down' });
+
+  const doneP = prayerLogs.filter(p => p.date >= weekAgo && p.date <= today && p.status === 'done').length;
+  if (doneP) tiles.push({ icon: '🕌', value: toArabicNumeral(doneP), unit: `/${toArabicNumeral(35)}`, label: 'صلوات' });
+
+  const moodWeek = moodAll.filter(m => m.date >= weekAgo && m.emoji);
+  if (moodWeek.length) {
+    const freq = {}; moodWeek.forEach(m => { freq[m.emoji] = (freq[m.emoji] || 0) + 1; });
+    const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
+    if (top) tiles.push({ icon: top[0], value: toArabicNumeral(moodWeek.length), unit: 'أيام', label: 'المزاج' });
+  }
+
+  if (!tiles.length) { container.style.display = 'none'; return; }
+  container.style.display = '';
+  container.innerHTML = `
+    <div class="section-header"><h2 class="card-title">🗓️ رحلتك هذا الأسبوع</h2></div>
+    <div class="weekly-grid">
+      ${tiles.map(t => `<div class="weekly-tile ${t.tone ? 'weekly-' + t.tone : ''}">
+        <span class="weekly-tile-icon">${t.icon}</span>
+        <span class="weekly-tile-value ${t.text ? 'weekly-tile-text' : ''}">${t.value}${t.unit ? `<span class="weekly-tile-unit">${t.unit}</span>` : ''}</span>
+        <span class="weekly-tile-label">${t.label}</span>
+      </div>`).join('')}
+    </div>`;
+}
+
 async function renderHome(params, view, renderToken) {
   const profile = await db.profile.get(1);
   const settings = await db.settings.get(1);
@@ -647,6 +768,8 @@ async function renderHome(params, view, renderToken) {
       <p class="mini-progress-text">${studyGlanceText(studyCourseCount, studyOpenTodoCount)}</p>
     </section>
 
+    <section class="card weekly-overview-card" id="weekly-overview-card" style="display:none"></section>
+
     <button class="btn btn-secondary btn-block yearly-overview-btn" id="yearly-overview-btn">📊 نظرة على عامك</button>
 
     <p class="app-footer">🌸 رحلتي — نسخة محلية بالكامل، بياناتك لا تغادر هذا الجهاز</p>
@@ -688,6 +811,9 @@ async function renderHome(params, view, renderToken) {
   const refreshHomeRing = () => renderHomeRingSection(document.getElementById('home-ring-section'));
   await renderHabitCards(document.getElementById('home-good-habits'), goodHabits, { onChange: refreshHomeRing, emptyText: 'ما في عادات جيدة بعد.' });
   await renderHabitCards(document.getElementById('home-bad-habits'), badHabits, { onChange: refreshHomeRing, emptyText: 'ما في عادات للإقلاع عنها بعد.' });
+
+  if (renderToken != null && !isCurrentRenderToken(renderToken)) return;
+  await renderWeeklyOverview(document.getElementById('weekly-overview-card'));
 
   if (renderToken != null && !isCurrentRenderToken(renderToken)) return;
   await renderFixedTaskList(document.getElementById('home-fixed-tasks'), today, { editable: true, limit: 3, showManage: true, onChange: rescheduleHomeReminders });

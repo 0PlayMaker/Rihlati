@@ -72,17 +72,30 @@ async function getEconomyBalance() {
 // opts carries the fields added in this phase — accountId / category /
 // subcategory — all optional, so every existing caller keeps working.
 async function addTransaction(amount, note, date, opts = {}) {
+  // categories: the full multi-tag list [{cat, sub}]. The single
+  // category/subcategory stay as the PRIMARY (first) tag so all the money
+  // math is unchanged and nothing double-counts — the extra tags are only
+  // for the "where does my spending touch" breakdowns.
+  const cats = Array.isArray(opts.categories) ? opts.categories : (opts.category ? [{ cat: opts.category, sub: opts.subcategory ?? null }] : []);
   return db.economyTransactions.add({
     amount, note: note || '', date: date || todayStr(),
     accountId: opts.accountId ?? null,
-    category: opts.category ?? null,
-    subcategory: opts.subcategory ?? null,
+    category: cats[0]?.cat ?? opts.category ?? null,
+    subcategory: cats[0]?.sub ?? opts.subcategory ?? null,
+    categories: cats,
     // Transfers between her own accounts move money but aren't income or
     // spending — flagged so the totals and category breakdown skip them,
     // while balances (which sum everything) still see them.
     isTransfer: opts.isTransfer ? true : false,
     createdAt: Date.now()
   });
+}
+// Every tag a transaction carries (primary + extras), as {cat, sub}. Falls
+// back to the legacy single category for rows saved before multi-tag.
+function transactionTags(t) {
+  if (Array.isArray(t.categories) && t.categories.length) return t.categories;
+  if (t.category) return [{ cat: t.category, sub: t.subcategory ?? null }];
+  return [];
 }
 // \"Set the balance\" now targets a specific account when given one, so she
 // can reconcile just her savings without disturbing everything else.
@@ -169,14 +182,21 @@ async function getExpenseGroups(monthKey) {
 async function getCategorySummary(monthKey) {
   const { transactions } = await getMonthSummary(monthKey);
   const groups = {};
+  // Count under EVERY tag a transaction carries, not just the primary —
+  // so "كم أنفقت على أي شيء موسوم بقهوة" is answerable even when the
+  // dinar landed in the dining bucket. A transaction with two tags shows
+  // in both; the UI labels this so the bars aren't read as a partition.
   transactions.filter(t => t.amount < 0 && !t.isTransfer).forEach(t => {
-    const key = t.category || 'other';
-    if (!groups[key]) groups[key] = { total: 0, count: 0, subs: {} };
-    groups[key].total += Math.abs(t.amount);
-    groups[key].count += 1;
-    if (t.subcategory) {
-      groups[key].subs[t.subcategory] = (groups[key].subs[t.subcategory] || 0) + Math.abs(t.amount);
-    }
+    const tags = transactionTags(t);
+    const keys = tags.length ? tags : [{ cat: 'other', sub: null }];
+    const seenCat = new Set();
+    keys.forEach(({ cat, sub }) => {
+      const key = cat || 'other';
+      if (!groups[key]) groups[key] = { total: 0, count: 0, subs: {} };
+      // Amount counts once per category even if two subs of it are tagged.
+      if (!seenCat.has(key)) { groups[key].total += Math.abs(t.amount); groups[key].count += 1; seenCat.add(key); }
+      if (sub) groups[key].subs[sub] = (groups[key].subs[sub] || 0) + Math.abs(t.amount);
+    });
   });
   return Object.entries(groups)
     .map(([category, g]) => ({ category, ...g }))
@@ -340,8 +360,9 @@ async function openAddTransactionModal(onSaved, existing = null, presetAccountId
   const accounts = await getEconomyAccounts();
   let sign = existing ? (existing.amount >= 0 ? 1 : -1) : -1; // most logged rows are spending
   let selectedAccountId = existing ? (existing.accountId ?? null) : (presetAccountId ?? accounts[0]?.id ?? null);
-  let selectedCategory = existing ? (existing.category ?? null) : null;
-  let selectedSub = existing ? (existing.subcategory ?? null) : null;
+  // Multi-tag state, mirroring the food builder: a flat [{cat, sub}] list.
+  let txnTags = existing ? transactionTags(existing).map(t => ({ ...t })) : [];
+  let activeCat = null;
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -362,12 +383,12 @@ async function openAddTransactionModal(onSaved, existing = null, presetAccountId
           ${accounts.map(a => `<button class="chip ${selectedAccountId === a.id ? 'active' : ''}" data-account="${a.id}">${a.emoji} ${escapeHtml(a.name)}</button>`).join('')}
         </div>` : ''}
 
-      <label class="field-label">الفئة (اختياري)</label>
-      <div class="econ-chip-row econ-cat-chips" id="txn-cat-chips">
-        <button class="chip ${selectedCategory === null ? 'active' : ''}" data-cat="none">بدون</button>
-        ${ECONOMY_CATEGORIES.map(c => `<button class="chip ${selectedCategory === c.key ? 'active' : ''}" data-cat="${c.key}">${c.icon} ${c.label}</button>`).join('')}
+      <label class="field-label">الفئات (اختياري — يمكن أكثر من واحدة)</label>
+      <div class="food-tag-strip" id="txn-tag-strip"></div>
+      <div class="food-cat-pills" id="txn-cat-pills">
+        ${ECONOMY_CATEGORIES.map(c => `<button class="food-cat-pill" data-cat="${c.key}"><span class="food-cat-emoji">${c.icon}</span><span>${c.label}</span><span class="food-cat-badge" data-badge="${c.key}"></span></button>`).join('')}
       </div>
-      <div class="econ-chip-row econ-sub-chips" id="txn-sub-chips"></div>
+      <div class="food-sub-tray" id="txn-sub-tray" hidden></div>
 
       <label class="field-label">ملاحظة (اختياري)</label>
       <input class="text-input" id="txn-note-input" placeholder="مثلاً: راتب، فاتورة كهرباء" value="${existing ? escapeHtml(existing.note || '') : ''}">
@@ -381,21 +402,60 @@ async function openAddTransactionModal(onSaved, existing = null, presetAccountId
     </div>`;
   document.body.appendChild(overlay);
 
-  function renderSubChips() {
-    const wrap = document.getElementById('txn-sub-chips');
-    const cat = economyCategory(selectedCategory);
-    if (!cat || !cat.subs) { wrap.innerHTML = ''; wrap.style.display = 'none'; return; }
-    wrap.style.display = '';
-    wrap.innerHTML = `<button class="chip chip-sub ${selectedSub === null ? 'active' : ''}" data-sub="none">— الكل —</button>` +
-      cat.subs.map(s => `<button class="chip chip-sub ${selectedSub === s.key ? 'active' : ''}" data-sub="${s.key}">${s.icon} ${s.label}</button>`).join('');
-    wrap.querySelectorAll('.chip-sub').forEach(chip => {
+  const txnStripEl = document.getElementById('txn-tag-strip');
+  const txnTrayEl = document.getElementById('txn-sub-tray');
+  function txnHasTag(cat, sub) { return txnTags.some(t => t.cat === cat && (t.sub ?? null) === (sub ?? null)); }
+  function txnCatCount(cat) { return txnTags.filter(t => t.cat === cat).length; }
+
+  function renderTxnStrip() {
+    if (txnTags.length === 0) {
+      txnStripEl.innerHTML = '<span class="food-tag-empty">بدون فئة — أو اختاري واحدة أو أكثر</span>';
+    } else {
+      txnStripEl.innerHTML = txnTags.map((t, i) => {
+        const catObj = economyCategory(t.cat);
+        const label = t.sub ? `${catObj?.icon || ''} ${economySubLabel(t.cat, t.sub)}` : `${catObj?.icon || ''} ${catObj?.label || ''}`;
+        return `<button class="food-tag-chip food-tag-chip-econ" data-rm="${i}">${label} <span class="food-tag-x">×</span></button>`;
+      }).join('');
+    }
+    overlay.querySelectorAll('#txn-cat-pills .food-cat-badge').forEach(b => {
+      const n = txnCatCount(b.dataset.badge);
+      b.textContent = n ? toArabicNumeral(n) : '';
+      b.classList.toggle('food-cat-badge-on', n > 0);
+    });
+    txnStripEl.querySelectorAll('[data-rm]').forEach(chip => {
+      chip.addEventListener('click', () => { txnTags.splice(Number(chip.dataset.rm), 1); renderTxnStrip(); if (activeCat) renderTxnTray(); });
+    });
+  }
+
+  function renderTxnTray() {
+    const cat = economyCategory(activeCat);
+    if (!activeCat) { txnTrayEl.hidden = true; return; }
+    txnTrayEl.hidden = false;
+    if (!cat.subs) {
+      // No sub-categories: a single add/remove toggle for the category.
+      txnTrayEl.innerHTML = `<div class="food-sub-chips"><button class="chip food-sub-chip ${txnHasTag(cat.key, null) ? 'active' : ''}" data-sub="none">${cat.icon} ${cat.label}${txnHasTag(cat.key, null) ? ' ✓' : ''}</button></div>`;
+    } else {
+      const chips = cat.subs.map(s => `<button class="chip food-sub-chip ${txnHasTag(cat.key, s.key) ? 'active' : ''}" data-sub="${s.key}">${s.icon} ${s.label}</button>`).join('');
+      txnTrayEl.innerHTML = `<div class="food-sub-chips"><button class="chip food-sub-chip ${txnHasTag(cat.key, null) ? 'active' : ''}" data-sub="none">${cat.icon} كل ${cat.label}</button>${chips}</div>`;
+    }
+    txnTrayEl.querySelectorAll('.food-sub-chip').forEach(chip => {
       chip.addEventListener('click', () => {
-        selectedSub = chip.dataset.sub === 'none' ? null : chip.dataset.sub;
-        wrap.querySelectorAll('.chip-sub').forEach(c => c.classList.toggle('active', c === chip));
+        const sub = chip.dataset.sub === 'none' ? null : chip.dataset.sub;
+        if (txnHasTag(cat.key, sub)) txnTags = txnTags.filter(t => !(t.cat === cat.key && (t.sub ?? null) === (sub ?? null)));
+        else txnTags.push({ cat: cat.key, sub });
+        renderTxnStrip(); renderTxnTray();
       });
     });
   }
-  renderSubChips();
+
+  overlay.querySelectorAll('#txn-cat-pills .food-cat-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      activeCat = (activeCat === pill.dataset.cat) ? null : pill.dataset.cat;
+      overlay.querySelectorAll('#txn-cat-pills .food-cat-pill').forEach(p => p.classList.toggle('active', p.dataset.cat === activeCat));
+      renderTxnTray();
+    });
+  });
+  renderTxnStrip();
 
   overlay.querySelectorAll('#txn-sign-chips .chip').forEach(chip => {
     chip.addEventListener('click', () => {
@@ -407,14 +467,6 @@ async function openAddTransactionModal(onSaved, existing = null, presetAccountId
     chip.addEventListener('click', () => {
       selectedAccountId = chip.dataset.account === 'none' ? null : Number(chip.dataset.account);
       overlay.querySelectorAll('#txn-account-chips .chip').forEach(c => c.classList.toggle('active', c === chip));
-    });
-  });
-  overlay.querySelectorAll('#txn-cat-chips .chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      selectedCategory = chip.dataset.cat === 'none' ? null : chip.dataset.cat;
-      selectedSub = null;
-      overlay.querySelectorAll('#txn-cat-chips .chip').forEach(c => c.classList.toggle('active', c === chip));
-      renderSubChips();
     });
   });
 
@@ -433,10 +485,13 @@ async function openAddTransactionModal(onSaved, existing = null, presetAccountId
     const date = document.getElementById('txn-date-input').value || todayStr();
     const fields = {
       amount: amount * sign, note, date,
-      accountId: selectedAccountId, category: selectedCategory, subcategory: selectedSub
+      accountId: selectedAccountId,
+      category: txnTags[0]?.cat ?? null,
+      subcategory: txnTags[0]?.sub ?? null,
+      categories: txnTags
     };
     if (existing) await db.economyTransactions.update(existing.id, fields);
-    else await addTransaction(fields.amount, note, date, { accountId: selectedAccountId, category: selectedCategory, subcategory: selectedSub });
+    else await addTransaction(fields.amount, note, date, { accountId: selectedAccountId, categories: txnTags });
     overlay.remove();
     if (onSaved) onSaved();
   });

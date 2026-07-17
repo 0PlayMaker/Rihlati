@@ -33,7 +33,7 @@ const db = new Dexie('rahlati');
 // (if Settings shows an old version number, the new files never actually
 // reached the phone, or the service worker hasn't picked them up yet —
 // that's a deploy/cache problem, not a code problem).
-const APP_VERSION = 'v54 · ١٦ يوليو ٢٠٢٦';
+const APP_VERSION = 'v55 · ١٧ يوليو ٢٠٢٦';
 
 db.version(1).stores({
   // Singleton row (id always 1) — who she is.
@@ -375,6 +375,16 @@ db.version(23).stores({
   economyAccounts: '++id'
 });
 
+// v55: daily-counter habits. One row per habit per day holds that day's
+// tally (she taps +1 as she goes). Compound key [habitId+date] means the
+// increment is a single get/put with no risk of duplicate rows. This is
+// separate from habitEvents (mishap/relapse) and habitLogs (done/missed)
+// because a counter is a different question — "how many times today",
+// not "did I / did I slip".
+db.version(24).stores({
+  habitCounts: '[habitId+date], habitId, date'
+});
+
 // The spending taxonomy she asked for: a flat list of top-level
 // categories, a few of which carry sub-categories. `null` sub means the
 // category is used on its own. Kept as data (not hard-coded into the
@@ -439,6 +449,109 @@ function economyCategoryFullLabel(category, subcategory) {
     if (subLabel) return `${catIcon} ${catLabel} · ${subLabel}`;
   }
   return `${catIcon} ${catLabel}`;
+}
+
+// ---------- food composition tags (for the meal builder + diet mode) ----------
+// What a meal is MADE OF, as multi-select tags across categories. Stored
+// on foodLogs.foodTags as [{cat, sub, sweet?}] — sweet only applies to
+// drinks. Diet mode treats each of these as a tag it can correlate with
+// weight, so the taxonomy is intentionally about food *type* (which the
+// body responds to) rather than dish names (which it doesn't).
+const FOOD_TAG_CATEGORIES = [
+  { key: 'flour', label: 'نشويات', icon: '🌾', subs: [
+    { key: 'pasta', label: 'باستا', icon: '🍝' },
+    { key: 'bread', label: 'خبز', icon: '🍞' },
+    { key: 'pastry', label: 'معجنات', icon: '🥐' },
+    { key: 'toast', label: 'توست', icon: '🍞' },
+    { key: 'cereal', label: 'حبوب/رقائق', icon: '🥣' }
+  ] },
+  { key: 'protein', label: 'بروتين', icon: '🍗', subs: [
+    { key: 'fish', label: 'سمك', icon: '🐟' },
+    { key: 'redmeat', label: 'لحم أحمر', icon: '🥩' },
+    { key: 'chicken', label: 'دجاج', icon: '🍗' },
+    { key: 'eggs', label: 'بيض', icon: '🥚' },
+    { key: 'dairy', label: 'أجبان/ألبان', icon: '🧀' }
+  ] },
+  { key: 'starch', label: 'نشا/كارب', icon: '🍚', subs: [
+    { key: 'rice', label: 'رز', icon: '🍚' },
+    { key: 'potato', label: 'بطاطا', icon: '🥔' },
+    { key: 'legumes', label: 'بقوليات', icon: '🫘' },
+    { key: 'corn', label: 'ذرة', icon: '🌽' }
+  ] },
+  { key: 'sugar', label: 'سكريات', icon: '🍭', subs: [
+    { key: 'fruit', label: 'فواكه', icon: '🍎' },
+    { key: 'dates', label: 'تمر', icon: '🌴' },
+    { key: 'sweets', label: 'حلويات', icon: '🍰' },
+    { key: 'chocolate', label: 'شوكولاتة', icon: '🍫' },
+    { key: 'honey', label: 'عسل', icon: '🍯' }
+  ] },
+  { key: 'fiber', label: 'ألياف', icon: '🥬', subs: [
+    { key: 'salad', label: 'سلطة', icon: '🥗' },
+    { key: 'veggies', label: 'خضار', icon: '🥦' },
+    { key: 'flaxseed', label: 'بذر كتّان', icon: '🌱' },
+    { key: 'oats', label: 'شوفان', icon: '🌾' }
+  ] },
+  { key: 'drink', label: 'مشروبات', icon: '🥤', subs: [
+    { key: 'water', label: 'ماء', icon: '💧' },
+    { key: 'milk', label: 'حليب', icon: '🥛' },
+    { key: 'coffee', label: 'قهوة', icon: '☕' },
+    { key: 'coffeemilk', label: 'قهوة بحليب', icon: '☕' },
+    { key: 'tea', label: 'شاي', icon: '🍵' },
+    { key: 'dietsoda', label: 'صودا دايت', icon: '🥤' },
+    { key: 'juice', label: 'عصير', icon: '🧃' }
+  ] }
+];
+// Sweetness modifier for drinks only.
+const DRINK_SWEET_OPTIONS = [
+  { key: 'sugar', label: 'بسكر', icon: '🍬' },
+  { key: 'none', label: 'بدون سكر', icon: '🚫' },
+  { key: 'sweetener', label: 'محلّي', icon: '🧪' }
+];
+function foodTagCategory(key) { return FOOD_TAG_CATEGORIES.find(c => c.key === key) || null; }
+function foodTagSub(catKey, subKey) {
+  const cat = foodTagCategory(catKey);
+  return cat?.subs?.find(s => s.key === subKey) || null;
+}
+function drinkSweetLabel(key) { return DRINK_SWEET_OPTIONS.find(o => o.key === key)?.label || ''; }
+// One tag rendered as "🐟 سمك" (+ "· بسكر" for a sweetened drink).
+function foodTagLabel(tag) {
+  const cat = foodTagCategory(tag.cat);
+  const sub = foodTagSub(tag.cat, tag.sub);
+  if (!cat || !sub) return '';
+  let out = `${sub.icon} ${sub.label}`;
+  if (tag.cat === 'drink' && tag.sweet && tag.sweet !== 'none') out += ` · ${drinkSweetLabel(tag.sweet)}`;
+  return out;
+}
+// A stable identity string so the same selection dedupes and matches
+// across meals — used as the key in diet correlation.
+function foodTagKey(tag) {
+  return tag.cat === 'drink' && tag.sweet ? `${tag.cat}:${tag.sub}:${tag.sweet}` : `${tag.cat}:${tag.sub}`;
+}
+// Expand one meal's tags into the SET of correlation keys it contributes:
+// the specific sub (protein:fish), the parent category (protein), and for
+// sweetened drinks a cross-cutting "added-sugar" signal — so the analysis
+// can find patterns at whichever granularity is real.
+function foodTagAnalysisKeys(tags) {
+  const keys = new Set();
+  for (const t of (tags || [])) {
+    if (!t || !t.cat || !t.sub) continue;
+    keys.add(t.cat);
+    keys.add(`${t.cat}:${t.sub}`);
+    if (t.cat === 'drink' && t.sweet === 'sugar') keys.add('addedsugar');
+    if (t.cat === 'sugar') keys.add('addedsugar');
+  }
+  return keys;
+}
+// Human label for an analysis key (category, sub, or the synthetic ones).
+function foodAnalysisKeyLabel(key) {
+  if (key === 'addedsugar') return '🍬 سكر مضاف';
+  if (key.includes(':')) {
+    const [c, s] = key.split(':');
+    const sub = foodTagSub(c, s);
+    return sub ? `${sub.icon} ${sub.label}` : key;
+  }
+  const cat = foodTagCategory(key);
+  return cat ? `${cat.icon} ${cat.label}` : key;
 }
 
 // ---------- date helpers (used everywhere) ----------

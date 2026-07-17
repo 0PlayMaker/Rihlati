@@ -14,17 +14,54 @@ function getHabitType(habit) {
   return habit.type === 'bad' ? 'bad' : 'good';
 }
 
-async function createHabit(name, emoji, type, dayGoal = null) {
+async function createHabit(name, emoji, type, dayGoal = null, dailyTarget = null) {
   const all = await db.habits.toArray();
   const color = HABIT_COLORS[all.length % HABIT_COLORS.length];
   return db.habits.add({
     name, emoji: emoji || '🌟', color, type: type === 'bad' ? 'bad' : 'good',
     dayGoal: dayGoal ?? null,
+    dailyTarget: dailyTarget ?? null,
     archived: false, order: all.length, createdAt: Date.now()
   });
 }
-async function updateHabit(id, { name, emoji, type, dayGoal }) {
-  await db.habits.update(id, { name, emoji: emoji || '🌟', type: type === 'bad' ? 'bad' : 'good', dayGoal: dayGoal ?? null });
+async function updateHabit(id, { name, emoji, type, dayGoal, dailyTarget }) {
+  await db.habits.update(id, {
+    name, emoji: emoji || '🌟', type: type === 'bad' ? 'bad' : 'good',
+    dayGoal: dayGoal ?? null,
+    dailyTarget: dailyTarget ?? null
+  });
+}
+
+// The three tracking styles, derived from which optional field is set —
+// no separate "mode" column to keep in sync. A counter wins if present
+// (it's a fundamentally different daily question), then a day-goal, else
+// the plain streak habit.
+function habitKind(habit) {
+  if (habit.dailyTarget && habit.dailyTarget > 0) return 'counter';
+  if (habit.dayGoal && habit.dayGoal > 0) return 'daygoal';
+  return 'normal';
+}
+async function getCounterHabits() {
+  return (await getActiveHabits()).filter(h => habitKind(h) === 'counter');
+}
+// Non-counter habits (normal + day-goal) — the ones the main habit ring
+// and cards cover.
+async function getNonCounterHabits() {
+  return (await getActiveHabits()).filter(h => habitKind(h) !== 'counter');
+}
+
+// ---- daily counter tallies (habitCounts table) ----
+async function getHabitCount(habitId, date) {
+  const row = await db.habitCounts.get([habitId, date]);
+  return row?.count || 0;
+}
+async function setHabitCount(habitId, date, count) {
+  const c = Math.max(0, Math.round(count));
+  await db.habitCounts.put({ habitId, date, count: c });
+  return c;
+}
+async function incrementHabitCount(habitId, date, delta = 1) {
+  return setHabitCount(habitId, date, (await getHabitCount(habitId, date)) + delta);
 }
 
 async function getActiveHabits() {
@@ -260,26 +297,69 @@ async function getTopHabitStreak(type) {
 }
 
 async function getHabitsRingData() {
-  // Combined across both types on purpose — the Home ring is a single
-  // "how am I doing today" signal; the full Habits page is where the
-  // good/bad breakdown actually matters.
+  // The Home ring for normal + day-goal habits (counters have their own).
+  // Two distinct signals live here, which is why it splits into two arcs:
+  //   • day-goal habits contribute long-term PROGRESS (how far toward the
+  //     N-day goal), so a 90-day quit reads as "day 12 of 90", not as a
+  //     single done/missed tick that says nothing about the journey.
+  //   • normal habits contribute a DAILY "clean today" signal — did I slip
+  //     today or not.
   //
   // Deliberately includes habits hidden from Home: the ring is only ever
   // numbers, so it reveals nothing, and a habit she keeps private should
-  // still be tracked and still count toward her day. Only the things that
-  // would show its NAME (the habit cards, the streak chips) are filtered.
-  const habits = await getActiveHabits();
+  // still be tracked and still count toward her day.
+  const habits = await getNonCounterHabits();
   const today = todayStr();
+
+  const dayGoalHabits = habits.filter(h => habitKind(h) === 'daygoal');
+  const normalHabits = habits.filter(h => habitKind(h) === 'normal');
+
+  // Day-goal progress: average of each habit's day/goal fraction.
+  let dayGoalProgress = 0;
+  if (dayGoalHabits.length) {
+    let sum = 0;
+    for (const h of dayGoalHabits) {
+      const stats = await getHabitStats(h.id);
+      sum += Math.min(1, stats.streak / h.dayGoal);
+    }
+    dayGoalProgress = sum / dayGoalHabits.length;
+  }
+
+  // Clean-today across normal habits: no slip logged today.
+  let cleanToday = 0;
+  for (const h of normalHabits) {
+    if (!(await hasMishapToday(h.id))) cleanToday++;
+  }
+  const cleanFrac = normalHabits.length ? cleanToday / normalHabits.length : 0;
+
+  // Kept for any caller still reading done/missed.
   let done = 0, missed = 0;
   for (const h of habits) {
-    const status = await getHabitStatus(h.id, today);
-    // Auto-registered success by default (see getHabitStats) — only an
-    // explicit mishap counts against today, there's no "pending" state
-    // to wait on anymore.
-    if (status === 'missed') missed++;
-    else done++;
+    if ((await getHabitStatus(h.id, today)) === 'missed') missed++; else done++;
   }
-  return { total: habits.length, done, missed, pending: 0 };
+
+  return {
+    total: habits.length, done, missed, pending: 0,
+    hasDayGoal: dayGoalHabits.length > 0,
+    hasNormal: normalHabits.length > 0,
+    dayGoalCount: dayGoalHabits.length,
+    normalCount: normalHabits.length,
+    dayGoalProgress, cleanToday, cleanFrac
+  };
+}
+
+// Home ring for daily-counter habits: one slice per counter, each filling
+// toward its own daily target — the same divided-ring shape as the مسبحة.
+async function getCounterHabitsRingData() {
+  const habits = await getCounterHabits();
+  const today = todayStr();
+  const items = [];
+  for (const h of habits) {
+    const count = await getHabitCount(h.id, today);
+    const target = h.dailyTarget || 1;
+    items.push({ habit: h, count, target, frac: Math.min(1, count / target), done: count >= target });
+  }
+  return { items, doneCount: items.filter(i => i.done).length, total: items.length };
 }
 
 // ---------- rendering ----------
@@ -406,19 +486,76 @@ function habitCardHtml(habit, stats, refMs, missedToday = false) {
     </div>`;
 }
 
+// A daily-counter habit's card: a big tally she nudges up and down through
+// the day, with a fill toward the target. No clock or relapse here — a
+// counter resets every morning, so "time since" and "انتكاسة" are the
+// wrong verbs for it entirely.
+function counterHabitCardHtml(habit, count) {
+  const target = habit.dailyTarget || 0;
+  const pct = target ? Math.min(100, Math.round((count / target) * 100)) : 0;
+  const reached = target > 0 && count >= target;
+  return `
+    <div class="habit-card habit-counter-card ${reached ? 'habit-counter-reached' : ''}" data-row-id="${habit.id}">
+      <div class="habit-card-top">
+        <span class="habit-card-icon">${habit.emoji}</span>
+        <span class="habit-card-name">${escapeHtml(habit.name)}${habit.hiddenFromHome ? ' <span class="habit-hidden-badge" title="مخفية من الصفحة الرئيسية">🙈</span>' : ''}</span>
+        ${kebabMenuHtml(String(habit.id), [
+          { key: 'edit', label: 'تعديل' },
+          { key: 'toggle-hidden', label: habit.hiddenFromHome ? '👁️ إظهارها في الرئيسية' : '🙈 إخفاؤها من الرئيسية' },
+          { key: 'delete', label: 'حذف', danger: true }
+        ])}
+      </div>
+      <div class="habit-counter-body">
+        <button class="habit-counter-btn habit-counter-minus" data-counter-dec="${habit.id}" aria-label="ناقص">−</button>
+        <div class="habit-counter-readout">
+          <span class="habit-counter-num">${toArabicNumeral(count)}</span>
+          <span class="habit-counter-target">من ${toArabicNumeral(target)}</span>
+        </div>
+        <button class="habit-counter-btn habit-counter-plus" data-counter-inc="${habit.id}" aria-label="زائد">+</button>
+      </div>
+      <div class="habit-counter-track"><div class="habit-counter-fill" style="width:${pct}%"></div></div>
+      ${reached ? '<p class="habit-counter-done">🎉 أتممتِ هدف اليوم</p>' : ''}
+    </div>`;
+}
+
 async function renderHabitCards(container, habits, { onChange, emptyText } = {}) {
   if (!container) return; // page was replaced mid-render
   if (habits.length === 0) {
     container.innerHTML = emptyText ? `<p class="empty-state-sub">${emptyText}</p>` : '';
     return;
   }
+  const today = todayStr();
   const rows = await Promise.all(habits.map(async h => {
+    if (habitKind(h) === 'counter') {
+      const count = await getHabitCount(h.id, today);
+      return counterHabitCardHtml(h, count);
+    }
     const stats = await getHabitStats(h.id);
     const refMs = await getHabitClockReferenceMs(h);
     const missedToday = await hasMishapToday(h.id);
     return habitCardHtml(h, stats, refMs, missedToday);
   }));
   container.innerHTML = rows.join('');
+
+  // Counter +/- buttons. A gentle chime the moment she hits the target.
+  container.querySelectorAll('[data-counter-inc]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = Number(btn.dataset.counterInc);
+      const h = habits.find(x => x.id === id);
+      const before = await getHabitCount(id, today);
+      const after = await incrementHabitCount(id, today, +1);
+      if (h && h.dailyTarget && before < h.dailyTarget && after >= h.dailyTarget) playEventChime('habits');
+      await renderHabitCards(container, habits, { onChange, emptyText });
+      if (onChange) onChange();
+    });
+  });
+  container.querySelectorAll('[data-counter-dec]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await incrementHabitCount(Number(btn.dataset.counterDec), today, -1);
+      await renderHabitCards(container, habits, { onChange, emptyText });
+      if (onChange) onChange();
+    });
+  });
 
   async function refresh() {
     await renderHabitCards(container, habits, { onChange, emptyText });
@@ -476,18 +613,38 @@ function openHabitModal({ existingId, onSaved } = {}) {
   overlay.innerHTML = `
     <div class="modal">
       <h2 class="modal-title" id="habit-modal-title">عادة جديدة</h2>
-      <label class="field-label">نوع العادة</label>
-      <div class="habit-type-chips" id="habit-type-chips">
-        <button class="chip active" data-type="good">🌱 أبنيها</button>
-        <button class="chip" data-type="bad">🚫 أقلع عنها</button>
+
+      <label class="field-label">نمط التتبّع</label>
+      <div class="habit-mode-chips" id="habit-mode-chips">
+        <button class="chip active" data-mode="normal">⏱️ عادية</button>
+        <button class="chip" data-mode="daygoal">📅 هدف أيام</button>
+        <button class="chip" data-mode="counter">🔢 عدّاد يومي</button>
       </div>
+
+      <div id="habit-type-wrap">
+        <label class="field-label">نوعها</label>
+        <div class="habit-type-chips" id="habit-type-chips">
+          <button class="chip active" data-type="good">🌱 أبنيها</button>
+          <button class="chip" data-type="bad">🚫 أقلع عنها</button>
+        </div>
+      </div>
+
       <label class="field-label">اسم العادة</label>
       <input class="text-input" id="new-habit-name" placeholder="مثلاً: شرب الماء" autofocus>
       <label class="field-label">إيموجي (اختياري)</label>
       <input class="text-input emoji-input" id="new-habit-emoji" placeholder="🌟" maxlength="2">
-      <label class="field-label">هدف بالأيام (اختياري)</label>
-      <input class="text-input" type="text" inputmode="numeric" id="new-habit-daygoal" placeholder="مثلاً: ٩٠ يوم">
-      <p class="settings-note">يقسّم المؤشّر إلى خانة لكل يوم. الزلّة تُسجَّل ولا تصفّر العدّاد — الانتكاسة وحدها تبدأ من جديد.</p>
+
+      <div id="habit-daygoal-wrap" hidden>
+        <label class="field-label">هدف بالأيام</label>
+        <input class="text-input" type="text" inputmode="numeric" id="new-habit-daygoal" placeholder="مثلاً: ٩٠ يوم">
+        <p class="settings-note">يقسّم المؤشّر إلى خانة لكل يوم. الزلّة تُسجَّل ولا تصفّر العدّاد — الانتكاسة وحدها تبدأ من جديد.</p>
+      </div>
+
+      <div id="habit-counter-wrap" hidden>
+        <label class="field-label">الهدف اليومي (كم مرة في اليوم)</label>
+        <input class="text-input" type="text" inputmode="numeric" id="new-habit-counter" placeholder="مثلاً: ٨ مرّات">
+        <p class="settings-note">تعدّين كل مرة خلال اليوم، ويبدأ العدّاد من الصفر كل صباح. تظهر في دائرة «العدّادات».</p>
+      </div>
       <label class="checkbox-row">
         <input type="checkbox" id="new-habit-hidden">
         <span>🙈 إخفاؤها من الصفحة الرئيسية</span>
@@ -501,19 +658,35 @@ function openHabitModal({ existingId, onSaved } = {}) {
     </div>`;
   document.body.appendChild(overlay);
 
+  let selectedMode = 'normal';
+  function applyMode() {
+    overlay.querySelectorAll('#habit-mode-chips .chip').forEach(c => c.classList.toggle('active', c.dataset.mode === selectedMode));
+    // A counter is inherently something she's doing (building), so the
+    // good/bad choice only makes sense for streak & day-goal habits.
+    overlay.querySelector('#habit-type-wrap').hidden = (selectedMode === 'counter');
+    overlay.querySelector('#habit-daygoal-wrap').hidden = (selectedMode !== 'daygoal');
+    overlay.querySelector('#habit-counter-wrap').hidden = (selectedMode !== 'counter');
+  }
+
   async function applyExisting() {
     if (!existingId) return;
     existing = (await db.habits.toArray()).find(h => h.id === existingId);
     if (!existing) return;
     selectedType = getHabitType(existing);
+    selectedMode = habitKind(existing);
     document.getElementById('habit-modal-title').textContent = 'تعديل العادة';
     document.getElementById('new-habit-name').value = existing.name;
     document.getElementById('new-habit-emoji').value = existing.emoji;
     document.getElementById('new-habit-daygoal').value = existing.dayGoal ? toArabicNumeral(existing.dayGoal) : '';
+    document.getElementById('new-habit-counter').value = existing.dailyTarget ? toArabicNumeral(existing.dailyTarget) : '';
     document.getElementById('new-habit-hidden').checked = !!existing.hiddenFromHome;
     overlay.querySelectorAll('#habit-type-chips .chip').forEach(c => c.classList.toggle('active', c.dataset.type === selectedType));
+    applyMode();
   }
 
+  overlay.querySelectorAll('#habit-mode-chips .chip').forEach(chip => {
+    chip.addEventListener('click', () => { selectedMode = chip.dataset.mode; applyMode(); });
+  });
   overlay.querySelectorAll('#habit-type-chips .chip').forEach(chip => {
     chip.addEventListener('click', () => {
       selectedType = chip.dataset.type;
@@ -534,12 +707,16 @@ function openHabitModal({ existingId, onSaved } = {}) {
     if (!name) return;
     const emoji = document.getElementById('new-habit-emoji').value.trim();
     const hiddenFromHome = document.getElementById('new-habit-hidden').checked;
-    const dayGoal = readNumericField('new-habit-daygoal', { int: true, min: 1 });
+    // Only the active mode's goal is stored; the others are cleared so a
+    // habit can be switched between modes cleanly.
+    const dayGoal = selectedMode === 'daygoal' ? readNumericField('new-habit-daygoal', { int: true, min: 1 }) : null;
+    const dailyTarget = selectedMode === 'counter' ? readNumericField('new-habit-counter', { int: true, min: 1 }) : null;
+    const type = selectedMode === 'counter' ? 'good' : selectedType;
     if (existingId) {
-      await updateHabit(existingId, { name, emoji, type: selectedType, dayGoal });
+      await updateHabit(existingId, { name, emoji, type, dayGoal, dailyTarget });
       await setHabitHiddenFromHome(existingId, hiddenFromHome);
     } else {
-      const id = await createHabit(name, emoji, selectedType, dayGoal);
+      const id = await createHabit(name, emoji, type, dayGoal, dailyTarget);
       if (hiddenFromHome && id) await setHabitHiddenFromHome(id, true);
     }
     overlay.remove();
