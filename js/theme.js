@@ -343,7 +343,8 @@ const THEME_SETTINGS_KEYS = ['themeMode', 'accentColor',
 
 // ---------- Settings page: minimal — mode + presets + link to editor ----------
 
-function renderThemeSection(currentMode, currentAccent, presets) {
+function renderThemeSection(currentMode, currentAccent, presets, currentHomeLayout) {
+  const layout = currentHomeLayout || 'fresh';
   return `
     <div class="card settings-card">
       <h3 class="card-title">الوضع</h3>
@@ -356,6 +357,14 @@ function renderThemeSection(currentMode, currentAccent, presets) {
       <div class="theme-quick-row">
         <a class="btn btn-secondary btn-sm" href="#/theme-editor">🎨 تخصيص كامل</a>
         <button class="btn btn-text btn-sm theme-restore-quick" id="theme-restore-quick">↺ المظهر الافتراضي</button>
+      </div>
+    </div>
+    <div class="card settings-card">
+      <h3 class="card-title">شكل الصفحة الرئيسية</h3>
+      <p class="settings-note">اختاري تصميم الصفحة الرئيسية — كلاهما يتبع ألوان مظهرك.</p>
+      <div class="habit-type-chips" id="home-layout-chips">
+        <button class="chip home-layout-chip ${layout === 'fresh' ? 'active' : ''}" data-layout="fresh">✨ الجديد</button>
+        <button class="chip home-layout-chip ${layout === 'classic' ? 'active' : ''}" data-layout="classic">📋 الكلاسيكي</button>
       </div>
     </div>`;
 }
@@ -390,6 +399,15 @@ function wireThemeSection(view) {
     chip.addEventListener('click', async () => {
       modeChips.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c === chip));
       await applyCustomPreset(Number(chip.dataset.presetId));
+    });
+  });
+
+  const layoutChips = document.getElementById('home-layout-chips');
+  if (layoutChips) layoutChips.querySelectorAll('.home-layout-chip').forEach(chip => {
+    chip.addEventListener('click', async () => {
+      layoutChips.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c === chip));
+      await db.settings.update(1, { homeLayout: chip.dataset.layout });
+      toast(chip.dataset.layout === 'fresh' ? '✨ سيظهر التصميم الجديد في الرئيسية' : '📋 عاد التصميم الكلاسيكي');
     });
   });
 }

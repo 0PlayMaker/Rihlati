@@ -717,72 +717,88 @@ async function renderHome(params, view, renderToken) {
   const last7DaysMood = await getLast7DaysMood();
   const [goodStreak, badStreak] = await Promise.all([getTopHabitStreak('good'), getTopHabitStreak('bad')]);
 
-  const habitDoneFrac = ringData.total ? ringData.done / ringData.total : 0;
-  const habitMissedFrac = ringData.total ? ringData.missed / ringData.total : 0;
-  const ringSvg = renderRing({
-    segments: [
-      { frac: habitDoneFrac, color: 'var(--mint-deep)' },
-      { frac: habitMissedFrac, color: 'var(--rose-deep)' }
-    ]
-  });
+  // (The home ring is drawn by renderHomeRingSection below, straight from
+  // getHabitsRingData — there's no ring to precompute here.)
 
   // Everything above this line was just reading data — nothing has
   // touched the DOM yet, so it's safe to quietly abandon here if she's
   // already navigated elsewhere while all of it was loading.
   if (renderToken != null && !isCurrentRenderToken(renderToken)) return;
 
-  view.innerHTML = `
+  const layout = settings?.homeLayout || 'fresh';
+  const pfpInner = profile.pictureBlob ? `<img src="${pictureUrl(profile.pictureBlob)}" alt="">` : '🌸';
+  const now = new Date();
+  const heroDate = `${toArabicNumeral(now.getDate())} ${ARABIC_MONTHS[now.getMonth()]}`;
+
+  const ringsHtml = `<section class="card rings-card" id="home-ring-section"></section>`;
+  const calendarHtml = `<section class="card"><div id="home-calendar"></div></section>`;
+
+  // ---- header: classic bar vs fresh hero ----
+  const classicHeader = `
     <header class="home-header">
-      <button class="pfp-preview pfp-small" id="header-pfp" aria-label="الإعدادات">${profile.pictureBlob ? `<img src="${pictureUrl(profile.pictureBlob)}" alt="">` : '🌸'}</button>
+      <button class="pfp-preview pfp-small" id="header-pfp" aria-label="الإعدادات">${pfpInner}</button>
       <div class="home-header-text">
         <h1 class="greeting-line">${greetingWord()}، ${escapeHtml(profile.name)} 🌸</h1>
         <p class="greeting-sub">${escapeHtml(pickWelcomePhrase(settings?.welcomePhrases))}</p>
       </div>
       <button class="icon-btn" id="header-settings" aria-label="الإعدادات">⚙️</button>
-    </header>
+    </header>`;
 
-    <section class="card rings-card" id="home-ring-section"></section>
+  const summaryChips = [
+    ringData.total ? `<span class="home-sum-chip">🌱 ${toArabicNumeral(ringData.doneCount)}/${toArabicNumeral(ringData.total)}</span>` : '',
+    fixedTasks.length ? `<span class="home-sum-chip">📋 ${toArabicNumeral(doneTaskCount)}/${toArabicNumeral(fixedTasks.length)}</span>` : '',
+    `<span class="home-sum-chip">🕌 ${toArabicNumeral(worshipStats.done)}/${toArabicNumeral(worshipStats.total)}</span>`,
+    diaryStreak > 0 ? `<span class="home-sum-chip">📔 🔥${toArabicNumeral(diaryStreak)}</span>` : ''
+  ].filter(Boolean).join('');
+  const freshHeader = `
+    <header class="home-hero">
+      <div class="home-hero-top">
+        <button class="pfp-preview pfp-small home-hero-pfp" id="header-pfp" aria-label="الإعدادات">${pfpInner}</button>
+        <div class="home-hero-text">
+          <p class="home-hero-date">${heroDate}</p>
+          <h1 class="home-hero-greet">${greetingWord()}، ${escapeHtml(profile.name)} 🌸</h1>
+        </div>
+        <button class="icon-btn home-hero-gear" id="header-settings" aria-label="الإعدادات">⚙️</button>
+      </div>
+      <p class="home-hero-phrase">${escapeHtml(pickWelcomePhrase(settings?.welcomePhrases))}</p>
+      <div class="home-hero-summary">${summaryChips}</div>
+    </header>`;
 
+  // ---- quick access: classic two rows vs fresh unified grid ----
+  const classicTiles = `
     <section class="quick-actions-row quick-actions-row-3">
-      <button class="quick-action-card" id="food-action">
-        <span class="quick-action-icon">🍽️</span>
-        <span class="quick-action-label">الطعام</span>
-        <span class="quick-action-stat">${foodGlanceText(foodStats)}</span>
-      </button>
-      <button class="quick-action-card" id="worship-action">
-        <span class="quick-action-icon">🕌</span>
-        <span class="quick-action-label">العبادة</span>
-        <span class="quick-action-stat">${worshipStats.done}/${worshipStats.total}${worshipStats.streak > 0 ? ` · 🔥${worshipStats.streak}` : ''}</span>
-      </button>
-      <button class="quick-action-card" id="diary-action">
-        <span class="quick-action-icon">📔</span>
-        <span class="quick-action-label">يومياتي</span>
-        <span class="quick-action-stat">${diaryStreak > 0 ? `🔥${diaryStreak}` : 'اكتبي'}</span>
-      </button>
-    </section>
-
-    <section class="card">
-      <div id="home-calendar"></div>
-    </section>
-
+      <button class="quick-action-card" id="food-action"><span class="quick-action-icon">🍽️</span><span class="quick-action-label">الطعام</span><span class="quick-action-stat">${foodGlanceText(foodStats)}</span></button>
+      <button class="quick-action-card" id="worship-action"><span class="quick-action-icon">🕌</span><span class="quick-action-label">العبادة</span><span class="quick-action-stat">${worshipStats.done}/${worshipStats.total}${worshipStats.streak > 0 ? ` · 🔥${worshipStats.streak}` : ''}</span></button>
+      <button class="quick-action-card" id="diary-action"><span class="quick-action-icon">📔</span><span class="quick-action-label">يومياتي</span><span class="quick-action-stat">${diaryStreak > 0 ? `🔥${diaryStreak}` : 'اكتبي'}</span></button>
+    </section>`;
+  const classicGlance = `
     <section class="glance-row glance-row-3">
-      <button class="glance-card" id="period-action">
-        <span class="glance-icon">🌙</span>
-        <span class="glance-label">الدورة الشهرية</span>
-        <span class="quick-action-stat">${periodGlanceText(periodStatus)}</span>
-      </button>
-      <button class="glance-card" id="economy-action">
-        <span class="glance-icon">💰</span>
-        <span class="glance-label">الاقتصاد</span>
-        <span class="quick-action-stat">${economyBalance.toFixed(2)} ${currency}</span>
-      </button>
-      <button class="glance-card" id="body-action">
-        <span class="glance-icon">⚖️</span>
-        <span class="glance-label">الصحة</span>
-        <span class="quick-action-stat">${weightGlanceText(weightStats)}</span>
-      </button>
-    </section>
+      <button class="glance-card" id="period-action"><span class="glance-icon">🌙</span><span class="glance-label">الدورة الشهرية</span><span class="quick-action-stat">${periodGlanceText(periodStatus)}</span></button>
+      <button class="glance-card" id="economy-action"><span class="glance-icon">💰</span><span class="glance-label">الاقتصاد</span><span class="quick-action-stat">${economyBalance.toFixed(2)} ${currency}</span></button>
+      <button class="glance-card" id="body-action"><span class="glance-icon">⚖️</span><span class="glance-label">الصحة</span><span class="quick-action-stat">${weightGlanceText(weightStats)}</span></button>
+    </section>`;
 
+  const freshTiles = `
+    <div class="home-tile-grid">
+      ${[
+        { id: 'food-action',    icon: '🍽️', label: 'الطعام',   stat: foodGlanceText(foodStats) },
+        { id: 'worship-action', icon: '🕌', label: 'العبادة',  stat: `${worshipStats.done}/${worshipStats.total}${worshipStats.streak > 0 ? ` · 🔥${worshipStats.streak}` : ''}` },
+        { id: 'diary-action',   icon: '📔', label: 'يومياتي',  stat: diaryStreak > 0 ? `🔥${diaryStreak}` : 'اكتبي' },
+        { id: 'period-action',  icon: '🌙', label: 'الدورة',   stat: periodGlanceText(periodStatus) },
+        { id: 'economy-action', icon: '💰', label: 'الاقتصاد', stat: `${economyBalance.toFixed(2)} ${currency}` },
+        { id: 'body-action',    icon: '⚖️', label: 'الصحة',    stat: weightGlanceText(weightStats) }
+      ].map(t => `
+        <button class="home-tile" id="${t.id}">
+          <span class="home-tile-icon">${t.icon}</span>
+          <span class="home-tile-text">
+            <span class="home-tile-label">${t.label}</span>
+            <span class="home-tile-stat">${t.stat}</span>
+          </span>
+        </button>`).join('')}
+    </div>`;
+
+  // ---- everything below is identical in both layouts (shared IDs) ----
+  const sharedSections = `
     <section class="card">
       <div class="section-header">
         <h2 class="card-title">العادات</h2>
@@ -826,8 +842,13 @@ async function renderHome(params, view, renderToken) {
 
     <button class="btn btn-secondary btn-block yearly-overview-btn" id="yearly-overview-btn">📊 نظرة على عامك</button>
 
-    <p class="app-footer">🌸 رحلتي — نسخة محلية بالكامل، بياناتك لا تغادر هذا الجهاز</p>
-  `;
+    <p class="app-footer">🌸 رحلتي — نسخة محلية بالكامل، بياناتك لا تغادر هذا الجهاز</p>`;
+
+  if (layout === 'classic') {
+    view.innerHTML = classicHeader + ringsHtml + classicTiles + calendarHtml + classicGlance + sharedSections;
+  } else {
+    view.innerHTML = `<div class="home-fresh">${freshHeader}${ringsHtml}${freshTiles}${calendarHtml}${sharedSections}</div>`;
+  }
 
   // Wire every listener FIRST, synchronously, while the DOM this function
   // just wrote is guaranteed to still be the DOM on screen. Awaiting the

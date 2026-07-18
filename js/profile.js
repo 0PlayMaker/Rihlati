@@ -382,7 +382,7 @@ async function renderSettingsPage(params, view) {
     </div>
 
     <h2 class="settings-group-title" id="sec-look">🎨 المظهر</h2>
-    ${renderThemeSection(settings?.themeMode, settings?.accentColor, settings?.customThemePresets)}
+    ${renderThemeSection(settings?.themeMode, settings?.accentColor, settings?.customThemePresets, settings?.homeLayout)}
 
     <div class="card settings-card">
       <div class="settings-row">

@@ -6,7 +6,7 @@
 // as its own field — same "don't store what you can compute" rule as
 // everywhere else.
 
-async function addFoodLog({ date, mealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, foodTags, fullness, craving, isDrink, drinkSweet, photoBlob }) {
+async function addFoodLog({ date, mealType, mealName, time, notes, calories, protein, carbs, fat, mealWeightG, foodTags, fullness, craving, isDrink, drinkSweet, volumeML, photoBlob }) {
   const id = await db.foodLogs.add({
     date, mealType, mealName: mealName || '', time: time || null, notes: notes || '',
     calories: calories ?? null,
@@ -17,6 +17,7 @@ async function addFoodLog({ date, mealType, mealName, time, notes, calories, pro
     craving: craving ? true : false,
     isDrink: isDrink ? true : false,
     drinkSweet: drinkSweet ?? null,
+    volumeML: volumeML ?? null,
     createdAt: Date.now()
   });
   if (photoBlob) await db.foodPhotos.put({ foodLogId: id, photoBlob });
@@ -130,7 +131,12 @@ async function openDrinkModal({ date, existingId, onSaved }) {
       <div class="drink-sweet-chips" id="drink-sweet-chips">
         ${DRINK_SWEET_OPTIONS.map(o => `<button class="chip drink-sweet-chip ${sweet === o.key ? 'active' : ''}" data-sweet="${o.key}">${o.icon} ${o.label}</button>`).join('')}
       </div>
-      <p class="settings-note">💡 المهم للدايت: السعرات والتحلية. الماء يُسجَّل في العدّاد فوق.</p>
+      <label class="field-label">الكمية (مل)</label>
+      <div class="drink-vol-chips" id="drink-vol-chips">
+        ${[150, 200, 250, 330, 500].map(v => `<button class="chip drink-vol-chip" data-vol="${v}">${toArabicNumeral(v)}</button>`).join('')}
+      </div>
+      <input class="text-input" type="number" min="0" id="drink-volume" value="${existing?.volumeML ?? ''}" placeholder="مثلاً: ٢٥٠">
+      <p class="settings-note">💡 المهم للدايت: الكمية والسعرات والتحلية. الماء يُسجَّل في العدّاد فوق.</p>
       <div class="food-macros-row">
         <div class="food-macro-field">
           <label class="field-label">سعرات</label>
@@ -155,19 +161,31 @@ async function openDrinkModal({ date, existingId, onSaved }) {
   overlay.querySelectorAll('#drink-sweet-chips .drink-sweet-chip').forEach(c => c.addEventListener('click', () => {
     sweet = c.dataset.sweet; overlay.querySelectorAll('#drink-sweet-chips .drink-sweet-chip').forEach(x => x.classList.toggle('active', x === c));
   }));
+  const volInput = overlay.querySelector('#drink-volume');
+  const syncVolChips = () => overlay.querySelectorAll('#drink-vol-chips .drink-vol-chip')
+    .forEach(x => x.classList.toggle('active', x.dataset.vol === String(volInput.value)));
+  overlay.querySelectorAll('#drink-vol-chips .drink-vol-chip').forEach(c => c.addEventListener('click', () => {
+    volInput.value = c.dataset.vol;
+    syncVolChips();
+  }));
+  volInput.addEventListener('input', syncVolChips);
+  syncVolChips();
   overlay.querySelector('#drink-cancel').addEventListener('click', () => overlay.remove());
   const del = overlay.querySelector('#drink-delete');
   if (del) del.addEventListener('click', async () => { if (!confirm('حذف هذا المشروب؟')) return; await deleteFoodLog(existing.id); overlay.remove(); if (onSaved) onSaved(); });
   overlay.querySelector('#drink-save').addEventListener('click', async () => {
     const calories = readNumericField('drink-calories', { int: true, min: 0 });
+    const volumeML = readNumericField('drink-volume', { int: true, min: 0 });
     const time = document.getElementById('drink-time').value || null;
     const subObj = foodTagSub('drink', sub);
     const tag = { cat: 'drink', sub, sweet };
+    // Volume doubles as the drink's food-weight (≈1 ml → 1 g) so it plots
+    // cleanly on the "food weight" line in diet mode instead of reading 0.
     if (existing) {
-      await updateFoodLog(existing.id, { mealType: 'drink', mealName: subObj?.label || 'مشروب', time, notes: '', calories, protein: null, carbs: null, fat: null, mealWeightG: null, foodTags: [tag] });
-      await db.foodLogs.update(existing.id, { drinkSweet: sweet, isDrink: true });
+      await updateFoodLog(existing.id, { mealType: 'drink', mealName: subObj?.label || 'مشروب', time, notes: '', calories, protein: null, carbs: null, fat: null, mealWeightG: volumeML, foodTags: [tag] });
+      await db.foodLogs.update(existing.id, { drinkSweet: sweet, isDrink: true, volumeML: volumeML ?? null });
     } else {
-      await addFoodLog({ date, mealType: 'drink', mealName: subObj?.label || 'مشروب', time, calories, foodTags: [tag], isDrink: true, drinkSweet: sweet });
+      await addFoodLog({ date, mealType: 'drink', mealName: subObj?.label || 'مشروب', time, calories, mealWeightG: volumeML, foodTags: [tag], isDrink: true, drinkSweet: sweet, volumeML });
     }
     overlay.remove();
     if (onSaved) onSaved();
@@ -222,9 +240,14 @@ async function renderWaterCard(container) {
       </div>
       ${drinks.length ? `<div class="drinks-list">${drinks.map(d => {
         const tag = d.foodTags?.find(t => t.cat === 'drink');
+        const bits = [];
+        if (d.volumeML) bits.push(toArabicNumeral(d.volumeML) + ' مل');
+        if (d.calories) bits.push(toArabicNumeral(d.calories) + ' سعرة');
+        else if (d.drinkSweet === 'sweetener') bits.push('محلّي');
+        if (d.time) bits.push(d.time);
         return `<button class="drink-chip-row" data-drink-id="${d.id}">
           <span>${tag ? foodTagLabel(tag) : '🥤 ' + escapeHtml(d.mealName || 'مشروب')}</span>
-          <span class="drink-chip-cal">${d.calories ? toArabicNumeral(d.calories) + ' سعرة' : (d.drinkSweet === 'sweetener' ? 'محلّي' : '')}${d.time ? ' · ' + d.time : ''}</span>
+          <span class="drink-chip-cal">${bits.join(' · ')}</span>
         </button>`;
       }).join('')}</div>` : `<p class="empty-state-sub">سجّلي القهوة والشاي والعصائر — تُحتسب في وضع الدايت.</p>`}
     </div>

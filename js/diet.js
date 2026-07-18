@@ -68,18 +68,20 @@ function allSeriesDefsCtx(ctx = {}) {
 }
 function seriesDef(key, ctx = {}) { return allSeriesDefsCtx(ctx).find(s => s.key === key); }
 
-// What a RISING line means, in plain Arabic — so the legend can tell her
-// that a falling "gap" line means shorter gaps, not fewer meals, etc.
+// What a line's direction means, in plain Arabic — spelled out both ways
+// so "the gap line went down" is unambiguous (shorter gaps, not fewer
+// meals).
 function dietSeriesMeaning(key) {
-  if (key === 'weight') return 'ينزل = نقص وزنك، يصعد = زاد';
-  if (key === 'metric:bmi') return 'يتبع وزنك';
-  if (key === 'timing:overnight') return 'أعلى = صيام ليلي أطول';
-  if (key === 'timing:gap') return 'أعلى = فجوات أطول بين الوجبات';
-  if (key.startsWith('meas:')) return 'أعلى = القياس أكبر';
-  if (key.startsWith('cat:')) return 'أعلى = تكرّر أكثر في اليوم';
-  if (key === 'metric:calories') return 'أعلى = سعرات أكثر';
-  if (key === 'metric:weight') return 'أعلى = وزن طعام أكبر';
-  return 'أعلى = كمية أكبر';
+  if (key === 'weight') return '↓ نقص وزنك · ↑ زاد وزنك';
+  if (key === 'metric:bmi') return '↑↓ يتبع وزنك (مؤشر كتلة الجسم)';
+  if (key === 'timing:overnight') return '↑ صيام ليلي أطول · ↓ صيام ليلي أقصر';
+  if (key === 'timing:gap') return '↑ فجوات أطول بين الوجبات · ↓ فجوات أقصر';
+  if (key.startsWith('meas:')) return '↑ القياس أكبر · ↓ أصغر';
+  if (key.startsWith('cat:')) return '↑ تكرّر أكثر في اليوم · ↓ أقل';
+  if (key === 'metric:calories') return '↑ سعرات أكثر · ↓ أقل';
+  if (key === 'metric:weight') return '↑ وزن الطعام أثقل · ↓ أخف';
+  if (key === 'metric:protein' || key === 'metric:carbs' || key === 'metric:fat') return '↑ غرامات أكثر · ↓ أقل';
+  return '↑ أكبر · ↓ أصغر';
 }
 
 async function getDietContext() {
@@ -385,7 +387,7 @@ async function analyzeMealTypeSkips(rangeDays) {
 // series is normalised to its OWN range and drawn thin — so the eye
 // compares SHAPE (does this rise when weight rises?) rather than raw units
 // that don't share a scale. Transparent day-columns make points tappable.
-function renderDietChart(days, selectedKeys, ctx = {}) {
+function renderDietChart(days, selectedKeys, ctx = {}, opts = {}) {
   const withWeight = days.filter(p => p.weight != null);
   if (days.length === 0) return '<p class="empty-state-sub">سجّلي وزنك ووجباتك لرؤية الرسم.</p>';
 
@@ -401,20 +403,36 @@ function renderDietChart(days, selectedKeys, ctx = {}) {
   const wpad = (wMax - wMin) * 0.2; wMin -= wpad; wMax += wpad;
   const wY = (v) => padT + plotH - ((v - wMin) / (wMax - wMin)) * plotH;
 
-  // each selected series, normalised to its own visible range
-  const seriesPaths = selectedKeys.map(key => {
-    const def = seriesDef(key, ctx); if (!def) return '';
+  // normalise one series to [0,1] across the window
+  const normSeries = (key) => {
     const vals = days.map(p => p.series[key] ?? 0);
     const mx = Math.max(...vals, 0), mn = Math.min(...vals, 0);
     const range = (mx - mn) || 1;
-    const coords = days.map((p, i) => {
-      const v = p.series[key] ?? 0;
-      const y = padT + plotH - ((v - mn) / range) * plotH * 0.9 - plotH * 0.05;
-      return [xAt(i), y];
+    return vals.map(v => (v - mn) / range);
+  };
+  const yFromNorm = (t) => padT + plotH - t * plotH * 0.9 - plotH * 0.05;
+
+  let seriesPaths = '';
+  if (opts.combined && selectedKeys.length) {
+    // One composite line: the average of every selected series' normalised
+    // value per day — an approximate "combined pressure" curve to eyeball
+    // against weight.
+    const normed = selectedKeys.map(normSeries);
+    const coords = days.map((_, i) => {
+      const t = normed.reduce((s, arr) => s + arr[i], 0) / normed.length;
+      return [xAt(i), yFromNorm(t)];
     });
     const path = coords.length >= 2 ? smoothPath(coords) : '';
-    return path ? `<path d="${path}" fill="none" stroke="${def.color}" stroke-width="1.6" stroke-opacity="0.85" stroke-linejoin="round"/>` : '';
-  }).join('');
+    seriesPaths = path ? `<path d="${path}" fill="none" stroke="var(--info-strong)" stroke-width="2.4" stroke-linejoin="round"/>` : '';
+  } else {
+    seriesPaths = selectedKeys.map(key => {
+      const def = seriesDef(key, ctx); if (!def) return '';
+      const t = normSeries(key);
+      const coords = days.map((p, i) => [xAt(i), yFromNorm(t[i])]);
+      const path = coords.length >= 2 ? smoothPath(coords) : '';
+      return path ? `<path d="${path}" fill="none" stroke="${def.color}" stroke-width="1.6" stroke-opacity="0.85" stroke-linejoin="round"/>` : '';
+    }).join('');
+  }
 
   // 7-day average trend (dashed) — the calmer signal under the daily noise.
   const avgCoords = days.map((p, i) => p.weightAvg != null ? [xAt(i), wY(p.weightAvg)] : null).filter(Boolean);
@@ -441,19 +459,23 @@ function renderDietChart(days, selectedKeys, ctx = {}) {
     </svg>`;
 }
 
-function dietChartLegend(selectedKeys, ctx = {}) {
-  const items = [`<span class="diet-leg"><i class="diet-leg-swatch diet-leg-weight"></i> الوزن</span>`, `<span class="diet-leg"><i class="diet-leg-swatch diet-leg-avg"></i> متوسط ٧ أيام</span>`]
-    .concat(selectedKeys.map(k => { const d = seriesDef(k, ctx); return d ? `<span class="diet-leg"><i class="diet-leg-swatch" style="background:${d.color}"></i> ${d.label}</span>` : ''; }));
+function dietChartLegend(selectedKeys, ctx = {}, opts = {}) {
+  const base = [`<span class="diet-leg"><i class="diet-leg-swatch diet-leg-weight"></i> الوزن</span>`, `<span class="diet-leg"><i class="diet-leg-swatch diet-leg-avg"></i> متوسط ٧ أيام</span>`];
+  if (opts.combined && selectedKeys.length) {
+    base.push(`<span class="diet-leg"><i class="diet-leg-swatch" style="background:var(--info-strong)"></i> مجموع العناصر (تقريبي)</span>`);
+    return `<div class="diet-legend">${base.join('')}</div>`;
+  }
+  const items = base.concat(selectedKeys.map(k => { const d = seriesDef(k, ctx); return d ? `<span class="diet-leg"><i class="diet-leg-swatch" style="background:${d.color}"></i> ${d.label}</span>` : ''; }));
   return `<div class="diet-legend">${items.join('')}</div>`;
 }
 
-// A plain-language key: for every line on the chart, what does UP mean?
+// A plain-language key: for every line on the chart, what do ↑ and ↓ mean?
 function dietDirectionKey(selectedKeys, ctx = {}) {
   const rows = [{ key: 'weight', label: 'الوزن', color: 'var(--ink)' }]
     .concat(selectedKeys.map(k => { const d = seriesDef(k, ctx); return d ? { key: k, label: d.label, color: d.color } : null; }).filter(Boolean));
   return `
-    <details class="diet-dir-key">
-      <summary>❓ ماذا تعني الخطوط؟</summary>
+    <details class="diet-dir-key" open>
+      <summary>❓ ماذا تعني الخطوط؟ (اتجاه كل خط)</summary>
       <div class="diet-dir-list">
         ${rows.map(r => `<div class="diet-dir-row"><i class="diet-dir-dot" style="background:${r.color}"></i><span class="diet-dir-name">${r.label}</span><span class="diet-dir-mean">${dietSeriesMeaning(r.key)}</span></div>`).join('')}
       </div>
@@ -688,6 +710,137 @@ async function renderHiddenCalorieCard(container, range) {
 }
 
 // ============================================================
+//  second graph: lifestyle (sleep / mood / training) vs body
+// ============================================================
+const MOOD_SCORE = { '😊': 5, '😐': 3, '😢': 2, '😣': 2, '🌑': 1 };
+const LIFESTYLE_SERIES = [
+  { key: 'sleep',    label: '😴 النوم (ساعات)', color: '#6C8EBF' },
+  { key: 'mood',     label: '😊 المزاج (١-٥)',   color: '#E8A33D' },
+  { key: 'training', label: '🏋️ التمارين (عدد)', color: '#7BA05B' }
+];
+function lifestyleMeaning(key) {
+  if (key === 'sleep') return '↑ نوم أطول · ↓ أقصر';
+  if (key === 'mood') return '↑ مزاج أفضل · ↓ أسوأ';
+  if (key === 'training') return '↑ تمارين أكثر · ↓ أقل';
+  return '';
+}
+function bodyAnchorDefs(ctx = {}) {
+  const defs = [{ key: 'weight', label: '⚖️ الوزن', unit: 'كغ' }];
+  if (ctx.heightCm) defs.push({ key: 'bmi', label: '📊 BMI', unit: '' });
+  (ctx.measurements || []).forEach(m => defs.push({ key: 'meas:' + m.id, label: '📏 ' + m.name, unit: 'سم' }));
+  return defs;
+}
+
+async function getLifestyleDays(rangeDays, ctx = {}) {
+  const [sleepLogs, moodLogs, exLogs, weightLogs] = await Promise.all([
+    db.sleepLogs.toArray(), db.moodLogs.toArray(), db.exerciseLogs.toArray(), getAllWeightLogs()
+  ]);
+  const sleepBy = {}; sleepLogs.forEach(l => { if (l.durationMinutes != null) sleepBy[l.date] = (sleepBy[l.date] || 0) + l.durationMinutes; });
+  const moodAgg = {}; moodLogs.forEach(l => { const s = MOOD_SCORE[l.emoji]; if (s) (moodAgg[l.date] = moodAgg[l.date] || []).push(s); });
+  const trainBy = {}; exLogs.forEach(l => { trainBy[l.date] = (trainBy[l.date] || 0) + 1; });
+  const weightBy = {}; weightLogs.forEach(w => { weightBy[w.date] = w.value; });
+  const h = ctx.heightCm ? ctx.heightCm / 100 : null;
+  const measMaps = {};
+  for (const m of (ctx.measurements || [])) { const logs = await getMeasurementLogs(m.id); const map = {}; logs.forEach(l => { map[l.date] = l.value; }); measMaps[m.id] = map; }
+
+  const start = rangeDays === 'all' ? null : addDays(todayStr(), -Number(rangeDays) + 1);
+  const dates = new Set([...Object.keys(sleepBy), ...Object.keys(moodAgg), ...Object.keys(trainBy), ...Object.keys(weightBy)]);
+  Object.values(measMaps).forEach(mm => Object.keys(mm).forEach(d => dates.add(d)));
+  return [...dates].filter(d => start === null || d >= start).sort().map(date => {
+    const row = { date, life: {}, body: {} };
+    if (sleepBy[date] != null) row.life.sleep = sleepBy[date] / 60;
+    if (moodAgg[date]) row.life.mood = moodAgg[date].reduce((s, x) => s + x, 0) / moodAgg[date].length;
+    if (trainBy[date] != null) row.life.training = trainBy[date];
+    if (weightBy[date] != null) { row.body.weight = weightBy[date]; if (h) row.body.bmi = weightBy[date] / (h * h); }
+    (ctx.measurements || []).forEach(m => { if (measMaps[m.id][date] != null) row.body['meas:' + m.id] = measMaps[m.id][date]; });
+    return row;
+  });
+}
+
+function renderLifestyleChart(days, lifeKeys, bodyKey) {
+  const withBody = days.filter(p => p.body[bodyKey] != null);
+  if (withBody.length === 0) return '<p class="empty-state-sub">سجّلي وزنك/قياسك ونومك أو مزاجك أو تمارينك عبر عدّة أيام.</p>';
+  const width = 340, height = 190, padL = 30, padR = 12, padT = 12, padB = 18;
+  const plotW = width - padL - padR, plotH = height - padT - padB;
+  const n = days.length;
+  const xAt = (i) => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+
+  const bv = withBody.map(p => p.body[bodyKey]);
+  let bMin = Math.min(...bv), bMax = Math.max(...bv);
+  if (bMin === bMax) { bMin -= 1; bMax += 1; }
+  const bpad = (bMax - bMin) * 0.2; bMin -= bpad; bMax += bpad;
+  const bY = (v) => padT + plotH - ((v - bMin) / (bMax - bMin)) * plotH;
+
+  const overlays = lifeKeys.map(key => {
+    const vals = days.map(p => p.life[key]);
+    const present = vals.filter(v => v != null);
+    if (!present.length) return '';
+    const mx = Math.max(...present), mn = Math.min(...present); const range = (mx - mn) || 1;
+    const def = LIFESTYLE_SERIES.find(s => s.key === key);
+    const coords = days.map((p, i) => p.life[key] != null ? [xAt(i), padT + plotH - ((p.life[key] - mn) / range) * plotH * 0.9 - plotH * 0.05] : null).filter(Boolean);
+    const path = coords.length >= 2 ? smoothPath(coords) : '';
+    return path ? `<path d="${path}" fill="none" stroke="${def.color}" stroke-width="1.8" stroke-opacity="0.85" stroke-linejoin="round"/>` : '';
+  }).join('');
+
+  const bodyCoords = days.map((p, i) => p.body[bodyKey] != null ? [xAt(i), bY(p.body[bodyKey])] : null).filter(Boolean);
+  const bodyLine = bodyCoords.length >= 2 ? `<path d="${smoothPath(bodyCoords)}" fill="none" class="diet-weight-line"/>` : '';
+  const dots = days.map((p, i) => p.body[bodyKey] != null ? `<circle cx="${xAt(i).toFixed(1)}" cy="${bY(p.body[bodyKey]).toFixed(1)}" r="2.6" class="diet-weight-dot"/>` : '').join('');
+  const labels = [bMax - bpad, bMin + bpad].map(v => `<text x="${padL - 4}" y="${(bY(v) + 3).toFixed(1)}" class="chart-axis-label" text-anchor="end">${v.toFixed(1)}</text>`).join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" class="diet-chart-svg">${overlays}${bodyLine}${dots}${labels}</svg>`;
+}
+
+// Correlation: split days into high/low halves by a lifestyle metric and
+// compare the body value between them.
+function lifestyleInsight(days, lifeKey, body) {
+  const pairs = days.map(p => (p.life[lifeKey] != null && p.body[body.key] != null) ? { metric: p.life[lifeKey], perDay: p.body[body.key] } : null).filter(Boolean);
+  const split = splitByMetric(pairs, lifeKey === 'training' ? 0.5 : (lifeKey === 'mood' ? 0.4 : 0.4));
+  if (!split) return null;
+  const diff = split.highPerDay - split.lowPerDay;
+  if (Math.abs(diff) < (body.key === 'weight' ? 0.2 : 0.3)) return null;
+  const life = LIFESTYLE_SERIES.find(s => s.key === lifeKey);
+  const moreLabel = lifeKey === 'sleep' ? 'نمتِ أكثر' : lifeKey === 'mood' ? 'كان مزاجك أفضل' : 'تمرّنتِ أكثر';
+  const dir = diff < 0 ? 'أقل' : 'أعلى';
+  return `${life.label.split(' ')[0]} في الأيام التي ${moreLabel}، ${body.label.replace(/^[^ ]+ /, '')} ${dir} بمتوسط ${toArabicNumeral(Math.abs(diff).toFixed(1))} ${body.unit}.`;
+}
+
+async function renderLifestyleCard(container, range, ctx, state) {
+  const bodyDefs = bodyAnchorDefs(ctx);
+  if (!bodyDefs.find(d => d.key === state.bodyKey)) state.bodyKey = 'weight';
+  const days = await getLifestyleDays(range, ctx);
+  const body = bodyDefs.find(d => d.key === state.bodyKey);
+
+  const lifeChips = LIFESTYLE_SERIES.map(s => `<button class="chip diet-series-chip ${state.lifeKeys.includes(s.key) ? 'active' : ''}" data-life="${s.key}"><i class="diet-chip-swatch" style="background:${s.color}"></i>${s.label}</button>`).join('');
+  const bodyChips = bodyDefs.map(d => `<button class="chip life-body-chip ${state.bodyKey === d.key ? 'active' : ''}" data-body="${d.key}">${d.label}</button>`).join('');
+
+  const insights = state.lifeKeys.map(k => lifestyleInsight(days, k, body)).filter(Boolean);
+  const legend = `<div class="diet-legend"><span class="diet-leg"><i class="diet-leg-swatch diet-leg-weight"></i> ${body.label}</span>${state.lifeKeys.map(k => { const s = LIFESTYLE_SERIES.find(x => x.key === k); return `<span class="diet-leg"><i class="diet-leg-swatch" style="background:${s.color}"></i> ${s.label}</span>`; }).join('')}</div>`;
+  const dirKey = state.lifeKeys.length ? `<div class="diet-dir-list">${state.lifeKeys.map(k => { const s = LIFESTYLE_SERIES.find(x => x.key === k); return `<div class="diet-dir-row"><i class="diet-dir-dot" style="background:${s.color}"></i><span class="diet-dir-name">${s.label}</span><span class="diet-dir-mean">${lifestyleMeaning(k)}</span></div>`; }).join('')}</div>` : '';
+
+  container.innerHTML = `
+    <div class="section-header"><h2 class="card-title">🌙 نمط حياتك مقابل جسمك</h2></div>
+    <p class="settings-note">قارني نومك ومزاجك وتمارينك بوزنك أو قياساتك.</p>
+    <p class="material-type-label">اعرضي مقابل:</p>
+    <div class="diet-series-chips life-body-chips" id="life-body-chips">${bodyChips}</div>
+    <p class="material-type-label">أضيفي إلى الرسم:</p>
+    <div class="diet-series-chips" id="life-series-chips">${lifeChips}</div>
+    <div id="life-chart">${renderLifestyleChart(days, state.lifeKeys, state.bodyKey)}</div>
+    ${legend}
+    ${dirKey}
+    ${insights.length ? `<div class="diet-insights-list">${insights.map(t => `<p class="diet-insight diet-insight-neutral">💡 ${t}</p>`).join('')}</div>` : '<p class="settings-note">أضيفي المزيد من الأيام لاستخراج أنماط.</p>'}`;
+
+  container.querySelectorAll('#life-series-chips .diet-series-chip').forEach(chip => chip.addEventListener('click', async () => {
+    const k = chip.dataset.life;
+    state.lifeKeys = state.lifeKeys.includes(k) ? state.lifeKeys.filter(x => x !== k) : [...state.lifeKeys, k];
+    await renderLifestyleCard(container, range, ctx, state);
+  }));
+  container.querySelectorAll('#life-body-chips .life-body-chip').forEach(chip => chip.addEventListener('click', async () => {
+    state.bodyKey = chip.dataset.body;
+    await renderLifestyleCard(container, range, ctx, state);
+  }));
+}
+
+// ============================================================
 //  the page
 // ============================================================
 async function renderDietPage(params, view) {
@@ -701,6 +854,7 @@ async function renderDietPage(params, view) {
       <div class="section-header">
         <h2 class="card-title">الوجبات مقابل وزنك</h2>
         <div class="chart-range-chips" id="diet-range-chips">
+          <button class="chip" data-range="7">أسبوع</button>
           <button class="chip" data-range="30">شهر</button>
           <button class="chip" data-range="90">٣ أشهر</button>
           <button class="chip active" data-range="180">٦ أشهر</button>
@@ -709,6 +863,9 @@ async function renderDietPage(params, view) {
       </div>
       <div id="diet-chart"></div>
       <div id="diet-legend"></div>
+      <div class="diet-chart-tools">
+        <button class="chip diet-combine-toggle" id="diet-combine">🔗 دمج العناصر في خط واحد</button>
+      </div>
       <p class="diet-tap-hint">اضغطي أي يوم على الرسم لرؤية تفاصيله</p>
       <div id="diet-dir-key"></div>
       <details class="diet-series-picker">
@@ -723,6 +880,7 @@ async function renderDietPage(params, view) {
         <div class="diet-series-chips" id="diet-body-series"></div>
       </details>
     </div>
+    <div class="card" id="diet-lifestyle-card"></div>
     <div class="card" id="diet-mix-card"></div>
     <div class="card" id="diet-adherence-card"></div>
     <div class="card" id="diet-hidden-card" style="display:none"></div>
@@ -737,7 +895,9 @@ async function renderDietPage(params, view) {
 
   let range = '180';
   let selected = await getDietSeriesPref();
+  let combined = false;
   const ctx = await getDietContext();
+  const lifeState = { lifeKeys: ['sleep'], bodyKey: 'weight' };
 
   function renderSeriesChips() {
     const defs = allSeriesDefsCtx(ctx);
@@ -763,9 +923,11 @@ async function renderDietPage(params, view) {
 
   async function drawChart() {
     const days = await getDietDays(range, ctx);
-    document.getElementById('diet-chart').innerHTML = renderDietChart(days, selected, ctx);
-    document.getElementById('diet-legend').innerHTML = dietChartLegend(selected, ctx);
-    document.getElementById('diet-dir-key').innerHTML = dietDirectionKey(selected, ctx);
+    document.getElementById('diet-chart').innerHTML = renderDietChart(days, selected, ctx, { combined });
+    document.getElementById('diet-legend').innerHTML = dietChartLegend(selected, ctx, { combined });
+    document.getElementById('diet-dir-key').innerHTML = combined ? '' : dietDirectionKey(selected, ctx);
+    const cb = document.getElementById('diet-combine');
+    if (cb) cb.classList.toggle('active', combined);
     view.querySelectorAll('[data-diet-day]').forEach(band => {
       band.addEventListener('click', () => openDietDayDetail(band.dataset.dietDay));
     });
@@ -774,6 +936,7 @@ async function renderDietPage(params, view) {
   async function refresh() {
     await renderDietGoalHero(document.getElementById('diet-goal-hero'), ctx);
     await drawChart();
+    await renderLifestyleCard(document.getElementById('diet-lifestyle-card'), range, ctx, lifeState);
     await renderFoodMixCard(document.getElementById('diet-mix-card'), range);
     await renderAdherenceCard(document.getElementById('diet-adherence-card'), range);
     await renderHiddenCalorieCard(document.getElementById('diet-hidden-card'), range);
@@ -788,6 +951,10 @@ async function renderDietPage(params, view) {
       view.querySelectorAll('#diet-range-chips .chip').forEach(c => c.classList.toggle('active', c === chip));
       await refresh();
     });
+  });
+  document.getElementById('diet-combine').addEventListener('click', async () => {
+    combined = !combined;
+    await drawChart();
   });
 
   renderSeriesChips();
