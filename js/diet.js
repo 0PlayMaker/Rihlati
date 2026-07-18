@@ -62,6 +62,12 @@ function allSeriesDefs() {
 // static picker groups still work without a context.
 function allSeriesDefsCtx(ctx = {}) {
   const defs = allSeriesDefs();
+  // Specific food types (bread, eggs, fish...) — only the ones she has
+  // actually logged, so the list stays her food rather than the taxonomy.
+  (ctx.foodTypes || []).forEach(t => defs.push({
+    key: t.key, label: t.label, color: DIET_CAT_COLORS[t.cat] || 'var(--ink-soft)',
+    kind: 'sub', catKey: t.cat, subKey: t.sub, n: t.n, unit: 'مرّة'
+  }));
   if (ctx.heightCm) defs.push({ key: 'metric:bmi', label: '📊 BMI', color: '#8E7CC3', kind: 'body', unit: '' });
   (ctx.measurements || []).forEach(m => defs.push({ key: 'meas:' + m.id, label: '📏 ' + m.name, color: '#C77DA0', kind: 'body', unit: 'سم' }));
   return defs;
@@ -77,7 +83,7 @@ function dietSeriesMeaning(key) {
   if (key === 'timing:overnight') return '↑ صيام ليلي أطول · ↓ صيام ليلي أقصر';
   if (key === 'timing:gap') return '↑ فجوات أطول بين الوجبات · ↓ فجوات أقصر';
   if (key.startsWith('meas:')) return '↑ القياس أكبر · ↓ أصغر';
-  if (key.startsWith('cat:')) return '↑ تكرّر أكثر في اليوم · ↓ أقل';
+  if (key.startsWith('cat:') || key.startsWith('sub:')) return '↑ تكرّر أكثر في أيامك · ↓ أقل';
   if (key === 'metric:calories') return '↑ سعرات أكثر · ↓ أقل';
   if (key === 'metric:weight') return '↑ وزن الطعام أثقل · ↓ أخف';
   if (key === 'metric:protein' || key === 'metric:carbs' || key === 'metric:fat') return '↑ غرامات أكثر · ↓ أقل';
@@ -85,8 +91,8 @@ function dietSeriesMeaning(key) {
 }
 
 async function getDietContext() {
-  const [settings, measurements] = await Promise.all([db.settings.get(1), getActiveMeasurements()]);
-  return { heightCm: settings?.heightCm || null, measurements };
+  const [settings, measurements, foodLogs] = await Promise.all([db.settings.get(1), getActiveMeasurements(), db.foodLogs.toArray()]);
+  return { heightCm: settings?.heightCm || null, measurements, foodTypes: loggedFoodTypes(foodLogs) };
 }
 
 // minutes since midnight, or null
@@ -144,6 +150,33 @@ function dailyCatCountMap(foodLogs, catKey) {
 // One row per day in the window that has weight or any food data. Each row
 // carries the weight and a value for every possible series, so the chart
 // and the day-detail can read straight from it.
+// Counts of a specific food SUB-type (bread, eggs, fish...) per day.
+function dailySubCountMap(foodLogs, catKey, subKey) {
+  const map = {};
+  for (const l of foodLogs) {
+    if (Array.isArray(l.foodTags) && l.foodTags.some(t => t.cat === catKey && t.sub === subKey)) map[l.date] = (map[l.date] || 0) + 1;
+  }
+  return map;
+}
+
+// Which specific food types has she ACTUALLY logged, and how often? The
+// picker is built from this rather than from the full taxonomy, so it
+// lists her real foods instead of forty buttons she's never used.
+function loggedFoodTypes(foodLogs) {
+  const counts = {};
+  for (const l of foodLogs) {
+    if (!Array.isArray(l.foodTags)) continue;
+    for (const t of l.foodTags) {
+      if (!t.cat || !t.sub) continue;
+      const k = t.cat + ':' + t.sub;
+      counts[k] = (counts[k] || 0) + 1;
+    }
+  }
+  return Object.entries(counts)
+    .map(([k, n]) => { const [cat, sub] = k.split(':'); return { key: 'sub:' + k, cat, sub, n, label: foodTagLabel({ cat, sub }) }; })
+    .sort((a, b) => b.n - a.n);
+}
+
 async function getDietDays(rangeDays, ctx = {}) {
   const [weightLogs, foodLogs] = await Promise.all([getAllWeightLogs(), db.foodLogs.toArray()]);
   const weightBy = {}; weightLogs.forEach(w => { weightBy[w.date] = w.value; });
@@ -151,6 +184,15 @@ async function getDietDays(rangeDays, ctx = {}) {
   const metricMaps = {}; DIET_METRICS.forEach(m => { metricMaps[m.key] = dailyMetricMap(foodLogs, m.field); });
   const catMaps = {}; FOOD_TAG_CATEGORIES.forEach(c => { catMaps[c.key] = dailyCatCountMap(foodLogs, c.key); });
   const timing = computeMealTiming(foodLogs);
+
+  // Per-sub-type maps, only for types she actually logs.
+  const subTypes = loggedFoodTypes(foodLogs);
+  const subMaps = {}; subTypes.forEach(s => { subMaps[s.key] = dailySubCountMap(foodLogs, s.cat, s.sub); });
+
+  // A day she logged nothing is a GAP, not a day of zero bread. Counting it
+  // as zero invents troughs and stretches the scale, which is a big part of
+  // why a single meal used to send a line to the ceiling.
+  const foodDays = new Set(foodLogs.map(l => l.date));
 
   // Measurement values per day (for optional overlays).
   const measMaps = {};
@@ -170,11 +212,13 @@ async function getDietDays(rangeDays, ctx = {}) {
   Object.values(measMaps).forEach(mm => Object.keys(mm).forEach(d => dates.add(d)));
 
   const rows = [...dates].filter(d => start === null || d >= start).sort().map(date => {
-    const row = { date, weight: weightBy[date] ?? null, series: {} };
-    DIET_METRICS.forEach(m => { row.series['metric:' + m.key] = metricMaps[m.key][date] ?? 0; });
-    FOOD_TAG_CATEGORIES.forEach(c => { row.series['cat:' + c.key] = catMaps[c.key][date] ?? 0; });
-    row.series['timing:overnight'] = timing.overnight[date] ?? 0;
-    row.series['timing:gap'] = timing.gap[date] ?? 0;
+    const logged = foodDays.has(date);
+    const row = { date, weight: weightBy[date] ?? null, hasFood: logged, series: {} };
+    DIET_METRICS.forEach(m => { row.series['metric:' + m.key] = logged ? (metricMaps[m.key][date] ?? 0) : null; });
+    FOOD_TAG_CATEGORIES.forEach(c => { row.series['cat:' + c.key] = logged ? (catMaps[c.key][date] ?? 0) : null; });
+    subTypes.forEach(s => { row.series[s.key] = logged ? (subMaps[s.key][date] ?? 0) : null; });
+    row.series['timing:overnight'] = timing.overnight[date] ?? null;
+    row.series['timing:gap'] = timing.gap[date] ?? null;
     if (h && row.weight != null) row.series['metric:bmi'] = row.weight / (h * h);
     (ctx.measurements || []).forEach(m => { if (measMaps[m.id][date] != null) row.series['meas:' + m.id] = measMaps[m.id][date]; });
     return row;
@@ -387,6 +431,55 @@ async function analyzeMealTypeSkips(rangeDays) {
 // series is normalised to its OWN range and drawn thin — so the eye
 // compares SHAPE (does this rise when weight rises?) rather than raw units
 // that don't share a scale. Transparent day-columns make points tappable.
+// ---------- how overlay lines are scaled ----------
+// Series that measure the same thing must share one scale, or the chart
+// lies: normalising each line to its own min/max stretched every series to
+// full height, so "carbs 3 times" and "protein 2 times" both drew at the
+// ceiling and a single lonely logging spiked to the top. Same-unit series
+// now share a scale anchored at zero, so 3 really does sit above 2.
+function seriesFamily(key) {
+  if (key.startsWith('cat:') || key.startsWith('sub:')) return 'count';
+  if (key === 'metric:calories') return 'calories';
+  if (key === 'metric:protein' || key === 'metric:carbs' || key === 'metric:fat') return 'grams';
+  if (key === 'metric:weight') return 'foodweight';
+  if (key.startsWith('timing:')) return 'hours';
+  return 'solo:' + key; // BMI, measurements — genuinely their own units
+}
+// Families where zero is a real floor, so the scale starts there instead of
+// at the smallest value observed.
+const ZERO_ANCHORED_FAMILIES = ['count', 'calories', 'grams', 'foodweight'];
+
+// Daily logging is far noisier than body weight responds. A trailing mean
+// turns "did I eat bread today (0/1)" into "how much bread per day lately",
+// which is the thing that can actually be compared to a weight curve.
+function smoothWindowFor(n) { return n <= 10 ? 2 : (n <= 45 ? 5 : 7); }
+function rollingMean(values, win) {
+  return values.map((_, i) => {
+    let sum = 0, cnt = 0;
+    for (let j = Math.max(0, i - win + 1); j <= i; j++) {
+      const v = values[j];
+      if (v != null && isFinite(v)) { sum += v; cnt++; }
+    }
+    return cnt ? sum / cnt : null;
+  });
+}
+
+// Draw a line that may contain gaps (unlogged days) as separate strokes
+// rather than one path teleporting across the hole.
+function pathWithGaps(points, stroke, width, opacity) {
+  const runs = [];
+  let cur = [];
+  points.forEach(p => {
+    if (p == null) { if (cur.length) runs.push(cur); cur = []; }
+    else cur.push(p);
+  });
+  if (cur.length) runs.push(cur);
+  return runs.map(run => {
+    if (run.length === 1) return `<circle cx="${run[0][0].toFixed(1)}" cy="${run[0][1].toFixed(1)}" r="2" fill="${stroke}" fill-opacity="${opacity}"/>`;
+    return `<path d="${smoothPath(run)}" fill="none" stroke="${stroke}" stroke-width="${width}" stroke-opacity="${opacity}" stroke-linejoin="round"/>`;
+  }).join('');
+}
+
 function renderDietChart(days, selectedKeys, ctx = {}, opts = {}) {
   const withWeight = days.filter(p => p.weight != null);
   if (days.length === 0) return '<p class="empty-state-sub">سجّلي وزنك ووجباتك لرؤية الرسم.</p>';
@@ -403,34 +496,50 @@ function renderDietChart(days, selectedKeys, ctx = {}, opts = {}) {
   const wpad = (wMax - wMin) * 0.2; wMin -= wpad; wMax += wpad;
   const wY = (v) => padT + plotH - ((v - wMin) / (wMax - wMin)) * plotH;
 
-  // normalise one series to [0,1] across the window
-  const normSeries = (key) => {
-    const vals = days.map(p => p.series[key] ?? 0);
-    const mx = Math.max(...vals, 0), mn = Math.min(...vals, 0);
-    const range = (mx - mn) || 1;
-    return vals.map(v => (v - mn) / range);
+  // 1. smooth every selected series over a trailing window
+  const win = smoothWindowFor(n);
+  const smoothed = {};
+  selectedKeys.forEach(k => { smoothed[k] = rollingMean(days.map(p => p.series[k] ?? null), win); });
+
+  // 2. one shared scale per unit family
+  const famRange = {};
+  selectedKeys.forEach(k => {
+    const vals = smoothed[k].filter(v => v != null);
+    if (!vals.length) return;
+    const f = seriesFamily(k);
+    const mn = Math.min(...vals), mx = Math.max(...vals);
+    if (!famRange[f]) famRange[f] = { min: mn, max: mx };
+    else { famRange[f].min = Math.min(famRange[f].min, mn); famRange[f].max = Math.max(famRange[f].max, mx); }
+  });
+  Object.entries(famRange).forEach(([f, r]) => {
+    if (ZERO_ANCHORED_FAMILIES.includes(f)) r.min = 0;
+    if (r.max === r.min) r.max = r.min + 1; // a flat series sits on the floor, not the ceiling
+  });
+
+  const normAt = (k, i) => {
+    const v = smoothed[k][i];
+    if (v == null) return null;
+    const r = famRange[seriesFamily(k)];
+    if (!r) return null;
+    return (v - r.min) / ((r.max - r.min) || 1);
   };
   const yFromNorm = (t) => padT + plotH - t * plotH * 0.9 - plotH * 0.05;
 
   let seriesPaths = '';
   if (opts.combined && selectedKeys.length) {
-    // One composite line: the average of every selected series' normalised
-    // value per day — an approximate "combined pressure" curve to eyeball
-    // against weight.
-    const normed = selectedKeys.map(normSeries);
-    const coords = days.map((_, i) => {
-      const t = normed.reduce((s, arr) => s + arr[i], 0) / normed.length;
-      return [xAt(i), yFromNorm(t)];
+    // One composite line: the average of every selected series' scaled
+    // value per day — an approximate "combined pressure" curve.
+    const pts = days.map((_, i) => {
+      const vals = selectedKeys.map(k => normAt(k, i)).filter(v => v != null);
+      if (!vals.length) return null;
+      return [xAt(i), yFromNorm(vals.reduce((s, v) => s + v, 0) / vals.length)];
     });
-    const path = coords.length >= 2 ? smoothPath(coords) : '';
-    seriesPaths = path ? `<path d="${path}" fill="none" stroke="var(--info-strong)" stroke-width="2.4" stroke-linejoin="round"/>` : '';
+    seriesPaths = pathWithGaps(pts, 'var(--info-strong)', 2.4, 1);
   } else {
     seriesPaths = selectedKeys.map(key => {
       const def = seriesDef(key, ctx); if (!def) return '';
-      const t = normSeries(key);
-      const coords = days.map((p, i) => [xAt(i), yFromNorm(t[i])]);
-      const path = coords.length >= 2 ? smoothPath(coords) : '';
-      return path ? `<path d="${path}" fill="none" stroke="${def.color}" stroke-width="1.6" stroke-opacity="0.85" stroke-linejoin="round"/>` : '';
+      const pts = days.map((_, i) => { const t = normAt(key, i); return t == null ? null : [xAt(i), yFromNorm(t)]; });
+      return pathWithGaps(pts, def.color, 1.8, 0.85);
     }).join('');
   }
 
@@ -710,18 +819,109 @@ async function renderHiddenCalorieCard(container, range) {
 }
 
 // ============================================================
+//  what is actually moving the weight? (weekly, not daily)
+// ============================================================
+// Daily food vs daily weight is mostly noise — water, salt and timing swamp
+// it. Weeks are the right resolution: compare how often a food showed up in
+// a week against how much the weight moved from the previous week.
+async function analyzeWeeklyDrivers(rangeDays, ctx = {}) {
+  const days = await getDietDays(rangeDays, ctx);
+  if (!days.length) return { enough: false, weeks: 0, drivers: [] };
+
+  const first = days[0].date;
+  const buckets = {};
+  days.forEach(d => {
+    const idx = Math.floor(daysBetween(first, d.date) / 7);
+    (buckets[idx] = buckets[idx] || []).push(d);
+  });
+  const weekRows = Object.keys(buckets).map(Number).sort((a, b) => a - b).map(idx => {
+    const ds = buckets[idx];
+    const ws = ds.filter(d => d.weight != null).map(d => d.weight);
+    return { idx, days: ds, meanWeight: ws.length ? ws.reduce((s, x) => s + x, 0) / ws.length : null };
+  });
+
+  // Week-over-week change in average weight — the thing to explain.
+  const withDelta = [];
+  for (let i = 1; i < weekRows.length; i++) {
+    const prev = weekRows[i - 1], cur = weekRows[i];
+    if (prev.meanWeight == null || cur.meanWeight == null) continue;
+    withDelta.push({ ...cur, delta: cur.meanWeight - prev.meanWeight });
+  }
+  if (withDelta.length < 4) return { enough: false, weeks: withDelta.length, drivers: [] };
+
+  const keys = [
+    ...FOOD_TAG_CATEGORIES.map(c => 'cat:' + c.key),
+    ...(ctx.foodTypes || []).map(t => t.key)
+  ];
+  const drivers = [];
+  keys.forEach(key => {
+    const pairs = withDelta.map(w => {
+      const vals = w.days.map(d => d.series[key]).filter(v => v != null);
+      if (!vals.length) return null;
+      return { metric: vals.reduce((s, x) => s + x, 0) / vals.length, perDay: w.delta };
+    }).filter(Boolean);
+    if (pairs.length < 4) return;
+    // The food has to actually vary between weeks, or there's nothing to compare.
+    const split = splitByMetric(pairs, 0.15);
+    if (!split) return;
+    const diff = split.highPerDay - split.lowPerDay;
+    if (Math.abs(diff) < 0.15) return; // under 150 g/week difference: noise
+    drivers.push({ key, diff, high: split.highPerDay, low: split.lowPerDay, weeks: pairs.length });
+  });
+  drivers.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  return { enough: true, weeks: withDelta.length, drivers: drivers.slice(0, 4) };
+}
+
+function driverRowHtml(d, ctx) {
+  const def = seriesDef(d.key, ctx);
+  const label = def ? def.label : d.key;
+  const up = d.diff > 0;
+  const sign = (v) => (v >= 0 ? '+' : '−') + toArabicNumeral(Math.abs(v).toFixed(2));
+  return `
+    <div class="driver-row ${up ? 'driver-up' : 'driver-down'}">
+      <div class="driver-head">
+        <span class="driver-name">${label}</span>
+        <span class="driver-delta">${up ? '⬆️' : '⬇️'} ${sign(d.diff)} كغ/أسبوع</span>
+      </div>
+      <p class="driver-text">في الأسابيع التي كثُر فيها: ${sign(d.high)} كغ · وفي الأسابيع الأقل: ${sign(d.low)} كغ</p>
+    </div>`;
+}
+
+async function renderWeightDriversCard(container, range, ctx) {
+  if (!container) return;
+  // A week view is too short to compare weeks against each other, so this
+  // card always reasons over a longer stretch than the chart above it.
+  const res = await analyzeWeeklyDrivers((range === '7' || range === '30') ? '90' : range, ctx);
+  if (!res.enough) {
+    container.innerHTML = `
+      <div class="section-header"><h2 class="card-title">🔍 ما الذي يحرّك وزنك؟</h2></div>
+      <p class="settings-note">يحتاج ٤ أسابيع على الأقل من تسجيل الوزن والطعام. عندك ${toArabicNumeral(res.weeks)} حتى الآن — استمري 🌸</p>`;
+    return;
+  }
+  container.innerHTML = `
+    <div class="section-header"><h2 class="card-title">🔍 ما الذي يحرّك وزنك؟</h2></div>
+    <p class="settings-note">مقارنة أسبوعية: كم مرّة ظهر كل صنف خلال الأسبوع، مقابل تغيّر وزنك في ذلك الأسبوع (${toArabicNumeral(res.weeks)} أسابيع).</p>
+    ${res.drivers.length
+      ? `<div class="drivers-list">${res.drivers.map(d => driverRowHtml(d, ctx)).join('')}</div>
+         <p class="settings-note driver-caveat">⚠️ هذه أنماط وليست إثباتاً — النوم والدورة والملح والماء تؤثر أيضاً.</p>`
+      : '<p class="settings-note">لا يوجد نمط واضح بعد — وهذا جيد، يعني أنّ لا صنف يتحكم بوزنك وحده.</p>'}`;
+}
+
+// ============================================================
 //  second graph: lifestyle (sleep / mood / training) vs body
 // ============================================================
 const MOOD_SCORE = { '😊': 5, '😐': 3, '😢': 2, '😣': 2, '🌑': 1 };
 const LIFESTYLE_SERIES = [
   { key: 'sleep',    label: '😴 النوم (ساعات)', color: '#6C8EBF' },
   { key: 'mood',     label: '😊 المزاج (١-٥)',   color: '#E8A33D' },
-  { key: 'training', label: '🏋️ التمارين (عدد)', color: '#7BA05B' }
+  { key: 'training', label: '🏋️ التمارين (عدد)', color: '#7BA05B' },
+  { key: 'period',   label: '🌸 الدورة',         color: 'var(--rose-deep)' }
 ];
 function lifestyleMeaning(key) {
   if (key === 'sleep') return '↑ نوم أطول · ↓ أقصر';
   if (key === 'mood') return '↑ مزاج أفضل · ↓ أسوأ';
   if (key === 'training') return '↑ تمارين أكثر · ↓ أقل';
+  if (key === 'period') return '↑ أيام الدورة · ↓ خارجها';
   return '';
 }
 function bodyAnchorDefs(ctx = {}) {
@@ -732,8 +932,8 @@ function bodyAnchorDefs(ctx = {}) {
 }
 
 async function getLifestyleDays(rangeDays, ctx = {}) {
-  const [sleepLogs, moodLogs, exLogs, weightLogs] = await Promise.all([
-    db.sleepLogs.toArray(), db.moodLogs.toArray(), db.exerciseLogs.toArray(), getAllWeightLogs()
+  const [sleepLogs, moodLogs, exLogs, weightLogs, periodLogs] = await Promise.all([
+    db.sleepLogs.toArray(), db.moodLogs.toArray(), db.exerciseLogs.toArray(), getAllWeightLogs(), db.periodLogs.toArray()
   ]);
   const sleepBy = {}; sleepLogs.forEach(l => { if (l.durationMinutes != null) sleepBy[l.date] = (sleepBy[l.date] || 0) + l.durationMinutes; });
   const moodAgg = {}; moodLogs.forEach(l => { const s = MOOD_SCORE[l.emoji]; if (s) (moodAgg[l.date] = moodAgg[l.date] || []).push(s); });
@@ -743,14 +943,28 @@ async function getLifestyleDays(rangeDays, ctx = {}) {
   const measMaps = {};
   for (const m of (ctx.measurements || [])) { const logs = await getMeasurementLogs(m.id); const map = {}; logs.forEach(l => { map[l.date] = l.value; }); measMaps[m.id] = map; }
 
+  // Period days, expanded from start/end pairs. Cycle water retention is a
+  // real confounder for weight — worth being able to see it on the chart.
+  const today = todayStr();
+  const periodDays = new Set();
+  periodLogs.forEach(p => {
+    if (!p.startDate) return;
+    const end = p.endDate || today;
+    if (end < p.startDate) return;
+    const span = Math.min(daysBetween(p.startDate, end), 40);
+    for (let i = 0; i <= span; i++) periodDays.add(addDays(p.startDate, i));
+  });
+
   const start = rangeDays === 'all' ? null : addDays(todayStr(), -Number(rangeDays) + 1);
   const dates = new Set([...Object.keys(sleepBy), ...Object.keys(moodAgg), ...Object.keys(trainBy), ...Object.keys(weightBy)]);
+  periodDays.forEach(d => dates.add(d));
   Object.values(measMaps).forEach(mm => Object.keys(mm).forEach(d => dates.add(d)));
   return [...dates].filter(d => start === null || d >= start).sort().map(date => {
     const row = { date, life: {}, body: {} };
     if (sleepBy[date] != null) row.life.sleep = sleepBy[date] / 60;
     if (moodAgg[date]) row.life.mood = moodAgg[date].reduce((s, x) => s + x, 0) / moodAgg[date].length;
     if (trainBy[date] != null) row.life.training = trainBy[date];
+    if (periodLogs.length) row.life.period = periodDays.has(date) ? 1 : 0;
     if (weightBy[date] != null) { row.body.weight = weightBy[date]; if (h) row.body.bmi = weightBy[date] / (h * h); }
     (ctx.measurements || []).forEach(m => { if (measMaps[m.id][date] != null) row.body['meas:' + m.id] = measMaps[m.id][date]; });
     return row;
@@ -794,14 +1008,47 @@ function renderLifestyleChart(days, lifeKeys, bodyKey) {
 // compare the body value between them.
 function lifestyleInsight(days, lifeKey, body) {
   const pairs = days.map(p => (p.life[lifeKey] != null && p.body[body.key] != null) ? { metric: p.life[lifeKey], perDay: p.body[body.key] } : null).filter(Boolean);
-  const split = splitByMetric(pairs, lifeKey === 'training' ? 0.5 : (lifeKey === 'mood' ? 0.4 : 0.4));
-  if (!split) return null;
-  const diff = split.highPerDay - split.lowPerDay;
-  if (Math.abs(diff) < (body.key === 'weight' ? 0.2 : 0.3)) return null;
   const life = LIFESTYLE_SERIES.find(s => s.key === lifeKey);
-  const moreLabel = lifeKey === 'sleep' ? 'نمتِ أكثر' : lifeKey === 'mood' ? 'كان مزاجك أفضل' : 'تمرّنتِ أكثر';
+  const minDiff = body.key === 'weight' ? 0.2 : 0.3;
+
+  let highVal, lowVal;
+  if (lifeKey === 'period') {
+    // Binary: a median split would mix period and non-period days into the
+    // same half. Compare the two groups directly instead.
+    const on = pairs.filter(p => p.metric >= 1).map(p => p.perDay);
+    const off = pairs.filter(p => p.metric < 1).map(p => p.perDay);
+    if (on.length < 3 || off.length < 3) return null;
+    highVal = on.reduce((s, x) => s + x, 0) / on.length;
+    lowVal = off.reduce((s, x) => s + x, 0) / off.length;
+  } else {
+    const split = splitByMetric(pairs, lifeKey === 'training' ? 0.5 : 0.4);
+    if (!split) return null;
+    highVal = split.highPerDay; lowVal = split.lowPerDay;
+  }
+
+  const diff = highVal - lowVal;
+  if (!isFinite(diff) || Math.abs(diff) < minDiff) return null;
+  const moreLabel = lifeKey === 'sleep' ? 'نمتِ أكثر'
+    : lifeKey === 'mood' ? 'كان مزاجك أفضل'
+    : lifeKey === 'period' ? 'كنتِ في الدورة'
+    : 'تمرّنتِ أكثر';
   const dir = diff < 0 ? 'أقل' : 'أعلى';
-  return `${life.label.split(' ')[0]} في الأيام التي ${moreLabel}، ${body.label.replace(/^[^ ]+ /, '')} ${dir} بمتوسط ${toArabicNumeral(Math.abs(diff).toFixed(1))} ${body.unit}.`;
+  const icon = life.label.split(' ')[0];
+  return `${icon} في الأيام التي ${moreLabel}، ${body.label.replace(/^[^ ]+ /, '')} ${dir} بمتوسط ${toArabicNumeral(Math.abs(diff).toFixed(1))} ${body.unit}.`;
+}
+
+// Which way did the body metric actually move across this window? An
+// insight that says "lower on those days" is much more useful next to
+// "and overall you went down 0.6 kg".
+function bodyTrendLine(days, body) {
+  const vals = days.filter(d => d.body[body.key] != null);
+  if (vals.length < 2) return '';
+  const first = vals[0].body[body.key], last = vals[vals.length - 1].body[body.key];
+  const diff = last - first;
+  const name = body.label.replace(/^[^ ]+ /, '');
+  if (Math.abs(diff) < 0.05) return `<p class="life-trend life-trend-flat">➡️ ${name} ثابت تقريباً خلال هذه الفترة.</p>`;
+  const down = diff < 0;
+  return `<p class="life-trend ${down ? 'life-trend-down' : 'life-trend-up'}">${down ? '⬇️' : '⬆️'} ${name} ${down ? 'نزل' : 'زاد'} ${toArabicNumeral(Math.abs(diff).toFixed(1))} ${body.unit} خلال هذه الفترة.</p>`;
 }
 
 async function renderLifestyleCard(container, range, ctx, state) {
@@ -810,8 +1057,12 @@ async function renderLifestyleCard(container, range, ctx, state) {
   const days = await getLifestyleDays(range, ctx);
   const body = bodyDefs.find(d => d.key === state.bodyKey);
 
+  // Core anchors stay visible; her custom measurements sit in a collapsed
+  // group so a long list doesn't crowd the picker.
+  const coreDefs = bodyDefs.filter(d => !d.key.startsWith('meas:'));
+  const measDefs = bodyDefs.filter(d => d.key.startsWith('meas:'));
+  const chipFor = (d) => `<button class="chip life-body-chip ${state.bodyKey === d.key ? 'active' : ''}" data-body="${d.key}">${d.label}</button>`;
   const lifeChips = LIFESTYLE_SERIES.map(s => `<button class="chip diet-series-chip ${state.lifeKeys.includes(s.key) ? 'active' : ''}" data-life="${s.key}"><i class="diet-chip-swatch" style="background:${s.color}"></i>${s.label}</button>`).join('');
-  const bodyChips = bodyDefs.map(d => `<button class="chip life-body-chip ${state.bodyKey === d.key ? 'active' : ''}" data-body="${d.key}">${d.label}</button>`).join('');
 
   const insights = state.lifeKeys.map(k => lifestyleInsight(days, k, body)).filter(Boolean);
   const legend = `<div class="diet-legend"><span class="diet-leg"><i class="diet-leg-swatch diet-leg-weight"></i> ${body.label}</span>${state.lifeKeys.map(k => { const s = LIFESTYLE_SERIES.find(x => x.key === k); return `<span class="diet-leg"><i class="diet-leg-swatch" style="background:${s.color}"></i> ${s.label}</span>`; }).join('')}</div>`;
@@ -819,22 +1070,31 @@ async function renderLifestyleCard(container, range, ctx, state) {
 
   container.innerHTML = `
     <div class="section-header"><h2 class="card-title">🌙 نمط حياتك مقابل جسمك</h2></div>
-    <p class="settings-note">قارني نومك ومزاجك وتمارينك بوزنك أو قياساتك.</p>
-    <p class="material-type-label">اعرضي مقابل:</p>
-    <div class="diet-series-chips life-body-chips" id="life-body-chips">${bodyChips}</div>
-    <p class="material-type-label">أضيفي إلى الرسم:</p>
-    <div class="diet-series-chips" id="life-series-chips">${lifeChips}</div>
+    <p class="settings-note">قارني نومك ومزاجك وتمارينك ودورتك بوزنك أو قياساتك.</p>
     <div id="life-chart">${renderLifestyleChart(days, state.lifeKeys, state.bodyKey)}</div>
     ${legend}
+    ${bodyTrendLine(days, body)}
     ${dirKey}
-    ${insights.length ? `<div class="diet-insights-list">${insights.map(t => `<p class="diet-insight diet-insight-neutral">💡 ${t}</p>`).join('')}</div>` : '<p class="settings-note">أضيفي المزيد من الأيام لاستخراج أنماط.</p>'}`;
+    ${insights.length ? `<div class="diet-insights-list">${insights.map(t => `<p class="diet-insight diet-insight-neutral">💡 ${t}</p>`).join('')}</div>` : '<p class="settings-note">أضيفي المزيد من الأيام لاستخراج أنماط.</p>'}
+    <details class="diet-series-picker">
+      <summary>ماذا أقارن؟</summary>
+      <p class="material-type-label">اعرضي مقابل:</p>
+      <div class="diet-series-chips life-body-chips" id="life-body-chips">${coreDefs.map(chipFor).join('')}</div>
+      ${measDefs.length ? `
+        <details class="diet-subgroup" ${measDefs.some(d => d.key === state.bodyKey) ? 'open' : ''}>
+          <summary>📏 قياساتك <span class="diet-chip-count">${toArabicNumeral(measDefs.length)}</span></summary>
+          <div class="diet-series-chips life-body-chips" id="life-meas-chips">${measDefs.map(chipFor).join('')}</div>
+        </details>` : ''}
+      <p class="material-type-label">أضيفي إلى الرسم:</p>
+      <div class="diet-series-chips" id="life-series-chips">${lifeChips}</div>
+    </details>`;
 
   container.querySelectorAll('#life-series-chips .diet-series-chip').forEach(chip => chip.addEventListener('click', async () => {
     const k = chip.dataset.life;
     state.lifeKeys = state.lifeKeys.includes(k) ? state.lifeKeys.filter(x => x !== k) : [...state.lifeKeys, k];
     await renderLifestyleCard(container, range, ctx, state);
   }));
-  container.querySelectorAll('#life-body-chips .life-body-chip').forEach(chip => chip.addEventListener('click', async () => {
+  container.querySelectorAll('.life-body-chip').forEach(chip => chip.addEventListener('click', async () => {
     state.bodyKey = chip.dataset.body;
     await renderLifestyleCard(container, range, ctx, state);
   }));
@@ -872,15 +1132,23 @@ async function renderDietPage(params, view) {
         <summary>ماذا أرسم فوق منحنى الوزن؟</summary>
         <p class="material-type-label">قيم غذائية</p>
         <div class="diet-series-chips" id="diet-metric-series"></div>
-        <p class="material-type-label">أنواع الطعام</p>
+        <p class="material-type-label">مجموعات الطعام</p>
         <div class="diet-series-chips" id="diet-cat-series"></div>
+        <details class="diet-subgroup" id="diet-sub-group">
+          <summary id="diet-sub-summary">🍞 أطعمة محددة</summary>
+          <p class="settings-note">من واقع تسجيلك — الأكثر تكراراً أولاً.</p>
+          <div class="diet-series-chips" id="diet-sub-series"></div>
+        </details>
         <p class="material-type-label">التوقيت</p>
         <div class="diet-series-chips" id="diet-timing-series"></div>
-        <p class="material-type-label">الجسم والقياسات</p>
-        <div class="diet-series-chips" id="diet-body-series"></div>
+        <details class="diet-subgroup" id="diet-body-group">
+          <summary id="diet-body-summary">📏 الجسم والقياسات</summary>
+          <div class="diet-series-chips" id="diet-body-series"></div>
+        </details>
       </details>
     </div>
     <div class="card" id="diet-lifestyle-card"></div>
+    <div class="card" id="diet-drivers-card"></div>
     <div class="card" id="diet-mix-card"></div>
     <div class="card" id="diet-adherence-card"></div>
     <div class="card" id="diet-hidden-card" style="display:none"></div>
@@ -902,14 +1170,27 @@ async function renderDietPage(params, view) {
   function renderSeriesChips() {
     const defs = allSeriesDefsCtx(ctx);
     const fill = (id, kind) => {
-      const el = document.getElementById(id); if (!el) return;
-      el.innerHTML = defs.filter(d => d.kind === kind).map(d =>
-        `<button class="chip diet-series-chip ${selected.includes(d.key) ? 'active' : ''}" data-skey="${d.key}"><i class="diet-chip-swatch" style="background:${d.color}"></i>${d.label}</button>`).join('') || '<span class="settings-note">—</span>';
+      const el = document.getElementById(id); if (!el) return 0;
+      const list = defs.filter(d => d.kind === kind);
+      el.innerHTML = list.map(d =>
+        `<button class="chip diet-series-chip ${selected.includes(d.key) ? 'active' : ''}" data-skey="${d.key}"><i class="diet-chip-swatch" style="background:${d.color}"></i>${d.label}${d.n ? ` <span class="diet-chip-count">${toArabicNumeral(d.n)}</span>` : ''}</button>`).join('') || '<span class="settings-note">—</span>';
+      return list.length;
     };
     fill('diet-metric-series', 'metric');
     fill('diet-cat-series', 'cat');
     fill('diet-timing-series', 'timing');
-    fill('diet-body-series', 'body');
+    const subCount = fill('diet-sub-series', 'sub');
+    const bodyCount = fill('diet-body-series', 'body');
+
+    // Collapsed groups carry their size, so she knows what's inside without
+    // the chips themselves crowding the picker.
+    const subSummary = document.getElementById('diet-sub-summary');
+    const subGroup = document.getElementById('diet-sub-group');
+    if (subSummary) subSummary.innerHTML = `🍞 أطعمة محددة${subCount ? ` <span class="diet-chip-count">${toArabicNumeral(subCount)}</span>` : ''}`;
+    if (subGroup) subGroup.style.display = subCount ? '' : 'none';
+    const bodySummary = document.getElementById('diet-body-summary');
+    if (bodySummary) bodySummary.innerHTML = `📏 الجسم والقياسات${bodyCount ? ` <span class="diet-chip-count">${toArabicNumeral(bodyCount)}</span>` : ''}`;
+
     view.querySelectorAll('.diet-series-chip').forEach(chip => {
       chip.addEventListener('click', async () => {
         const k = chip.dataset.skey;
@@ -937,6 +1218,7 @@ async function renderDietPage(params, view) {
     await renderDietGoalHero(document.getElementById('diet-goal-hero'), ctx);
     await drawChart();
     await renderLifestyleCard(document.getElementById('diet-lifestyle-card'), range, ctx, lifeState);
+    await renderWeightDriversCard(document.getElementById('diet-drivers-card'), range, ctx);
     await renderFoodMixCard(document.getElementById('diet-mix-card'), range);
     await renderAdherenceCard(document.getElementById('diet-adherence-card'), range);
     await renderHiddenCalorieCard(document.getElementById('diet-hidden-card'), range);

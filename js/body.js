@@ -820,6 +820,7 @@ async function renderBodyPage(params, view) {
     <div class="card">
       <h2 class="card-title">الرسم البياني</h2>
       <div class="chart-range-chips" id="chart-range-chips">
+        <button class="chip" data-range="7">أسبوع</button>
         <button class="chip" data-range="30">شهر</button>
         <button class="chip" data-range="60">شهرين</button>
         <button class="chip" data-range="90">٣ أشهر</button>

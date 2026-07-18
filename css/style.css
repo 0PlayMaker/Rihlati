@@ -2763,7 +2763,9 @@ body.theme-dark-ish { --ring-slice-track: rgba(255,255,255,0.10); }
 .home-hero::after {
   content: ''; position: absolute; inset-block-start: -40%; inset-inline-end: -18%;
   width: 210px; height: 210px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(var(--pink-deep-rgb), 0.30) 0%, transparent 70%);
+  background: radial-gradient(circle, var(--hero-glow, rgba(var(--pink-deep-rgb), 0.30)) 0%, transparent 70%);
+  /* Strength is a slider in the theme editor; 0 turns the glow off. */
+  opacity: var(--hero-glow-opacity, 1);
   pointer-events: none;
 }
 .home-hero-top { position: relative; z-index: 1; display: flex; align-items: center; gap: var(--space-3); }
@@ -2864,3 +2866,51 @@ body.theme-glass .home-tile {
 
 /* ---------- settings: home layout toggle ---------- */
 .home-layout-chip { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ============================================================
+   v59 — diet statistics UI: collapsed dynamic groups, count
+   badges, weekly weight drivers, lifestyle trend line.
+   ============================================================ */
+
+/* Collapsed sub-groups inside a picker (specific foods, measurements).
+   These exist so a long list stays available without crowding. */
+.diet-subgroup { margin: var(--space-2) 0; }
+.diet-subgroup > summary {
+  cursor: pointer; list-style: none;
+  font-size: calc(12px * var(--font-scale)); font-weight: 800; color: var(--ink-soft);
+  padding: var(--space-2) 0;
+}
+.diet-subgroup > summary::-webkit-details-marker { display: none; }
+.diet-subgroup > summary::before { content: '▸ '; color: var(--ink-faint); }
+.diet-subgroup[open] > summary::before { content: '▾ '; }
+.diet-chip-count {
+  display: inline-block; min-width: 18px; text-align: center;
+  background: rgba(var(--pink-deep-rgb), 0.16); color: var(--ink);
+  border-radius: var(--radius-round); padding: 0 6px; margin-inline-start: 4px;
+  font-size: calc(10px * var(--font-scale)); font-weight: 800;
+}
+
+/* Which foods track with weight change, week over week. */
+.drivers-list { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
+.driver-row {
+  background: var(--track); border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  border-inline-start: 3px solid var(--ink-faint);
+}
+.driver-row.driver-up { border-inline-start-color: var(--danger-strong); }
+.driver-row.driver-down { border-inline-start-color: var(--success-strong); }
+.driver-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.driver-name { font-size: calc(13px * var(--font-scale)); font-weight: 800; color: var(--ink); }
+.driver-delta { font-size: calc(12px * var(--font-scale)); font-weight: 800; color: var(--ink-soft); white-space: nowrap; }
+.driver-text { font-size: calc(11px * var(--font-scale)); color: var(--ink-soft); margin-top: 4px; line-height: 1.6; }
+.driver-caveat { margin-top: var(--space-2); }
+
+/* Did the body metric actually move over the window? */
+.life-trend {
+  font-size: calc(12px * var(--font-scale)); font-weight: 800;
+  margin-top: var(--space-2); padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm); background: var(--track); color: var(--ink);
+}
+.life-trend-down { color: var(--success-strong); }
+.life-trend-up { color: var(--danger-strong); }
+.life-trend-flat { color: var(--ink-soft); }

@@ -101,7 +101,7 @@ async function getHabitStatus(habitId, date) {
 async function celebrateIfAllHabitsDone(date) {
   if (date !== todayStr()) return;
   const r = await getHabitsRingData();
-  if (r.total > 0 && r.done === r.total) playEventChime('habits');
+  if (r.total > 0 && r.doneCount === r.total) playEventChime('habits');
 }
 
 async function setHabitStatus(habitId, date, status) {
@@ -781,12 +781,18 @@ async function renderHabitsSummary(container) {
       <div class="ring-wrap">
         ${renderRing({
           size: 88, strokeWidth: 10,
-          segments: [
-            { frac: ring.total ? ring.done / ring.total : 0, color: 'var(--success-strong)' },
-            { frac: ring.total ? ring.missed / ring.total : 0, color: 'var(--danger-strong)' }
-          ]
+          segments: (() => {
+            // Same مسبحة treatment as Home: one slice per habit, a faint
+            // track under each, filled when that habit is done today.
+            const n = ring.items.length;
+            if (!n) return [];
+            const GAP = 0.012, per = 1 / n, sliceLen = per - GAP;
+            const tracks = ring.items.map((_, i) => ({ frac: sliceLen, offset: i * per, color: 'var(--ring-slice-track)' }));
+            const fills = ring.items.map((it, i) => ({ frac: sliceLen * Math.max(0, Math.min(1, it.frac)), offset: i * per, color: it.done ? 'var(--success-strong)' : 'var(--ring-care)' }));
+            return tracks.concat(fills);
+          })()
         })}
-        <div class="ring-center-text">${ring.total ? `${toArabicNumeral(ring.done)}/${toArabicNumeral(ring.total)}` : '—'}</div>
+        <div class="ring-center-text">${ring.total ? `${toArabicNumeral(ring.doneCount)}/${toArabicNumeral(ring.total)}` : '—'}</div>
       </div>
       <div class="habits-summary-side">
         <div class="goals-chip-row">

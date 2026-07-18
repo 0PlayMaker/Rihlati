@@ -241,7 +241,7 @@ function applyTheme(mode, accentHex, opts = {}) {
 
   // Ring tones and semantic status colours. Cleared rather than left stale
   // when removed, so a deleted custom colour actually goes away.
-  [...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS].forEach(f => {
+  [...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS, ...HOME_DECOR_FIELDS].forEach(f => {
     const v = opts.extras ? opts.extras[f.settingsKey] : null;
     if (v) root.setProperty(f.cssVar, v);
     else root.removeProperty(f.cssVar);
@@ -274,7 +274,7 @@ async function applyStoredTheme() {
     blurAmount: settings?.customBlurAmount,
     tiles: Object.fromEntries(TILE_ACCENT_FIELDS.map(f => [f.settingsKey, settings?.[f.settingsKey]])),
     extras: Object.fromEntries(
-      [...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS, ...LAYOUT_FIELDS]
+      [...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS, ...HOME_DECOR_FIELDS, ...LAYOUT_FIELDS]
         .map(f => [f.settingsKey, settings?.[f.settingsKey]])
     )
   });
@@ -327,10 +327,18 @@ const SEMANTIC_COLOR_FIELDS = [
 // Layout levers. These are not decoration — text size in particular is an
 // accessibility need, and an app you have to squint at is an app you stop
 // opening.
+// Decoration on the Home welcome card. The glow is the one purely
+// decorative flourish in the app, so it gets its own colour and a strength
+// slider that goes all the way to zero — "off" is a valid taste.
+const HOME_DECOR_FIELDS = [
+  { key: 'heroglow', settingsKey: 'heroGlowColor', cssVar: '--hero-glow', label: '✨ توهج بطاقة الترحيب' }
+];
+
 const LAYOUT_FIELDS = [
   { key: 'fontScale',  settingsKey: 'fontScale',  cssVar: '--font-scale',  label: 'حجم الخط',      min: 85,  max: 130, step: 5,  def: 100, unit: '٪' },
   { key: 'radiusScale',settingsKey: 'radiusScale',cssVar: '--radius-scale',label: 'استدارة الحواف', min: 0,   max: 150, step: 10, def: 100, unit: '٪' },
-  { key: 'density',    settingsKey: 'density',    cssVar: '--space-scale', label: 'التباعد',        min: 80,  max: 120, step: 5,  def: 100, unit: '٪' }
+  { key: 'density',    settingsKey: 'density',    cssVar: '--space-scale', label: 'التباعد',        min: 80,  max: 120, step: 5,  def: 100, unit: '٪' },
+  { key: 'heroGlow',   settingsKey: 'heroGlowStrength', cssVar: '--hero-glow-opacity', label: 'شدة توهج الترحيب', min: 0, max: 100, step: 10, def: 100, unit: '٪' }
 ];
 
 const THEME_SETTINGS_KEYS = ['themeMode', 'accentColor',
@@ -338,6 +346,7 @@ const THEME_SETTINGS_KEYS = ['themeMode', 'accentColor',
   ...TILE_ACCENT_FIELDS.map(f => f.settingsKey),
   ...RING_COLOR_FIELDS.map(f => f.settingsKey),
   ...SEMANTIC_COLOR_FIELDS.map(f => f.settingsKey),
+  ...HOME_DECOR_FIELDS.map(f => f.settingsKey),
   ...LAYOUT_FIELDS.map(f => f.settingsKey),
   'customBlurAmount'];
 
@@ -371,7 +380,7 @@ function renderThemeSection(currentMode, currentAccent, presets, currentHomeLayo
 
 async function restoreDefaultTheme() {
   const reset = { themeMode: 'light', accentColor: DEFAULT_ACCENT, customBlurAmount: null };
-  [...CUSTOM_COLOR_FIELDS, ...TILE_ACCENT_FIELDS, ...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS, ...LAYOUT_FIELDS]
+  [...CUSTOM_COLOR_FIELDS, ...TILE_ACCENT_FIELDS, ...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS, ...HOME_DECOR_FIELDS, ...LAYOUT_FIELDS]
     .forEach(f => { reset[f.settingsKey] = null; });
   await db.settings.update(1, reset);
   await applyStoredTheme();
@@ -488,6 +497,7 @@ async function renderThemeEditorPage(params, view) {
       <button class="settings-jump-chip" data-jump="th-tiles">🔲 بطاقات الأقسام</button>
       <button class="settings-jump-chip" data-jump="th-rings">⭕ الدوائر</button>
       <button class="settings-jump-chip" data-jump="th-status">🚦 ألوان الحالة</button>
+      <button class="settings-jump-chip" data-jump="th-home">🏠 الرئيسية</button>
       <button class="settings-jump-chip" data-jump="th-layout">📐 الشكل والحجم</button>
       <button class="settings-jump-chip" data-jump="th-presets">💾 مظاهرك</button>
     </div>
@@ -541,6 +551,16 @@ async function renderThemeEditorPage(params, view) {
       ${SEMANTIC_COLOR_FIELDS.map(f => `
         <label class="field-label">${f.label}</label>
         ${hslPickerHtml(`sem-${f.key}`, cc[f.settingsKey] || DEFAULT_ACCENT)}
+        <button class="btn btn-text btn-sm theme-clear-btn" data-clear="${f.settingsKey}">اللون الافتراضي</button>
+      `).join('<div class="theme-field-sep"></div>')}
+    </div>
+
+    <h2 class="settings-group-title" id="th-home">🏠 الصفحة الرئيسية</h2>
+    <div class="card settings-card">
+      <p class="settings-note">التوهج الملوّن في زاوية بطاقة الترحيب. اجعلي شدّته صفراً لإطفائه تماماً.</p>
+      ${HOME_DECOR_FIELDS.map(f => `
+        <label class="field-label">${f.label}</label>
+        ${hslPickerHtml(`decor-${f.key}`, cc[f.settingsKey] || DEFAULT_ACCENT, { withAlpha: true })}
         <button class="btn btn-text btn-sm theme-clear-btn" data-clear="${f.settingsKey}">اللون الافتراضي</button>
       `).join('<div class="theme-field-sep"></div>')}
     </div>
@@ -599,7 +619,7 @@ async function renderThemeEditorPage(params, view) {
     opts.blurAmount = s.customBlurAmount;
     opts.tiles = Object.fromEntries(TILE_ACCENT_FIELDS.map(f => [f.settingsKey, s[f.settingsKey]]));
     opts.extras = Object.fromEntries(
-      [...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS, ...LAYOUT_FIELDS].map(f => [f.settingsKey, s[f.settingsKey]])
+      [...RING_COLOR_FIELDS, ...SEMANTIC_COLOR_FIELDS, ...HOME_DECOR_FIELDS, ...LAYOUT_FIELDS].map(f => [f.settingsKey, s[f.settingsKey]])
     );
     applyTheme(s.themeMode || 'light', s.accentColor, opts);
   }
@@ -647,6 +667,9 @@ async function renderThemeEditorPage(params, view) {
   });
   SEMANTIC_COLOR_FIELDS.forEach(f => {
     wireHslPicker(`sem-${f.key}`, async (val) => { await saveField(f.settingsKey, val); await liveApply(); });
+  });
+  HOME_DECOR_FIELDS.forEach(f => {
+    wireHslPicker(`decor-${f.key}`, async (val) => { await saveField(f.settingsKey, val); await liveApply(); }, { withAlpha: true });
   });
 
   // Layout sliders apply LIVE — watching the app resize under your finger is

@@ -1035,8 +1035,8 @@ function registerAllReminderProviders() {
   registerReminderProvider(async (settings) => {
     if (!settings?.remindersEnabled?.habits) return [];
     const r = await getHabitsRingData();
-    if (r.total === 0 || r.done === r.total) return [];
-    return [{ time: settings.reminderTimes?.habits || '19:00', title: '🌱 عاداتك', body: `${toArabicNumeral(r.total - r.done)} عادة لم تُسجَّل بعد` }];
+    if (r.total === 0 || r.doneCount === r.total) return [];
+    return [{ time: settings.reminderTimes?.habits || '19:00', title: '🌱 عاداتك', body: `${toArabicNumeral(r.total - r.doneCount)} عادة لم تُسجَّل بعد` }];
   });
 
   // Anything due TODAY: course todos and goal deadlines. A due date you're
