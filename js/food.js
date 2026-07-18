@@ -48,7 +48,17 @@ async function getFoodLogsForDate(date) {
   const all = await db.foodLogs.toArray();
   return all.filter(f => f.date === date).sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
 }
+// Meals ONLY. Drinks live in the same table (they share calories, tags and
+// the diet analysis) but they are not meals: counting a coffee as a meal
+// threw off the meal counter, the meals goal, the chew picker and the
+// "you haven't eaten today" nudge. Anything that means "meals" uses this.
+async function getMealLogsForDate(date) {
+  return (await getFoodLogsForDate(date)).filter(l => !l.isDrink);
+}
 async function getFoodTotalCaloriesForDate(date) {
+  // Calories stay inclusive — a 200-calorie latte is 200 real calories, and
+  // the diet analysis depends on that. It's the MEAL COUNT that must not
+  // treat a drink as a meal.
   const logs = await getFoodLogsForDate(date);
   const withCal = logs.filter(l => l.calories != null);
   if (withCal.length === 0) return null;
@@ -56,13 +66,34 @@ async function getFoodTotalCaloriesForDate(date) {
 }
 async function getFoodTodayStats() {
   const today = todayStr();
-  const logs = await getFoodLogsForDate(today);
+  const [meals, drinks] = await Promise.all([getMealLogsForDate(today), getDrinkLogsForDate(today)]);
   const totalCal = await getFoodTotalCaloriesForDate(today);
-  return { count: logs.length, totalCal };
+  return {
+    count: meals.length,
+    totalCal,
+    drinkCount: drinks.length,
+    drinkCal: drinks.reduce((s, d) => s + (d.calories || 0), 0)
+  };
+}
+// Drinks get their own counter rather than borrowing the meal one.
+async function getDrinkTodayStats() {
+  const drinks = await getDrinkLogsForDate(todayStr());
+  return {
+    count: drinks.length,
+    totalCal: drinks.reduce((s, d) => s + (d.calories || 0), 0),
+    totalML: drinks.reduce((s, d) => s + (d.volumeML || 0), 0)
+  };
 }
 function foodGlanceText(stats) {
   if (stats.count === 0) return 'لا وجبات بعد';
   return `${stats.count} ${stats.count === 1 ? 'وجبة' : 'وجبات'}${stats.totalCal != null ? ` · ${stats.totalCal} سعرة` : ''}`;
+}
+function drinkGlanceText(stats) {
+  if (!stats.count) return 'لا مشروبات بعد';
+  const bits = [`${toArabicNumeral(stats.count)} ${stats.count === 1 ? 'مشروب' : 'مشروبات'}`];
+  if (stats.totalML) bits.push(`${toArabicNumeral(stats.totalML)} مل`);
+  if (stats.totalCal) bits.push(`${toArabicNumeral(stats.totalCal)} سعرة`);
+  return bits.join(' · ');
 }
 
 // ---------- water ----------
@@ -538,7 +569,7 @@ async function openFoodModal({ date, existingId, onSaved }) {
 
 async function renderFoodList(container, date, { onChange } = {}) {
   revokeFoodPhotoUrls();
-  const logs = (await getFoodLogsForDate(date)).filter(l => !l.isDrink);
+  const logs = await getMealLogsForDate(date);
   if (logs.length === 0) {
     container.innerHTML = `<div class="empty-state"><p>ما في وجبات مسجلة بهذا اليوم.</p></div>`;
     return;
@@ -759,7 +790,7 @@ async function renderFoodPage(params, view) {
     const stats = await getFoodTodayStats();
     const { mealsGoal, caloriesGoal } = await getFoodGoals();
     const summaryEl = document.getElementById('food-summary-card');
-    const logs = await getFoodLogsForDate(today);
+    const logs = await getMealLogsForDate(today);
 
     // Which meal types she's actually had today. This is useful with or
     // without a goal — the old card showed nothing but a sentence unless a
@@ -852,7 +883,7 @@ async function renderFoodPage(params, view) {
 
 async function foodDayProvider(dateStr) {
   const editable = !isFutureDate(dateStr);
-  const logs = await getFoodLogsForDate(dateStr);
+  const logs = await getMealLogsForDate(dateStr);
   if (logs.length === 0 && !editable) return null;
 
   const node = document.createElement('div');
@@ -861,6 +892,22 @@ async function foodDayProvider(dateStr) {
 
   async function refresh() {
     await renderFoodList(listWrap, dateStr, { onChange: refresh });
+    // Drinks aren't meals, but they shouldn't vanish from the day either —
+    // they get their own line under the meal list.
+    const drinks = await getDrinkLogsForDate(dateStr);
+    let line = node.querySelector('.day-drinks-line');
+    if (!drinks.length) { if (line) line.remove(); return; }
+    if (!line) {
+      line = document.createElement('p');
+      line.className = 'day-drinks-line';
+      listWrap.insertAdjacentElement('afterend', line);
+    }
+    const ml = drinks.reduce((s, d) => s + (d.volumeML || 0), 0);
+    const cal = drinks.reduce((s, d) => s + (d.calories || 0), 0);
+    const bits = [`${toArabicNumeral(drinks.length)} ${drinks.length === 1 ? 'مشروب' : 'مشروبات'}`];
+    if (ml) bits.push(`${toArabicNumeral(ml)} مل`);
+    if (cal) bits.push(`${toArabicNumeral(cal)} سعرة`);
+    line.textContent = `🥤 ${bits.join(' · ')}`;
   }
   await refresh();
 

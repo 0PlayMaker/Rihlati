@@ -371,7 +371,7 @@ function openChewingPacer({ foodLog, chewSeconds, restSeconds, mealMinutes, soun
 async function openChewSetupModal(onDone) {
   const settings = await getChewSettings();
   const today = todayStr();
-  const meals = await getFoodLogsForDate(today);
+  const meals = await getMealLogsForDate(today);
 
   // Which meals already have a session — so she doesn't accidentally
   // double-pace one, and can see which she's already done.
@@ -469,7 +469,7 @@ async function openChewSetupModal(onDone) {
     openFoodModal({
       date: today,
       onSaved: async () => {
-        const fresh = await getFoodLogsForDate(today);
+        const fresh = await getMealLogsForDate(today);
         const newest = fresh[fresh.length - 1];
         selectedMealId = newest ? newest.id : null;
         const listEl = document.getElementById('chew-meal-list');

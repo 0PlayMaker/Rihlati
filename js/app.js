@@ -99,6 +99,7 @@ const HOME_TRACKERS = [
   { key: 'goals',    label: 'الأهداف',           icon: '🎯', path: '/goals',         anchor: 'goals-list' },
   { key: 'water',    label: 'الماء',             icon: '💧', path: '/food',          anchor: 'water-card' },
   { key: 'calories', label: 'السعرات',           icon: '🔥', path: '/food',          anchor: 'food-summary-card' },
+  { key: 'drinks',   label: 'المشروبات',         icon: '🥤', path: '/food',          anchor: 'water-card' },
   { key: 'morning',  label: 'الروتين الصباحي',   icon: '🌅', path: '/dailycare',     anchor: 'care-morning-list' },
   { key: 'evening',  label: 'الروتين المسائي',   icon: '🌙', path: '/dailycare',     anchor: 'care-evening-list' },
   { key: 'prayers',  label: 'الصلوات',           icon: '🕌', path: '/worship',       anchor: 'fard-list' },
@@ -375,6 +376,16 @@ async function buildTrackerDataRaw(key) {
       if (!caloriesGoal) return { frac: stats.count ? 1 : 0, center: toArabicNumeral(stats.totalCal || 0), label: 'السعرات', path: '/food', tone: 'care' };
       const frac = Math.min(1, (stats.totalCal || 0) / caloriesGoal);
       return { frac, center: toArabicNumeral(stats.totalCal || 0), label: `من ${toArabicNumeral(caloriesGoal)}`, path: '/food', tone: (stats.totalCal || 0) > caloriesGoal ? 'late' : 'care' };
+    }
+    case 'drinks': {
+      const d = await getDrinkTodayStats();
+      const REF = 4; // a soft reference, not a goal — drinks aren't a target
+      return {
+        frac: Math.min(1, d.count / REF),
+        center: toArabicNumeral(d.count),
+        label: d.totalML ? `${toArabicNumeral(d.totalML)} مل` : 'المشروبات',
+        path: '/food', tone: 'health'
+      };
     }
     case 'morning': case 'evening': {
       const kind = key;
@@ -1018,7 +1029,7 @@ function registerAllReminderProviders() {
   // Food — only if she hasn't logged anything today.
   registerReminderProvider(async (settings) => {
     if (!settings?.remindersEnabled?.food) return [];
-    const logs = await getFoodLogsForDate(todayStr());
+    const logs = await getMealLogsForDate(todayStr());
     if (logs.length > 0) return [];
     return [{ time: settings.reminderTimes?.food || '13:00', title: '🍽️ وجباتك', body: 'لم تسجّلي أي وجبة اليوم' }];
   });

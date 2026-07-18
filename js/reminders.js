@@ -39,7 +39,7 @@ const NUDGE_ITEMS = [
     check: async () => !(await db.weightLogs.where('date').equals(todayStr()).first()),
     messages: ['يا حلوة، بدّك تسجّلي وزنك؟ ⚖️', 'لا تنسي وزن اليوم يا قمر ⚖️'] },
   { key: 'food',   label: '🍽️ الوجبات',
-    check: async () => (await getFoodLogsForDate(todayStr())).length === 0,
+    check: async () => (await getMealLogsForDate(todayStr())).length === 0,
     messages: ['وين وجباتك اليوم يا حلوة؟ 🍽️', 'اشتقتلك — تعالي سجّلي وجباتك 🌸'] },
   { key: 'water',  label: '💧 الماء',
     check: async () => (await getWaterForDate(todayStr())) < (await getWaterTarget()),
